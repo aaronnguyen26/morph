@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 
 public enum MorphTab: String, CaseIterable, Identifiable {
+    case home = "Home"
     case timer = "Focus"
     case music = "Music"
     case notes = "Notes"
@@ -10,17 +11,12 @@ public enum MorphTab: String, CaseIterable, Identifiable {
     
     public var iconName: String {
         switch self {
+        case .home: return "square.grid.2x2.fill"
         case .timer: return "timer"
         case .music: return "play.circle.fill"
         case .notes: return "note.text"
         }
     }
-}
-
-public enum MorphDisplayState {
-    case idle       // 179 x 32 pt (flush notch cutout)
-    case pill       // 300 x 44 pt (ambient resting state with wings)
-    case expanded   // 440 x 140 pt (3:1 horizontal suite)
 }
 
 public enum AccentTheme: String, CaseIterable, Identifiable {
@@ -45,22 +41,21 @@ public enum AccentTheme: String, CaseIterable, Identifiable {
 
 @MainActor
 public final class NotchModel: ObservableObject {
-    // PRD Exact Dimensions
+    // Exact Hardware Notch Baseline (Flush when idle)
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
-    public let pillWidth: CGFloat = 300
-    public let pillHeight: CGFloat = 44
-    public let expandedWidth: CGFloat = 440
-    public let expandedHeight: CGFloat = 140
+    
+    // Expanded Island Dimensions
+    public let expandedWidth: CGFloat = 460
+    public let expandedHeight: CGFloat = 175
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
-    @Published public var selectedTab: MorphTab = .timer
+    @Published public var selectedTab: MorphTab = .home
     @Published public var selectedAccent: AccentTheme = .emerald
-    @Published public var alwaysShowPill: Bool = true
     
-    // Sub-models
+    // Sub-models for the 3 features
     public let pomodoro: PomodoroModel
     public let media: MediaControllerModel
     public let scratchpad: ScratchpadModel
@@ -83,30 +78,13 @@ public final class NotchModel: ObservableObject {
         observeSubmodels()
     }
     
-    public var currentDisplayState: MorphDisplayState {
-        if isExpanded {
-            return .expanded
-        }
-        if alwaysShowPill || pomodoro.isRunning || media.isPlaying {
-            return .pill
-        }
-        return .idle
-    }
-    
+    // Width and Height strictly adapt: Flush notch when resting, expanded island when active
     public var currentWidth: CGFloat {
-        switch currentDisplayState {
-        case .idle: return idleWidth
-        case .pill: return pillWidth
-        case .expanded: return expandedWidth
-        }
+        isExpanded ? expandedWidth : idleWidth
     }
     
     public var currentHeight: CGFloat {
-        switch currentDisplayState {
-        case .idle: return idleHeight
-        case .pill: return pillHeight
-        case .expanded: return expandedHeight
-        }
+        isExpanded ? expandedHeight : idleHeight
     }
     
     public func detectScreenNotch() {
@@ -141,12 +119,28 @@ public final class NotchModel: ObservableObject {
     
     public func toggleExpand() {
         isExpanded.toggle()
+        if isExpanded && selectedTab != .home {
+            // Keep current tab or default to home if desired
+        }
     }
     
     public func togglePin() {
         isPinned.toggle()
         if isPinned {
             isExpanded = true
+        }
+    }
+    
+    public func openFeature(_ tab: MorphTab) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            selectedTab = tab
+            isExpanded = true
+        }
+    }
+    
+    public func returnToHome() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            selectedTab = .home
         }
     }
 }

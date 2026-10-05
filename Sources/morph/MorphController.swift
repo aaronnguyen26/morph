@@ -92,38 +92,37 @@ public final class MorphController: NSObject {
                 }
             }
             .store(in: &cancellables)
-            
-        // Observe Pomodoro and Media state to dynamically size resting pill/idle window
-        Publishers.Merge(
-            model.pomodoro.$isRunning.map { _ in () },
-            model.media.$isPlaying.map { _ in () }
-        )
-        .sink { [weak self] _ in
-            guard let self = self, !self.model.isExpanded else { return }
-            self.resizePanelToRestingState()
-        }
-        .store(in: &cancellables)
         
         // Listen to external/scriptable distributed notifications
         DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.morph.toggleExpand"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.model.toggleExpand()
-            }
-        }
+            self,
+            selector: #selector(handleToggleExpandNotification(_:)),
+            name: NSNotification.Name("com.morph.toggleExpand"),
+            object: nil
+        )
         
         DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.morph.togglePin"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.model.togglePin()
+            self,
+            selector: #selector(handleTogglePinNotification(_:)),
+            name: NSNotification.Name("com.morph.togglePin"),
+            object: nil
+        )
+    }
+    
+    @objc private func handleToggleExpandNotification(_ notification: Notification) {
+        if model.isExpanded {
+            model.isPinned = false
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                model.isExpanded = false
             }
+            scheduleWindowShrink()
+        } else {
+            handleMouseEnter()
         }
+    }
+    
+    @objc private func handleTogglePinNotification(_ notification: Notification) {
+        model.togglePin()
     }
     
     private func setupMouseMonitors() {

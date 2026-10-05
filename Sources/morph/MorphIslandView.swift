@@ -20,11 +20,7 @@ public struct MorphIslandView: View {
     }
     
     private var cornerRadius: CGFloat {
-        switch model.currentDisplayState {
-        case .idle: return 12
-        case .pill: return 18
-        case .expanded: return 22
-        }
+        model.isExpanded ? 22 : 12
     }
     
     public var body: some View {
@@ -38,21 +34,21 @@ public struct MorphIslandView: View {
                     topTrailingRadius: 0,
                     style: .continuous
                 )
-                .fill(Color(red: 0.05, green: 0.05, blue: 0.07))
+                .fill(Color(red: 0.04, green: 0.04, blue: 0.06))
                 .overlay(
-                    // Ambient radial glow
+                    // Subtle ambient radial glow when expanded
                     RadialGradient(
                         colors: [
-                            model.selectedAccent.color.opacity(model.isExpanded ? 0.16 : 0.08),
+                            model.selectedAccent.color.opacity(model.isExpanded ? 0.16 : 0.0),
                             Color.clear
                         ],
                         center: .top,
                         startRadius: 5,
-                        endRadius: model.isExpanded ? 240 : 80
+                        endRadius: model.isExpanded ? 240 : 40
                     )
                 )
                 .overlay(
-                    // Border stroke
+                    // Border stroke (visible when expanded, subtle when idle)
                     UnevenRoundedRectangle(
                         topLeadingRadius: 0,
                         bottomLeadingRadius: cornerRadius,
@@ -61,46 +57,48 @@ public struct MorphIslandView: View {
                         style: .continuous
                     )
                     .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.18),
-                                model.selectedAccent.color.opacity(model.isExpanded ? 0.45 : 0.25),
-                                Color.white.opacity(0.08)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
+                        model.isExpanded
+                            ? LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.18),
+                                    model.selectedAccent.color.opacity(0.4),
+                                    Color.white.opacity(0.08)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            : LinearGradient(
+                                colors: [Color.clear, Color.clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
                         lineWidth: 1
                     )
                 )
                 .shadow(
                     color: model.isExpanded
                         ? model.selectedAccent.color.opacity(0.25)
-                        : (model.pomodoro.isCompleted ? Color(red: 0.2, green: 0.9, blue: 0.55).opacity(0.4) : Color.black.opacity(0.4)),
-                    radius: model.isExpanded ? 20 : 8,
+                        : Color.clear,
+                    radius: model.isExpanded ? 20 : 0,
                     x: 0,
-                    y: model.isExpanded ? 8 : 2
+                    y: model.isExpanded ? 8 : 0
                 )
                 
-                // Content based on Display State
-                switch model.currentDisplayState {
-                case .expanded:
+                // Content: Idle Notch vs Expanded Island
+                if model.isExpanded {
                     expandedView
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top)),
                             removal: .opacity
                         ))
-                case .pill:
-                    activePillView
-                        .transition(.opacity)
-                case .idle:
-                    idleNotchView
+                } else {
+                    idleFlushNotchView
                         .transition(.opacity)
                 }
             }
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
-            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.currentDisplayState)
-            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.selectedTab)
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
+            .animation(.spring(response: 0.3, dampingFraction: 0.78), value: model.selectedTab)
             .animation(.easeInOut(duration: 0.2), value: model.selectedAccent)
             
             Spacer(minLength: 0)
@@ -115,108 +113,25 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - 1. Idle Notch View (179 x 32 pt)
-    private var idleNotchView: some View {
-        HStack {
-            Circle()
-                .fill(model.selectedAccent.color)
-                .frame(width: 4, height: 4)
-                .padding(.leading, 12)
-            
-            Spacer()
-            
-            Text("MORPH")
-                .font(.system(size: 8, weight: .bold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.35))
-                .tracking(1.2)
-            
-            Spacer()
-            
-            Circle()
-                .fill(Color.white.opacity(0.2))
-                .frame(width: 4, height: 4)
-                .padding(.trailing, 12)
-        }
-        .frame(width: model.idleWidth, height: model.idleHeight)
+    // MARK: - Idle Flush Notch View (179 x 32 pt, 100% Flush, Never Sticking Out)
+    private var idleFlushNotchView: some View {
+        Color.black
+            .frame(width: model.idleWidth, height: model.idleHeight)
+            .contentShape(Rectangle())
     }
     
-    // MARK: - 2. Active Pill View (300 x 44 pt)
-    private var activePillView: some View {
-        HStack(spacing: 0) {
-            // Left Wing: Pomodoro Status (Width ~55 pt)
-            HStack(spacing: 5) {
-                // Mini countdown ring or flame icon
-                ZStack {
-                    Circle()
-                        .stroke(Color.white.opacity(0.15), lineWidth: 2)
-                        .frame(width: 14, height: 14)
-                    
-                    Circle()
-                        .trim(from: 0, to: CGFloat(model.pomodoro.progress))
-                        .stroke(
-                            model.pomodoro.isCompleted ? Color(red: 0.2, green: 0.9, blue: 0.55) : model.selectedAccent.color,
-                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 14, height: 14)
-                    
-                    if model.pomodoro.isRunning {
-                        Circle()
-                            .fill(model.selectedAccent.color)
-                            .frame(width: 4, height: 4)
-                    }
-                }
-                
-                Text(model.pomodoro.formattedTime)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundColor(model.pomodoro.isCompleted ? Color(red: 0.2, green: 0.9, blue: 0.55) : .white)
-            }
-            .frame(width: 55, alignment: .leading)
-            .padding(.leading, 12)
-            
-            // Center Cutout Spacer (Hardware Notch Baseline ~179 pt)
-            Spacer()
-                .frame(minWidth: model.idleWidth - 10)
-            
-            // Right Wing: Audio Visualizer & Media State (Width ~55 pt)
-            HStack(spacing: 5) {
-                if model.media.isMuted {
-                    Image(systemName: "speaker.slash.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(.red)
-                } else {
-                    // Live 3-Bar Equalizer
-                    HStack(alignment: .bottom, spacing: 2.5) {
-                        ForEach(0..<3, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(model.selectedAccent.color)
-                                .frame(width: 2.5, height: max(3, 14 * model.media.visualizerBars[i]))
-                                .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i])
-                        }
-                    }
-                    .frame(height: 14, alignment: .bottom)
-                }
-                
-                Image(systemName: model.media.isPlaying ? "play.circle.fill" : "pause.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.6))
-            }
-            .frame(width: 55, alignment: .trailing)
-            .padding(.trailing, 12)
-        }
-        .frame(width: model.pillWidth, height: model.pillHeight)
-        .contentShape(Rectangle())
-    }
-    
-    // MARK: - 3. Expanded Island View (440 x 140 pt)
+    // MARK: - Expanded Island View (460 x 175 pt)
     private var expandedView: some View {
         VStack(spacing: 6) {
-            // Top Navigation & Control Bar
+            // Top Navigation Bar
             topNavigationBar
             
-            // Main Feature Body (440 x 140 pt ratio)
+            // Active Tab Workspace / Home Hub
             ZStack {
                 switch model.selectedTab {
+                case .home:
+                    HomeView(model: model)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 case .timer:
                     PomodoroView(pomodoro: model.pomodoro, accentColor: model.selectedAccent.color)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
@@ -230,31 +145,50 @@ public struct MorphIslandView: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .padding(.top, 8)
-        .padding(.bottom, 8)
+        .padding(.bottom, 6)
         .frame(width: model.expandedWidth, height: model.expandedHeight, alignment: .top)
     }
     
     // MARK: - Top Navigation Bar
     private var topNavigationBar: some View {
         HStack(alignment: .center, spacing: 8) {
-            // Brand Logo & Title
-            HStack(spacing: 5) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10, weight: .bold))
+            // Brand Logo or Back to Home Button
+            if model.selectedTab != .home {
+                Button(action: {
+                    model.returnToHome()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Home")
+                            .font(.system(size: 10, weight: .bold))
+                    }
                     .foregroundColor(model.selectedAccent.color)
-                
-                Text("MORPH")
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
-                    .foregroundColor(.white)
-                    .tracking(1.2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(model.selectedAccent.color.opacity(0.15))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(model.selectedAccent.color)
+                    
+                    Text("MORPH")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .tracking(1.2)
+                }
             }
             
             Spacer()
             
-            // Three Feature Navigation Tabs
-            HStack(spacing: 4) {
+            // Four Navigation Tabs: [Home] [Focus] [Music] [Notes]
+            HStack(spacing: 3) {
                 ForEach(MorphTab.allCases) { tab in
                     Button(action: {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -263,13 +197,13 @@ public struct MorphIslandView: View {
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: tab.iconName)
-                                .font(.system(size: 9))
+                                .font(.system(size: 8.5))
                             Text(tab.rawValue)
-                                .font(.system(size: 10, weight: model.selectedTab == tab ? .bold : .medium))
+                                .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
                         }
                         .foregroundColor(model.selectedTab == tab ? .white : Color.white.opacity(0.55))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3.5)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
                         .background(
                             model.selectedTab == tab
                                 ? model.selectedAccent.color.opacity(0.28)
@@ -288,14 +222,14 @@ public struct MorphIslandView: View {
                 model.togglePin()
             }) {
                 Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 10))
+                    .font(.system(size: 9.5))
                     .foregroundColor(model.isPinned ? model.selectedAccent.color : Color.white.opacity(0.5))
                     .frame(width: 20, height: 20)
                     .background(model.isPinned ? model.selectedAccent.color.opacity(0.2) : Color.white.opacity(0.06))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin Window" : "Pin Window Open")
+            .help(model.isPinned ? "Unpin Island" : "Pin Island Open")
             
             // Collapse Button
             Button(action: {
@@ -303,7 +237,7 @@ public struct MorphIslandView: View {
                 model.isExpanded = false
             }) {
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 9.5, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundColor(Color.white.opacity(0.6))
                     .frame(width: 20, height: 20)
                     .background(Color.white.opacity(0.06))
