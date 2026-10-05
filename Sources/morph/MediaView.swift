@@ -3,32 +3,54 @@ import SwiftUI
 public struct MediaView: View {
     @ObservedObject var media: MediaControllerModel
     
+    public init(media: MediaControllerModel) {
+        self.media = media
+    }
+    
     public var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 16) {
             // Left: Album Art & Mini Transport
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
+                // Album Art (Real thumbnail or dark glass fallback)
                 ZStack {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color(white: 0.1))
-                        .frame(width: 64, height: 64)
+                        .frame(width: 68, height: 68)
                         .overlay(
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                .stroke(Color.white.opacity(0.14), lineWidth: 1)
                         )
+                        .shadow(color: Color.black.opacity(0.5), radius: 6, x: 0, y: 3)
                     
-                    Image(systemName: "music.note")
-                        .font(.system(size: 26))
-                        .foregroundColor(.white)
+                    if let artURL = media.albumArtURL, let url = URL(string: artURL) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 68, height: 68)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            default:
+                                defaultArtPlaceholder
+                            }
+                        }
+                    } else {
+                        defaultArtPlaceholder
+                    }
                 }
                 
-                // Playback Controls
-                HStack(spacing: 10) {
+                // Playback Controls (Prev, Play/Pause, Next)
+                HStack(spacing: 8) {
                     Button(action: {
                         media.previousTrack()
                     }) {
                         Image(systemName: "backward.fill")
                             .font(.system(size: 11))
                             .foregroundColor(Color.white.opacity(0.75))
+                            .frame(width: 22, height: 22)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     
@@ -36,9 +58,9 @@ public struct MediaView: View {
                         media.togglePlay()
                     }) {
                         Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.black)
-                            .frame(width: 26, height: 26)
+                            .frame(width: 28, height: 28)
                             .background(Color.white)
                             .clipShape(Circle())
                     }
@@ -50,50 +72,73 @@ public struct MediaView: View {
                         Image(systemName: "forward.fill")
                             .font(.system(size: 11))
                             .foregroundColor(Color.white.opacity(0.75))
+                            .frame(width: 22, height: 22)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .frame(width: 80)
+            .frame(width: 84)
             
-            // Right: Metadata, Scrubber, Volume
-            VStack(alignment: .leading, spacing: 10) {
+            // Right: Metadata, Live Equalizer, Scrubber, Volume & Web View Trigger
+            VStack(alignment: .leading, spacing: 8) {
                 // Track & Source Header
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 1.5) {
                         Text(media.trackTitle)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .font(.system(size: 14.5, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .lineLimit(1)
                         
                         Text(media.artistName)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundColor(Color.white.opacity(0.55))
                             .lineLimit(1)
                     }
                     
                     Spacer()
                     
-                    // Source Tag
-                    HStack(spacing: 4) {
-                        Image(systemName: "play.tv.fill")
-                            .font(.system(size: 9))
-                        Text(media.sourceName)
-                            .font(.system(size: 9.5, weight: .semibold))
+                    // Like Button
+                    Button(action: {
+                        media.toggleLike()
+                    }) {
+                        Image(systemName: media.isLiked ? "heart.fill" : "heart")
+                            .font(.system(size: 11))
+                            .foregroundColor(media.isLiked ? Color.white : Color.white.opacity(0.4))
+                            .frame(width: 24, height: 24)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(Circle())
                     }
-                    .foregroundColor(Color.white.opacity(0.8))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3.5)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(5)
+                    .buttonStyle(.plain)
+                    .help("Like Track on YouTube Music")
+                    
+                    // Web Player / Sign In Window Trigger
+                    Button(action: {
+                        media.openPlayerWindow()
+                    }) {
+                        HStack(spacing: 3.5) {
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 9))
+                            Text("Web View")
+                                .font(.system(size: 9.5, weight: .semibold))
+                        }
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open YouTube Music to Sign In or Browse Playlists")
                 }
                 
                 // Timeline Scrubber
-                VStack(spacing: 4) {
+                VStack(spacing: 3.5) {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule()
-                                .fill(Color.white.opacity(0.15))
+                                .fill(Color.white.opacity(0.14))
                                 .frame(height: 5)
                             
                             Capsule()
@@ -109,17 +154,29 @@ public struct MediaView: View {
                                 }
                         )
                     }
-                    .frame(height: 8)
+                    .frame(height: 7)
                     
                     HStack {
                         Text(media.formattedCurrentTime)
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundColor(Color.white.opacity(0.45))
                         
                         Spacer()
                         
+                        // Live 3-bar mini visualizer
+                        HStack(alignment: .bottom, spacing: 2) {
+                            ForEach(0..<3, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color.white.opacity(0.75))
+                                    .frame(width: 2, height: max(2.5, 9 * media.visualizerBars[i]))
+                            }
+                        }
+                        .frame(height: 9, alignment: .bottom)
+                        
+                        Spacer()
+                        
                         Text(media.formattedDuration)
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundColor(Color.white.opacity(0.45))
                     }
                 }
@@ -138,7 +195,7 @@ public struct MediaView: View {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
                             Capsule()
-                                .fill(Color.white.opacity(0.15))
+                                .fill(Color.white.opacity(0.14))
                                 .frame(height: 4)
                             
                             Capsule()
@@ -157,14 +214,22 @@ public struct MediaView: View {
                     .frame(height: 6)
                     
                     Text("\(Int((media.isMuted ? 0 : media.volume) * 100))%")
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.45))
-                        .frame(width: 30, alignment: .trailing)
+                        .frame(width: 28, alignment: .trailing)
                 }
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var defaultArtPlaceholder: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "music.note")
+                .font(.system(size: 24))
+                .foregroundColor(Color.white.opacity(0.85))
+        }
     }
 }

@@ -146,16 +146,29 @@ public struct HomeView: View {
             }
             
             // Track Info
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.media.trackTitle.isEmpty ? "YouTube Music" : model.media.trackTitle)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
+            HStack(spacing: 7) {
+                if let art = model.media.albumArtURL, let url = URL(string: art) {
+                    AsyncImage(url: url) { phase in
+                        if let img = phase.image {
+                            img.resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 26, height: 26)
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
+                }
                 
-                Text(model.media.artistName.isEmpty ? "Ready to play" : model.media.artistName)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.5))
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.media.trackTitle.isEmpty ? "YouTube Music" : model.media.trackTitle)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Text(model.media.artistName.isEmpty ? "Ready to play" : model.media.artistName)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.5))
+                        .lineLimit(1)
+                }
             }
             
             Spacer(minLength: 4)

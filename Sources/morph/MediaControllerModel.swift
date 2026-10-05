@@ -6,25 +6,65 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var trackTitle: String = "Starboy"
     @Published public var artistName: String = "The Weeknd • Daft Punk"
     @Published public var albumArtURL: String? = nil
-    @Published public var isPlaying: Bool = true
-    @Published public var currentTime: TimeInterval = 64
+    @Published public var isPlaying: Bool = false
+    @Published public var currentTime: TimeInterval = 0
     @Published public var duration: TimeInterval = 230
-    @Published public var volume: Double = 0.75
+    @Published public var volume: Double = 0.8
     @Published public var isMuted: Bool = false
-    @Published public var sourceName: String = "YouTube Music"
+    @Published public var isLiked: Bool = false
+    @Published public var sourceName: String = "YouTube Music Direct"
+    @Published public var isDirectEngineConnected: Bool = false
     @Published public var isBrowserConnected: Bool = false
     
     // Ambient 3-bar equalizer heights (0.15 ... 1.0)
-    @Published public var visualizerBars: [CGFloat] = [0.4, 0.85, 0.55]
+    @Published public var visualizerBars: [CGFloat] = [0.18, 0.18, 0.18]
     
+    public let engine: YouTubeMusicEngine
+    
+    private var cancellables = Set<AnyCancellable>()
     private var visualizerTimer: AnyCancellable?
-    private var playbackTimer: AnyCancellable?
     private var browserPollTimer: AnyCancellable?
     
-    public init() {
+    public init(engine: YouTubeMusicEngine = YouTubeMusicEngine.shared) {
+        self.engine = engine
+        
+        setupEngineObservers()
         startVisualizer()
-        startPlaybackTick()
         startBrowserPolling()
+    }
+    
+    private func setupEngineObservers() {
+        // Observe direct WebKit engine track updates synchronously on MainActor
+        engine.$trackData
+            .sink { [weak self] data in
+                guard let self = self else { return }
+                
+                // If YouTube Music is playing or has track data, prioritize direct engine
+                if !data.title.isEmpty && data.title != "YouTube Music" {
+                    self.trackTitle = data.title
+                    self.artistName = data.artist.isEmpty ? "YouTube Music" : data.artist
+                    self.albumArtURL = data.albumArtURL
+                    self.isPlaying = data.isPlaying
+                    self.currentTime = data.currentTime
+                    if data.duration > 0 {
+                        self.duration = data.duration
+                    }
+                    self.volume = data.volume
+                    self.isMuted = data.isMuted
+                    self.isLiked = data.isLiked
+                    self.sourceName = "YouTube Music Direct"
+                    self.isDirectEngineConnected = true
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$isEngineLoaded
+            .sink { [weak self] loaded in
+                if loaded {
+                    self?.isDirectEngineConnected = true
+                }
+            }
+            .store(in: &cancellables)
     }
     
     public var formattedCurrentTime: String {
@@ -48,20 +88,22 @@ public final class MediaControllerModel: ObservableObject {
     
     public func togglePlay() {
         isPlaying.toggle()
+        engine.togglePlay()
         executeBrowserPlayPause()
     }
     
     public func nextTrack() {
+        engine.nextTrack()
         executeBrowserNextTrack()
-        // Simulated track rotation if offline
-        if !isBrowserConnected {
+        if !isDirectEngineConnected && !isBrowserConnected {
             simulateNextTrack()
         }
     }
     
     public func previousTrack() {
+        engine.previousTrack()
         executeBrowserPreviousTrack()
-        if !isBrowserConnected {
+        if !isDirectEngineConnected && !isBrowserConnected {
             currentTime = 0
         }
     }
@@ -69,6 +111,7 @@ public final class MediaControllerModel: ObservableObject {
     public func seek(to progressFraction: Double) {
         let clamped = max(0, min(1, progressFraction))
         currentTime = clamped * duration
+        engine.seek(to: currentTime)
         executeBrowserSeek(to: currentTime)
     }
     
@@ -77,15 +120,26 @@ public final class MediaControllerModel: ObservableObject {
         if volume > 0 && isMuted {
             isMuted = false
         }
+        engine.setVolume(volume)
         executeBrowserVolume(volume)
     }
     
     public func toggleMute() {
         isMuted.toggle()
+        engine.toggleMute()
         executeBrowserMute(isMuted)
     }
     
-    // MARK: - Ambient Visualizer & Timers
+    public func toggleLike() {
+        isLiked.toggle()
+        engine.toggleLike()
+    }
+    
+    public func openPlayerWindow() {
+        engine.showPlayerWindow()
+    }
+    
+    // MARK: - Ambient Visualizer
     private func startVisualizer() {
         visualizerTimer = Timer.publish(every: 0.12, on: .main, in: .common)
             .autoconnect()
@@ -103,33 +157,21 @@ public final class MediaControllerModel: ObservableObject {
             }
     }
     
-    private func startPlaybackTick() {
-        playbackTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+    // MARK: - Fallback Browser AppleScript Bridge (When external browser is used)
+    private func startBrowserPolling() {
+        browserPollTimer = Timer.publish(every: 3.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self = self else { return }
-                if self.isPlaying {
-                    if self.currentTime < self.duration {
-                        self.currentTime += 1
-                    } else {
-                        self.nextTrack()
+                Task {
+                    // Only poll external browser if direct engine is idle
+                    if let self = self, !self.engine.trackData.isPlaying {
+                        await self.pollBrowserState()
                     }
                 }
             }
     }
     
-    private func startBrowserPolling() {
-        // Poll every 3 seconds for active YouTube Music tab in Chrome or Safari
-        browserPollTimer = Timer.publish(every: 3.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                Task {
-                    await self?.pollBrowserState()
-                }
-            }
-    }
-    
-    // MARK: - Simulated Track Rotation
+    // Demo Track Simulation when completely offline
     private let demoTracks: [(title: String, artist: String, duration: TimeInterval)] = [
         ("Starboy", "The Weeknd • Daft Punk", 230),
         ("Midnight City", "M83", 244),
@@ -148,7 +190,6 @@ public final class MediaControllerModel: ObservableObject {
         currentTime = 0
     }
     
-    // MARK: - Browser AppleScript Bridge
     private func pollBrowserState() async {
         let script = """
         tell application "System Events"
@@ -197,15 +238,14 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func parseTabTitle(_ rawTitle: String, source: String) {
+        guard !engine.trackData.isPlaying else { return }
         self.sourceName = source
         self.isBrowserConnected = true
         
         var clean = rawTitle.replacingOccurrences(of: " - YouTube Music", with: "")
         clean = clean.replacingOccurrences(of: "YouTube Music", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if clean.isEmpty {
-            return
-        }
+        if clean.isEmpty { return }
         
         if clean.contains(" - ") {
             let parts = clean.components(separatedBy: " - ")
@@ -225,6 +265,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPlayPause() {
+        guard !isDirectEngineConnected else { return }
         let script = """
         tell application "System Events"
             if (name of processes) contains "Google Chrome" then
@@ -232,7 +273,6 @@ public final class MediaControllerModel: ObservableObject {
                     repeat with w in windows
                         repeat with t in tabs of w
                             if (URL of t) contains "music.youtube.com" then
-                                -- Try JS first if enabled
                                 try
                                     execute t javascript "document.querySelector('video') ? (document.querySelector('video').paused ? document.querySelector('video').play() : document.querySelector('video').pause()) : null;"
                                 end try
@@ -247,6 +287,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserNextTrack() {
+        guard !isDirectEngineConnected else { return }
         let script = """
         tell application "System Events"
             if (name of processes) contains "Google Chrome" then
@@ -268,6 +309,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPreviousTrack() {
+        guard !isDirectEngineConnected else { return }
         let script = """
         tell application "System Events"
             if (name of processes) contains "Google Chrome" then
@@ -289,6 +331,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserSeek(to seconds: TimeInterval) {
+        guard !isDirectEngineConnected else { return }
         let script = """
         tell application "System Events"
             if (name of processes) contains "Google Chrome" then
@@ -310,6 +353,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserVolume(_ vol: Double) {
+        guard !isDirectEngineConnected else { return }
         let script = """
         tell application "System Events"
             if (name of processes) contains "Google Chrome" then
@@ -331,6 +375,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserMute(_ muted: Bool) {
+        guard !isDirectEngineConnected else { return }
         let script = """
         tell application "System Events"
             if (name of processes) contains "Google Chrome" then

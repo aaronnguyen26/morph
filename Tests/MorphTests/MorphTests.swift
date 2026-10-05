@@ -119,4 +119,89 @@ final class MorphTests: XCTestCase {
         model.returnToHome()
         XCTAssertEqual(model.selectedTab, .home)
     }
+    
+    @MainActor
+    func testYouTubeMusicEnginePayloadParsing() {
+        let engine = YouTubeMusicEngine()
+        
+        // Initial state
+        XCTAssertNotNil(engine.webView)
+        
+        // Simulate incoming JS bridge message payload
+        let mockPayload: [String: Any] = [
+            "title": "Save Your Tears",
+            "artist": "The Weeknd • After Hours",
+            "albumArt": "https://lh3.googleusercontent.com/test_art.jpg",
+            "isPlaying": true,
+            "currentTime": 45.5,
+            "duration": 215.0,
+            "volume": 0.85,
+            "isMuted": false,
+            "isLiked": true
+        ]
+        
+        engine.parseIncomingPayload(mockPayload)
+        
+        XCTAssertEqual(engine.trackData.title, "Save Your Tears")
+        XCTAssertEqual(engine.trackData.artist, "The Weeknd • After Hours")
+        XCTAssertEqual(engine.trackData.albumArtURL, "https://lh3.googleusercontent.com/test_art.jpg")
+        XCTAssertTrue(engine.trackData.isPlaying)
+        XCTAssertEqual(engine.trackData.currentTime, 45.5)
+        XCTAssertEqual(engine.trackData.duration, 215.0)
+        XCTAssertEqual(engine.trackData.volume, 0.85)
+        XCTAssertFalse(engine.trackData.isMuted)
+        XCTAssertTrue(engine.trackData.isLiked)
+    }
+    
+    @MainActor
+    func testMediaControllerModelDirectEngineBinding() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // Test initial values
+        XCTAssertEqual(media.sourceName, "YouTube Music Direct")
+        
+        // Send payload through engine
+        let mockPayload: [String: Any] = [
+            "title": "Levitating",
+            "artist": "Dua Lipa",
+            "albumArt": "https://example.com/art.png",
+            "isPlaying": true,
+            "currentTime": 30.0,
+            "duration": 203.0,
+            "volume": 0.9,
+            "isMuted": false,
+            "isLiked": false
+        ]
+        
+        engine.parseIncomingPayload(mockPayload)
+        
+        // MediaControllerModel should reflect parsed payload
+        XCTAssertEqual(media.trackTitle, "Levitating")
+        XCTAssertEqual(media.artistName, "Dua Lipa")
+        XCTAssertEqual(media.albumArtURL, "https://example.com/art.png")
+        XCTAssertTrue(media.isPlaying)
+        XCTAssertEqual(media.currentTime, 30.0)
+        XCTAssertEqual(media.duration, 203.0)
+        XCTAssertEqual(media.volume, 0.9)
+        XCTAssertFalse(media.isMuted)
+        
+        // Progress and formatted times
+        XCTAssertEqual(media.formattedCurrentTime, "0:30")
+        XCTAssertEqual(media.formattedDuration, "3:23")
+        XCTAssertEqual(media.progress, 30.0 / 203.0, accuracy: 0.001)
+        
+        // Controls
+        media.togglePlay()
+        XCTAssertFalse(media.isPlaying)
+        
+        media.toggleMute()
+        XCTAssertTrue(media.isMuted)
+        
+        media.setVolume(0.5)
+        XCTAssertEqual(media.volume, 0.5)
+        
+        media.toggleLike()
+        XCTAssertTrue(media.isLiked)
+    }
 }
