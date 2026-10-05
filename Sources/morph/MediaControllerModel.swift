@@ -12,6 +12,9 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var volume: Double = 0.8
     @Published public var isMuted: Bool = false
     @Published public var isLiked: Bool = false
+    @Published public var isDisliked: Bool = false
+    @Published public var isShuffle: Bool = false
+    @Published public var repeatMode: YTMRepeatMode = .off
     @Published public var sourceName: String = "YouTube Music Direct"
     @Published public var isDirectEngineConnected: Bool = false
     @Published public var isBrowserConnected: Bool = false
@@ -24,13 +27,34 @@ public final class MediaControllerModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var visualizerTimer: AnyCancellable?
     private var browserPollTimer: AnyCancellable?
+    private var playbackTicker: AnyCancellable?
     
     public init(engine: YouTubeMusicEngine = YouTubeMusicEngine.shared) {
         self.engine = engine
         
         setupEngineObservers()
         startVisualizer()
+        startPlaybackTicker()
         startBrowserPolling()
+    }
+    
+    private func startPlaybackTicker() {
+        playbackTicker = Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self = self, self.isPlaying else { return }
+                    // Only advance artificial ticker if completely in offline demo mode.
+                    // Never fight real WebKit or browser streams!
+                    if !self.isDirectEngineConnected && !self.isBrowserConnected {
+                        if self.currentTime < self.duration {
+                            self.currentTime += 1
+                        } else {
+                            self.nextTrack()
+                        }
+                    }
+                }
+            }
     }
     
     private func setupEngineObservers() {
@@ -52,6 +76,9 @@ public final class MediaControllerModel: ObservableObject {
                     self.volume = data.volume
                     self.isMuted = data.isMuted
                     self.isLiked = data.isLiked
+                    self.isDisliked = data.isDisliked
+                    self.isShuffle = data.isShuffle
+                    self.repeatMode = data.repeatMode
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
                 }
@@ -86,10 +113,31 @@ public final class MediaControllerModel: ObservableObject {
         return String(format: "%d:%02d", mins, secs)
     }
     
+    public func play() {
+        isPlaying = true
+        engine.play()
+        executeBrowserPlay()
+    }
+    
+    public func pause() {
+        isPlaying = false
+        engine.pause()
+        executeBrowserPause()
+    }
+    
+    public func stop() {
+        isPlaying = false
+        currentTime = 0
+        engine.stop()
+        executeBrowserStop()
+    }
+    
     public func togglePlay() {
-        isPlaying.toggle()
-        engine.togglePlay()
-        executeBrowserPlayPause()
+        if isPlaying {
+            pause()
+        } else {
+            play()
+        }
     }
     
     public func nextTrack() {
@@ -132,7 +180,35 @@ public final class MediaControllerModel: ObservableObject {
     
     public func toggleLike() {
         isLiked.toggle()
+        if isLiked && isDisliked {
+            isDisliked = false
+        }
         engine.toggleLike()
+    }
+    
+    public func toggleDislike() {
+        isDisliked.toggle()
+        if isDisliked && isLiked {
+            isLiked = false
+        }
+        engine.toggleDislike()
+    }
+    
+    public func toggleShuffle() {
+        isShuffle.toggle()
+        engine.toggleShuffle()
+    }
+    
+    public func toggleRepeat() {
+        switch repeatMode {
+        case .off:
+            repeatMode = .all
+        case .all:
+            repeatMode = .one
+        case .one:
+            repeatMode = .off
+        }
+        engine.toggleRepeat()
     }
     
     public func openPlayerWindow() {
@@ -275,6 +351,72 @@ public final class MediaControllerModel: ObservableObject {
                             if (URL of t) contains "music.youtube.com" then
                                 try
                                     execute t javascript "document.querySelector('video') ? (document.querySelector('video').paused ? document.querySelector('video').play() : document.querySelector('video').pause()) : null;"
+                                end try
+                            end if
+                        end repeat
+                    end repeat
+                end tell
+            end if
+        end tell
+        """
+        runScriptAsync(script)
+    }
+    
+    private func executeBrowserPlay() {
+        guard !isDirectEngineConnected else { return }
+        let script = """
+        tell application "System Events"
+            if (name of processes) contains "Google Chrome" then
+                tell application "Google Chrome"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            if (URL of t) contains "music.youtube.com" then
+                                try
+                                    execute t javascript "var v = document.querySelector('video'); if (v && v.paused) { v.play(); }"
+                                end try
+                            end if
+                        end repeat
+                    end repeat
+                end tell
+            end if
+        end tell
+        """
+        runScriptAsync(script)
+    }
+    
+    private func executeBrowserPause() {
+        guard !isDirectEngineConnected else { return }
+        let script = """
+        tell application "System Events"
+            if (name of processes) contains "Google Chrome" then
+                tell application "Google Chrome"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            if (URL of t) contains "music.youtube.com" then
+                                try
+                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); }"
+                                end try
+                            end if
+                        end repeat
+                    end repeat
+                end tell
+            end if
+        end tell
+        """
+        runScriptAsync(script)
+    }
+    
+    private func executeBrowserStop() {
+        guard !isDirectEngineConnected else { return }
+        let script = """
+        tell application "System Events"
+            if (name of processes) contains "Google Chrome" then
+                tell application "Google Chrome"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            if (URL of t) contains "music.youtube.com" then
+                                try
+                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = 0; }"
                                 end try
                             end if
                         end repeat

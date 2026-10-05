@@ -21,6 +21,11 @@ mkdir -p "$RESOURCES_DIR"
 cp "$DIR/.build/release/morph" "$MACOS_DIR/morph"
 chmod +x "$MACOS_DIR/morph"
 
+# Copy resources
+if [ -d "$DIR/Resources" ]; then
+    cp -R "$DIR/Resources/"* "$RESOURCES_DIR/" 2>/dev/null || true
+fi
+
 # Write Info.plist
 cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>

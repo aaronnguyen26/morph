@@ -50,6 +50,7 @@ public struct ScratchpadView: View {
                     .cornerRadius(5)
                 }
                 .buttonStyle(.plain)
+                .help("Copy All Notes (⌘⇧C)")
                 
                 // Clear / Undo Clear Button
                 if scratchpad.canUndoClear {
@@ -69,6 +70,7 @@ public struct ScratchpadView: View {
                         .cornerRadius(5)
                     }
                     .buttonStyle(.plain)
+                    .help("Undo Clear (⌘Z)")
                 } else if !scratchpad.text.isEmpty {
                     Button(action: {
                         scratchpad.clear()
@@ -86,6 +88,7 @@ public struct ScratchpadView: View {
                         .cornerRadius(5)
                     }
                     .buttonStyle(.plain)
+                    .help("Clear / New Note (⌘N)")
                 }
                 
                 Spacer()

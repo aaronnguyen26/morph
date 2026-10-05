@@ -68,6 +68,9 @@ public final class MorphController: NSObject {
         }
         
         self.panel.contentView = hostingView
+        self.panel.onKeyEquivalent = { event in
+            ShortcutManager.shared.handleKeyEvent(event)
+        }
         self.panel.orderFrontRegardless()
     }
     
@@ -87,17 +90,21 @@ public final class MorphController: NSObject {
                 guard let self = self else { return }
                 if expanded {
                     self.expandPanel()
+                    self.panel.makeKey()
                 } else if !self.model.isPinned {
                     self.scheduleWindowShrink()
                 }
             }
             .store(in: &cancellables)
             
-        // Observe Pomodoro and Media state to dynamically size compact notch indicators
-        Publishers.Merge(
+        // Observe Pomodoro, Media, and Scratchpad state to dynamically size compact notch indicators
+        Publishers.Merge4(
             model.pomodoro.$isRunning.map { _ in () },
-            model.media.$isPlaying.map { _ in () }
+            model.media.$isPlaying.map { _ in () },
+            model.$isNotePinnedToNotch.map { _ in () },
+            model.scratchpad.$text.map { _ in () }
         )
+        .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
             guard let self = self, !self.model.isExpanded else { return }
             self.resizePanelToRestingState()
@@ -118,22 +125,87 @@ public final class MorphController: NSObject {
             name: NSNotification.Name("com.morph.togglePin"),
             object: nil
         )
+        
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleSelectTabNotification(_:)),
+            name: NSNotification.Name("com.morph.selectTab"),
+            object: nil
+        )
+        
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleToggleTimerNotification(_:)),
+            name: NSNotification.Name("com.morph.toggleTimer"),
+            object: nil
+        )
+        
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleToggleMediaNotification(_:)),
+            name: NSNotification.Name("com.morph.toggleMedia"),
+            object: nil
+        )
+        
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(handleTogglePinNoteNotification(_:)),
+            name: NSNotification.Name("com.morph.togglePinNote"),
+            object: nil
+        )
+    }
+    
+    @objc private func handleSelectTabNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let tabRaw = notification.userInfo?["tab"] as? String else { return }
+            switch tabRaw.lowercased() {
+            case "profile": self.model.openFeature(.profile)
+            case "home": self.model.returnToHome()
+            case "timer", "focus": self.model.openFeature(.timer)
+            case "music": self.model.openFeature(.music)
+            case "notes": self.model.openFeature(.notes)
+            default: break
+            }
+        }
     }
     
     @objc private func handleToggleExpandNotification(_ notification: Notification) {
-        if model.isExpanded {
-            model.isPinned = false
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                model.isExpanded = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if self.model.isExpanded {
+                self.model.isPinned = false
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                    self.model.isExpanded = false
+                }
+                self.scheduleWindowShrink()
+            } else {
+                self.handleMouseEnter()
             }
-            scheduleWindowShrink()
-        } else {
-            handleMouseEnter()
         }
     }
     
     @objc private func handleTogglePinNotification(_ notification: Notification) {
-        model.togglePin()
+        DispatchQueue.main.async { [weak self] in
+            self?.model.togglePin()
+        }
+    }
+    
+    @objc private func handleToggleTimerNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.pomodoro.toggle()
+        }
+    }
+    
+    @objc private func handleToggleMediaNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.media.togglePlay()
+        }
+    }
+    
+    @objc private func handleTogglePinNoteNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.isNotePinnedToNotch.toggle()
+        }
     }
     
     private func setupMouseMonitors() {
@@ -192,6 +264,7 @@ public final class MorphController: NSObject {
                 self.model.isExpanded = true
             }
         }
+        panel.makeKey()
     }
     
     public func handleMouseExit() {

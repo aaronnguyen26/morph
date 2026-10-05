@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = MorphController(model: model)
         self.controller = controller
         self.menuBarManager = MenuBarManager(model: model, controller: controller)
+        ShortcutManager.shared.configure(model: model, controller: controller)
         
         print("Morph launched successfully. Tracking notch at: \(model.idleWidth) x \(model.idleHeight) pt")
     }

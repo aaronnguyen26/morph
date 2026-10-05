@@ -3,6 +3,28 @@ import WebKit
 import SwiftUI
 import Combine
 
+public enum YTMRepeatMode: String, Codable, CaseIterable {
+    case off
+    case all
+    case one
+    
+    public var iconName: String {
+        switch self {
+        case .off: return "repeat"
+        case .all: return "repeat"
+        case .one: return "repeat.1"
+        }
+    }
+    
+    public var displayTitle: String {
+        switch self {
+        case .off: return "Repeat Off"
+        case .all: return "Repeat All"
+        case .one: return "Repeat One"
+        }
+    }
+}
+
 public struct YTMTrackData: Codable, Equatable {
     public var title: String
     public var artist: String
@@ -13,6 +35,9 @@ public struct YTMTrackData: Codable, Equatable {
     public var volume: Double
     public var isMuted: Bool
     public var isLiked: Bool
+    public var isDisliked: Bool
+    public var isShuffle: Bool
+    public var repeatMode: YTMRepeatMode
     
     public init(
         title: String = "",
@@ -23,7 +48,10 @@ public struct YTMTrackData: Codable, Equatable {
         duration: Double = 0,
         volume: Double = 1.0,
         isMuted: Bool = false,
-        isLiked: Bool = false
+        isLiked: Bool = false,
+        isDisliked: Bool = false,
+        isShuffle: Bool = false,
+        repeatMode: YTMRepeatMode = .off
     ) {
         self.title = title
         self.artist = artist
@@ -34,6 +62,9 @@ public struct YTMTrackData: Codable, Equatable {
         self.volume = volume
         self.isMuted = isMuted
         self.isLiked = isLiked
+        self.isDisliked = isDisliked
+        self.isShuffle = isShuffle
+        self.repeatMode = repeatMode
     }
 }
 
@@ -168,6 +199,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let vol = (body["volume"] as? Double) ?? 1.0
         let muted = (body["isMuted"] as? Bool) ?? false
         let liked = (body["isLiked"] as? Bool) ?? false
+        let disliked = (body["isDisliked"] as? Bool) ?? false
+        let shuffle = (body["isShuffle"] as? Bool) ?? false
+        let repStr = (body["repeatMode"] as? String) ?? "off"
+        let repeatMode = YTMRepeatMode(rawValue: repStr) ?? .off
         
         self.trackData = YTMTrackData(
             title: title.isEmpty ? "YouTube Music" : title,
@@ -178,7 +213,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             duration: dur,
             volume: vol,
             isMuted: muted,
-            isLiked: liked
+            isLiked: liked,
+            isDisliked: disliked,
+            isShuffle: shuffle,
+            repeatMode: repeatMode
         )
         
         if !title.isEmpty && title != "YouTube Music" {
@@ -239,50 +277,169 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     // MARK: - Direct Playback Commands
     public func play() {
-        evaluate("var v = document.querySelector('video'); if (v) { v.play(); }")
-    }
-    
-    public func pause() {
-        evaluate("var v = document.querySelector('video'); if (v) { v.pause(); }")
-    }
-    
-    public func togglePlay() {
         let script = """
-        var btn = document.querySelector('#play-pause-button');
-        if (btn) {
-            btn.click();
-        } else {
-            var v = document.querySelector('video');
-            if (v) {
-                if (v.paused) { v.play(); } else { v.pause(); }
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.playVideo === 'function') {
+                p.playVideo();
             }
-        }
+            var v = document.querySelector('video');
+            if (v && v.paused) {
+                v.play().catch(function(){});
+            }
+            var btn = document.querySelector('#play-pause-button') || document.querySelector('ytmusic-player-bar #play-pause-button');
+            if (btn) {
+                var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
+                if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1) {
+                    btn.click();
+                    var inner = btn.querySelector('button, #button, yt-icon');
+                    if (inner) inner.click();
+                }
+            }
+            if (navigator.mediaSession) {
+                navigator.mediaSession.playbackState = 'playing';
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 150);
+            }
+        })();
         """
         evaluate(script)
     }
     
+    public func pause() {
+        let script = """
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.pauseVideo === 'function') {
+                p.pauseVideo();
+            }
+            var videos = document.querySelectorAll('video, audio');
+            for (var i = 0; i < videos.length; i++) {
+                videos[i].pause();
+            }
+            var btn = document.querySelector('#play-pause-button') || document.querySelector('ytmusic-player-bar #play-pause-button');
+            if (btn) {
+                var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
+                if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1) {
+                    btn.click();
+                    var inner = btn.querySelector('button, #button, yt-icon');
+                    if (inner) inner.click();
+                }
+            }
+            if (navigator.mediaSession) {
+                navigator.mediaSession.playbackState = 'paused';
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 150);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func stop() {
+        let script = """
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.stopVideo === 'function') {
+                p.stopVideo();
+            }
+            var videos = document.querySelectorAll('video, audio');
+            for (var i = 0; i < videos.length; i++) {
+                videos[i].pause();
+                try { videos[i].currentTime = 0; } catch(e) {}
+            }
+            var btn = document.querySelector('#play-pause-button') || document.querySelector('ytmusic-player-bar #play-pause-button');
+            if (btn) {
+                var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
+                if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1) {
+                    btn.click();
+                }
+            }
+            if (navigator.mediaSession) {
+                navigator.mediaSession.playbackState = 'none';
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 150);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func togglePlay() {
+        if trackData.isPlaying {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
     public func nextTrack() {
         let script = """
-        var btn = document.querySelector('.next-button') || document.querySelector('#right-controls .next-button');
-        if (btn) { btn.click(); }
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.nextVideo === 'function') {
+                p.nextVideo();
+            } else {
+                var btn = document.querySelector('.next-button') || 
+                          document.querySelector('#right-controls .next-button') || 
+                          document.querySelector('ytmusic-player-bar .next-button');
+                if (btn) {
+                    btn.click();
+                    var inner = btn.querySelector('button, #button, yt-icon');
+                    if (inner) inner.click();
+                }
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 400);
+            }
+        })();
         """
         evaluate(script)
     }
     
     public func previousTrack() {
         let script = """
-        var btn = document.querySelector('.previous-button') || document.querySelector('#left-controls .previous-button');
-        if (btn) { btn.click(); }
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.previousVideo === 'function') {
+                p.previousVideo();
+            } else {
+                var btn = document.querySelector('.previous-button') || 
+                          document.querySelector('#left-controls .previous-button') || 
+                          document.querySelector('ytmusic-player-bar .previous-button');
+                if (btn) {
+                    btn.click();
+                    var inner = btn.querySelector('button, #button, yt-icon');
+                    if (inner) inner.click();
+                }
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 400);
+            }
+        })();
         """
         evaluate(script)
     }
     
     public func seek(to seconds: Double) {
         let script = """
-        var v = document.querySelector('video');
-        if (v && !isNaN(\(seconds))) {
-            v.currentTime = \(seconds);
-        }
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.seekTo === 'function') {
+                p.seekTo(\(seconds), true);
+            } else {
+                var v = document.querySelector('video');
+                if (v && !isNaN(\(seconds))) {
+                    v.currentTime = \(seconds);
+                }
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate();
+            }
+        })();
         """
         evaluate(script)
     }
@@ -290,32 +447,129 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func setVolume(_ volume: Double) {
         let clamped = max(0, min(1, volume))
         let script = """
-        var v = document.querySelector('video');
-        if (v) {
-            v.volume = \(clamped);
-            if (v.muted && \(clamped) > 0) { v.muted = false; }
-        }
+        (function() {
+            var vol = \(clamped);
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.setVolume === 'function') {
+                p.setVolume(Math.round(vol * 100));
+                if (vol > 0 && typeof p.unMute === 'function') {
+                    p.unMute();
+                }
+            }
+            var v = document.querySelector('video');
+            if (v) {
+                v.volume = vol;
+                if (v.muted && vol > 0) { v.muted = false; }
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate();
+            }
+        })();
         """
         evaluate(script)
     }
     
     public func toggleMute() {
         let script = """
-        var v = document.querySelector('video');
-        if (v) {
-            v.muted = !v.muted;
-        }
+        (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.isMuted === 'function') {
+                if (p.isMuted()) {
+                    p.unMute();
+                } else {
+                    p.mute();
+                }
+            }
+            var v = document.querySelector('video');
+            if (v) {
+                v.muted = !v.muted;
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate();
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func toggleShuffle() {
+        let script = """
+        (function() {
+            var btn = document.querySelector('ytmusic-player-bar .shuffle') || 
+                      document.querySelector('#right-controls .shuffle') || 
+                      document.querySelector('.shuffle.ytmusic-player-bar') ||
+                      document.querySelector('tp-yt-paper-icon-button.shuffle');
+            if (btn) {
+                btn.click();
+                var inner = btn.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 250);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func toggleRepeat() {
+        let script = """
+        (function() {
+            var btn = document.querySelector('ytmusic-player-bar .repeat') || 
+                      document.querySelector('#right-controls .repeat') || 
+                      document.querySelector('.repeat.ytmusic-player-bar') ||
+                      document.querySelector('tp-yt-paper-icon-button.repeat');
+            if (btn) {
+                btn.click();
+                var inner = btn.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 250);
+            }
+        })();
         """
         evaluate(script)
     }
     
     public func toggleLike() {
         let script = """
-        var btn = document.querySelector('#like-button-renderer yt-icon-button.like') || document.querySelector('ytmusic-like-button-renderer #button');
-        if (btn) { btn.click(); }
+        (function() {
+            var btn = document.querySelector('#like-button-renderer yt-icon-button.like') || 
+                      document.querySelector('ytmusic-like-button-renderer #like-button') ||
+                      document.querySelector('ytmusic-like-button-renderer .like');
+            if (btn) {
+                btn.click();
+                var inner = btn.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 250);
+            }
+        })();
         """
         evaluate(script)
     }
+    
+    public func toggleDislike() {
+        let script = """
+        (function() {
+            var btn = document.querySelector('#like-button-renderer yt-icon-button.dislike') || 
+                      document.querySelector('ytmusic-like-button-renderer #dislike-button') ||
+                      document.querySelector('ytmusic-like-button-renderer .dislike');
+            if (btn) {
+                btn.click();
+                var inner = btn.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 250);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+
     
     public func evaluate(_ js: String) {
         webView.evaluateJavaScript(js) { _, error in
@@ -530,17 +784,52 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var bylineEl = document.querySelector('ytmusic-player-bar .byline') || document.querySelector('.byline.ytmusic-player-bar');
                 var imgEl = document.querySelector('ytmusic-player-bar .thumbnail img') || document.querySelector('#song-image img') || document.querySelector('ytmusic-player-bar img');
                 var videoEl = document.querySelector('video');
-                var likeBtn = document.querySelector('#like-button-renderer yt-icon-button.like');
+                var playerEl = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                var likeBtn = document.querySelector('#like-button-renderer yt-icon-button.like') || document.querySelector('ytmusic-like-button-renderer .like');
+                var dislikeBtn = document.querySelector('#like-button-renderer yt-icon-button.dislike') || document.querySelector('ytmusic-like-button-renderer .dislike');
+                var shuffleBtn = document.querySelector('ytmusic-player-bar .shuffle') || document.querySelector('#right-controls .shuffle') || document.querySelector('.shuffle.ytmusic-player-bar');
+                var repeatBtn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat.ytmusic-player-bar');
                 
                 var title = titleEl ? (titleEl.innerText || titleEl.textContent || '') : '';
                 var artist = bylineEl ? (bylineEl.innerText || bylineEl.textContent || '') : '';
                 var art = imgEl ? imgEl.src : null;
-                var isPlaying = videoEl ? (!videoEl.paused && !videoEl.ended) : false;
-                var currentTime = videoEl ? videoEl.currentTime : 0;
-                var duration = videoEl ? videoEl.duration : 0;
-                var volume = videoEl ? videoEl.volume : 1.0;
-                var isMuted = videoEl ? videoEl.muted : false;
+                
+                var isPlaying = false;
+                if (playerEl && typeof playerEl.getPlayerState === 'function') {
+                    var s = playerEl.getPlayerState();
+                    isPlaying = (s === 1 || s === 3);
+                } else if (videoEl) {
+                    isPlaying = (!videoEl.paused && !videoEl.ended);
+                }
+                
+                var currentTime = videoEl ? videoEl.currentTime : (playerEl && typeof playerEl.getCurrentTime === 'function' ? playerEl.getCurrentTime() : 0);
+                var duration = videoEl ? videoEl.duration : (playerEl && typeof playerEl.getDuration === 'function' ? playerEl.getDuration() : 0);
+                var volume = videoEl ? videoEl.volume : (playerEl && typeof playerEl.getVolume === 'function' ? (playerEl.getVolume() / 100) : 1.0);
+                var isMuted = videoEl ? videoEl.muted : (playerEl && typeof playerEl.isMuted === 'function' ? playerEl.isMuted() : false);
+                
                 var isLiked = likeBtn ? (likeBtn.getAttribute('aria-pressed') === 'true') : false;
+                var isDisliked = dislikeBtn ? (dislikeBtn.getAttribute('aria-pressed') === 'true') : false;
+                
+                var isShuffle = false;
+                if (shuffleBtn) {
+                    isShuffle = shuffleBtn.getAttribute('aria-pressed') === 'true' || 
+                                shuffleBtn.getAttribute('aria-checked') === 'true' || 
+                                shuffleBtn.classList.contains('active') ||
+                                ((shuffleBtn.getAttribute('title') || '').toLowerCase().indexOf('on') !== -1);
+                }
+                
+                var repeatMode = 'off';
+                if (repeatBtn) {
+                    var rText = ((repeatBtn.getAttribute('aria-label') || repeatBtn.getAttribute('title') || '') + ' ' + (repeatBtn.innerText || '')).toLowerCase();
+                    var rPressed = repeatBtn.getAttribute('aria-pressed');
+                    if (rText.indexOf('one') !== -1 || rText.indexOf('1') !== -1) {
+                        repeatMode = 'one';
+                    } else if (rText.indexOf('all') !== -1 || rPressed === 'true') {
+                        repeatMode = 'all';
+                    } else {
+                        repeatMode = 'off';
+                    }
+                }
                 
                 return {
                     title: title,
@@ -551,7 +840,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     duration: isNaN(duration) ? 0 : duration,
                     volume: isNaN(volume) ? 1.0 : volume,
                     isMuted: isMuted,
-                    isLiked: isLiked
+                    isLiked: isLiked,
+                    isDisliked: isDisliked,
+                    isShuffle: isShuffle,
+                    repeatMode: repeatMode
                 };
             }
             
@@ -593,7 +885,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             setInterval(function() {
                 attachVideoListeners();
                 window.morphSendUpdate();
-            }, 1000);
+            }, 800);
         })();
         """
     }

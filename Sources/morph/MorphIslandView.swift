@@ -61,6 +61,19 @@ public struct MorphIslandView: View {
                 )
                 .fill(Color.black)
                 .overlay(
+                    // Luxury dark ambient background texture
+                    backgroundImageView
+                        .clipShape(
+                            UnevenRoundedRectangle(
+                                topLeadingRadius: topRadius,
+                                bottomLeadingRadius: cornerRadius,
+                                bottomTrailingRadius: cornerRadius,
+                                topTrailingRadius: topRadius,
+                                style: .continuous
+                            )
+                        )
+                )
+                .overlay(
                     // Notch Border Edges: Hairline border matching physical MacBook notch contour
                     UnevenRoundedRectangle(
                         topLeadingRadius: topRadius,
@@ -143,141 +156,141 @@ public struct MorphIslandView: View {
         .contentShape(Rectangle())
     }
     
-    // MARK: - 2. Compact Active Notch View (Dynamic Island extending below & around camera notch)
+    // MARK: - 2. Compact Active Notch View (Independent Dynamic Island HUD)
     private var compactActiveNotchView: some View {
         VStack(spacing: 0) {
+            // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
             HStack(spacing: 0) {
-                // Left Wing: Outside camera notch, 100% visible to user!
-                HStack(spacing: 6) {
-                    if model.pomodoro.isRunning {
-                        ZStack {
-                            Circle()
-                                .stroke(Color.white.opacity(0.2), lineWidth: 2)
-                                .frame(width: 14, height: 14)
-                            
-                            Circle()
-                                .trim(from: 0, to: CGFloat(model.pomodoro.progress))
-                                .stroke(Color(red: 0.2, green: 0.9, blue: 0.6), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                                .frame(width: 14, height: 14)
-                        }
-                        
-                        Text(model.pomodoro.formattedTime)
-                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white)
-                    } else if model.media.isPlaying {
-                        HStack(spacing: 5) {
-                            if let art = model.media.albumArtURL, let url = URL(string: art) {
-                                AsyncImage(url: url) { phase in
-                                    if let img = phase.image {
-                                        img.resizable()
-                                            .aspectRatio(contentMode: .fill)
-                                            .frame(width: 17, height: 17)
-                                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                                    } else {
-                                        Image(systemName: "music.note")
-                                            .font(.system(size: 9.5, weight: .bold))
-                                            .foregroundColor(.cyan)
-                                    }
-                                }
-                            } else {
-                                Image(systemName: "music.note")
-                                    .font(.system(size: 9.5, weight: .bold))
-                                    .foregroundColor(.cyan)
-                            }
-                            
-                            Text(model.media.trackTitle.isEmpty ? "Playing" : model.media.trackTitle)
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .frame(maxWidth: 82, alignment: .leading)
-                        }
-                    }
-                }
-                .padding(.leading, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Left Wing: Outside camera notch, 100% visible
+                leftCompactWing
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 
-                // Center: Blind spot spacer matching hardware camera cutout
+                // Center: Hardware camera notch blind spot (zero elements behind camera!)
                 Color.clear
                     .frame(width: model.idleWidth, height: model.idleHeight)
                 
-                // Right Wing: Outside camera notch, 100% visible to user!
-                HStack(spacing: 6) {
-                    if model.media.isPlaying {
-                        HStack(alignment: .bottom, spacing: 2) {
-                            ForEach(0..<4, id: \.self) { i in
-                                RoundedRectangle(cornerRadius: 1)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color(red: 0.4, green: 0.9, blue: 1.0), Color.white],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                                    .frame(width: 2.2, height: max(3, 13 * model.media.visualizerBars[i % 3]))
-                                    .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i % 3])
-                            }
-                        }
-                        .frame(height: 13, alignment: .bottom)
-                        
-                        Circle()
-                            .fill(Color.white.opacity(0.75))
-                            .frame(width: 4, height: 4)
-                    } else if model.pomodoro.isRunning {
-                        Text(model.pomodoro.mode == .work ? "FOCUS" : "BREAK")
-                            .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                            .foregroundColor(Color.white.opacity(0.9))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2.5)
-                            .background(Color.white.opacity(0.14))
-                            .clipShape(Capsule())
-                    }
-                }
-                .padding(.trailing, 12)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                // Right Wing: Outside camera notch, 100% visible
+                rightCompactWing
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(height: model.idleHeight)
             
-            // Bottom Shelf: Sits directly BELOW the camera notch (100% visible to user!)
-            HStack(spacing: 6) {
-                if model.pomodoro.isRunning && model.media.isPlaying {
-                    Text("FOCUS • \(model.pomodoro.formattedTime)")
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.85))
-                    Text("•")
-                        .foregroundColor(Color.white.opacity(0.3))
-                        .font(.system(size: 7))
-                    Text(model.media.trackTitle.isEmpty ? "Audio" : model.media.trackTitle)
-                        .font(.system(size: 8.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.7))
-                        .lineLimit(1)
-                } else if model.media.isPlaying {
-                    Text(model.media.artistName.isEmpty ? "YouTube Music Active" : model.media.artistName)
-                        .font(.system(size: 8.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.7))
-                        .lineLimit(1)
-                } else if model.pomodoro.isRunning {
-                    Text("Deep Focus active • Hover to expand")
-                        .font(.system(size: 8.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.7))
-                }
+            // Bottom Shelf: Only rendered when notes are explicitly pinned!
+            if model.compactHUDMode == .notesPinned {
+                compactBottomShelf
+                    .frame(maxWidth: .infinity)
+                    .frame(height: model.compactHeight - model.idleHeight)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 3)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: model.compactHeight - model.idleHeight)
-            .padding(.bottom, 2)
         }
         .frame(width: model.compactWidth, height: model.compactHeight)
         .contentShape(Rectangle())
-        .onTapGesture {
+    }
+    
+    // MARK: - Independent Left Compact Wing
+    @ViewBuilder
+    private var leftCompactWing: some View {
+        switch model.compactHUDMode {
+        case .pomodoroOnly:
+            CompactPomodoroWingLeft(pomodoro: model.pomodoro, model: model)
+        case .mediaOnly:
+            CompactMediaWingLeft(media: model.media, model: model)
+        case .dualActive:
+            CompactDualWingLeft(pomodoro: model.pomodoro, model: model)
+        case .notesPinned:
+            CompactNotesWingLeft(model: model)
+        case .none:
+            EmptyView()
+        }
+    }
+    
+    // MARK: - Independent Right Compact Wing
+    @ViewBuilder
+    private var rightCompactWing: some View {
+        switch model.compactHUDMode {
+        case .pomodoroOnly:
+            CompactPomodoroWingRight(pomodoro: model.pomodoro, model: model)
+        case .mediaOnly:
+            CompactMediaWingRight(media: model.media, model: model)
+        case .dualActive:
+            CompactDualWingRight(media: model.media, model: model)
+        case .notesPinned:
+            expandChevron
+                .padding(.trailing, 10)
+        case .none:
+            EmptyView()
+        }
+    }
+    
+    // MARK: - Compact Bottom Shelf (Only for Notes Pinned Mode)
+    private var compactBottomShelf: some View {
+        HStack(spacing: 6) {
+            Button(action: {
+                model.selectedTab = .notes
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                    model.isExpanded = true
+                }
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white)
+                    
+                    let snippet = model.scratchpad.text
+                        .replacingOccurrences(of: "\n", with: " • ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    
+                    Text(snippet.isEmpty ? "Tap to view scratchpad" : snippet)
+                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .buttonStyle(.plain)
+            
+            Spacer(minLength: 4)
+            
+            Button(action: {
+                model.scratchpad.copyAll()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: model.scratchpad.showCopiedAlert ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 7.5, weight: .bold))
+                    Text(model.scratchpad.showCopiedAlert ? "Copied!" : "Copy")
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(Color.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.16))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+    
+    private var expandChevron: some View {
+        Button(action: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                 model.isExpanded = true
             }
+        }) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundColor(Color.white.opacity(0.45))
+                .frame(width: 16, height: 16)
+                .background(Color.white.opacity(0.06))
+                .clipShape(Circle())
         }
+        .buttonStyle(.plain)
+        .help("Expand Island")
     }
     
     // MARK: - 3. Expanded Island View (640 x 300 pt)
     private var expandedView: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
             topNotchRow
                 .frame(height: notchBlindHeight)
@@ -297,13 +310,16 @@ public struct MorphIslandView: View {
                 case .notes:
                     ScratchpadView(scratchpad: model.scratchpad)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                case .profile:
+                    ProfileView(model: model)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 }
             }
             .frame(maxHeight: .infinity)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 4)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 10)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
         .frame(width: model.expandedWidth, height: model.expandedHeight, alignment: .top)
     }
     
@@ -311,35 +327,57 @@ public struct MorphIslandView: View {
     private var topNotchRow: some View {
         HStack(spacing: 0) {
             // LEFT WING (Outside Notch: 100% Visible)
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 if model.selectedTab != .home {
                     Button(action: {
                         model.returnToHome()
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.system(size: 8.5, weight: .bold))
                             Text("Home")
-                                .font(.system(size: 10.5, weight: .bold))
+                                .font(.system(size: 9.5, weight: .bold))
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
                         .background(Color.white.opacity(0.12))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .help("Back to Home (⌘[)")
                 } else {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(Color.white.opacity(0.8))
-                            .frame(width: 5, height: 5)
-                        
-                        Text("MORPH")
-                            .font(.system(size: 11, weight: .heavy, design: .rounded))
-                            .foregroundColor(.white)
-                            .tracking(1.4)
+                    // Profile Avatar Pill on Home screen (Pure Clean: No decorative dots!)
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            model.selectedTab = .profile
+                        }
+                    }) {
+                        HStack(spacing: 5) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white.opacity(0.18))
+                                    .frame(width: 16, height: 16)
+                                Text(model.supabase.currentUser.displayInitials)
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            Text(model.supabase.currentUser.firstName)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .help("Profile & Preferences (⌘5 or ⌘,)")
                 }
                 
                 Spacer()
@@ -352,12 +390,12 @@ public struct MorphIslandView: View {
                 .frame(width: notchBlindWidth, height: notchBlindHeight)
             
             // RIGHT WING (Outside Notch: 100% Visible)
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Spacer()
                 
-                // Tabs
+                // Segmented Tabs
                 HStack(spacing: 3.5) {
-                    ForEach(MorphTab.allCases) { tab in
+                    ForEach([MorphTab.home, .timer, .music, .notes]) { tab in
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 model.selectedTab = tab
@@ -371,7 +409,7 @@ public struct MorphIslandView: View {
                                     .lineLimit(1)
                                     .fixedSize(horizontal: true, vertical: false)
                             }
-                            .foregroundColor(model.selectedTab == tab ? .black : Color.white.opacity(0.6))
+                            .foregroundColor(model.selectedTab == tab ? .black : Color.white.opacity(0.65))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3.5)
                             .background(
@@ -382,6 +420,7 @@ public struct MorphIslandView: View {
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .help("\(tab.rawValue) (\(shortcutForTab(tab)))")
                     }
                 }
                 
@@ -390,14 +429,14 @@ public struct MorphIslandView: View {
                     model.togglePin()
                 }) {
                     Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 8.5))
                         .foregroundColor(model.isPinned ? .white : Color.white.opacity(0.5))
-                        .frame(width: 22, height: 22)
+                        .frame(width: 20, height: 20)
                         .background(model.isPinned ? Color.white.opacity(0.25) : Color.white.opacity(0.06))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help(model.isPinned ? "Unpin Window" : "Pin Window Open")
+                .help(model.isPinned ? "Unpin Window (⌘P)" : "Pin Window Open (⌘P)")
                 
                 // Collapse Button
                 Button(action: {
@@ -405,16 +444,379 @@ public struct MorphIslandView: View {
                     model.isExpanded = false
                 }) {
                     Image(systemName: "chevron.up")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(.system(size: 8.5, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.6))
-                        .frame(width: 22, height: 22)
+                        .frame(width: 20, height: 20)
                         .background(Color.white.opacity(0.06))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Collapse to notch")
+                .help("Collapse to Notch (⌘W or ⌘M)")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
+    }
+    
+    // MARK: - Background Image Texture
+    @ViewBuilder
+    private var backgroundImageView: some View {
+        if model.isExpanded {
+            if let image = loadBackgroundImage() {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: model.expandedWidth, height: model.expandedHeight)
+                    .clipped()
+                    .opacity(0.85)
+            } else {
+                // Procedural dark ambient gradient fallback
+                LinearGradient(
+                    colors: [
+                        Color(white: 0.12),
+                        Color(white: 0.05),
+                        Color(white: 0.01)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+    }
+    
+    private func loadBackgroundImage() -> NSImage? {
+        if let url = Bundle.main.url(forResource: "morph_bg", withExtension: "jpg"),
+           let img = NSImage(contentsOf: url) {
+            return img
+        }
+        let localPath = "Resources/morph_bg.jpg"
+        if FileManager.default.fileExists(atPath: localPath),
+           let img = NSImage(contentsOfFile: localPath) {
+            return img
+        }
+        return nil
+    }
+    
+    private func shortcutForTab(_ tab: MorphTab) -> String {
+        tab.shortcutLabel
+    }
+}
+
+// MARK: - Dedicated Synchronous Collapsed Subviews
+
+private struct CompactPomodoroWingLeft: View {
+    @ObservedObject var pomodoro: PomodoroModel
+    let model: NotchModel
+    
+    var body: some View {
+        Button(action: {
+            model.openFeature(.timer)
+        }) {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 2)
+                        .frame(width: 15, height: 15)
+                    
+                    Circle()
+                        .trim(from: 0, to: CGFloat(pomodoro.progress))
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white, Color.white.opacity(0.4)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 15, height: 15)
+                }
+                
+                if pomodoro.isRunning {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 3.5, height: 3.5)
+                        .opacity(0.9)
+                }
+                
+                Text(pomodoro.formattedTime)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+            .padding(.leading, 12)
+        }
+        .buttonStyle(.plain)
+        .help("Open Focus Timer (⌘2)")
+    }
+}
+
+private struct CompactPomodoroWingRight: View {
+    @ObservedObject var pomodoro: PomodoroModel
+    let model: NotchModel
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(pomodoro.mode == .work ? "FOCUS" : "BREAK")
+                .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.9))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.14))
+                .clipShape(Capsule())
+            
+            Button(action: {
+                pomodoro.toggle()
+            }) {
+                Image(systemName: pomodoro.isRunning ? "pause.fill" : "play.fill")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 18, height: 18)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help(pomodoro.isRunning ? "Pause Focus Timer (⌘⏎)" : "Start Focus Timer (⌘⏎)")
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                    model.isExpanded = true
+                }
+            }) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .frame(width: 16, height: 16)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Expand Island (⌘⌥M)")
+        }
+        .padding(.trailing, 12)
+    }
+}
+
+private struct CompactMediaWingLeft: View {
+    @ObservedObject var media: MediaControllerModel
+    let model: NotchModel
+    
+    var body: some View {
+        Button(action: {
+            model.openFeature(.music)
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "music.note")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(.white)
+                
+                Text(media.trackTitle.isEmpty ? "Playing" : media.trackTitle)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .frame(maxWidth: 95, alignment: .leading)
+            }
+            .padding(.leading, 12)
+        }
+        .buttonStyle(.plain)
+        .help("Open Media Player (⌘3)")
+    }
+}
+
+private struct CompactMediaWingRight: View {
+    @ObservedObject var media: MediaControllerModel
+    let model: NotchModel
+    
+    var body: some View {
+        HStack(spacing: 6) {
+            // Live Synchronous Equalizer
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(0..<3, id: \.self) { i in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white, Color.white.opacity(0.4)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 2.5, height: max(3, 12 * CGFloat(media.visualizerBars[i % 3])))
+                        .animation(.easeOut(duration: 0.12), value: media.visualizerBars[i % 3])
+                }
+            }
+            .frame(height: 12, alignment: .bottom)
+            
+            Button(action: {
+                media.togglePlay()
+            }) {
+                Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 18, height: 18)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help(media.isPlaying ? "Pause Music (⌘⏎)" : "Play Music (⌘⏎)")
+            
+            Button(action: {
+                media.nextTrack()
+            }) {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 18, height: 18)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Next Track (⌘])")
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                    model.isExpanded = true
+                }
+            }) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .frame(width: 16, height: 16)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Expand Island (⌘⌥M)")
+        }
+        .padding(.trailing, 12)
+    }
+}
+
+private struct CompactDualWingLeft: View {
+    @ObservedObject var pomodoro: PomodoroModel
+    let model: NotchModel
+    
+    var body: some View {
+        HStack(spacing: 5) {
+            Button(action: {
+                model.openFeature(.timer)
+            }) {
+                HStack(spacing: 5) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.18), lineWidth: 2)
+                            .frame(width: 14, height: 14)
+                        
+                        Circle()
+                            .trim(from: 0, to: CGFloat(pomodoro.progress))
+                            .stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 14, height: 14)
+                    }
+                    
+                    Text(pomodoro.formattedTime)
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Open Focus Timer (⌘2)")
+            
+            Button(action: {
+                pomodoro.toggle()
+            }) {
+                Image(systemName: pomodoro.isRunning ? "pause.fill" : "play.fill")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 17, height: 17)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Pause/Resume Focus Timer (⌘⏎)")
+        }
+        .padding(.leading, 12)
+    }
+}
+
+private struct CompactDualWingRight: View {
+    @ObservedObject var media: MediaControllerModel
+    let model: NotchModel
+    
+    var body: some View {
+        HStack(spacing: 5) {
+            Button(action: {
+                model.openFeature(.music)
+            }) {
+                HStack(spacing: 4) {
+                    HStack(alignment: .bottom, spacing: 1.5) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(Color.white)
+                                .frame(width: 2, height: max(3, 10 * CGFloat(media.visualizerBars[i % 3])))
+                                .animation(.easeOut(duration: 0.12), value: media.visualizerBars[i % 3])
+                        }
+                    }
+                    .frame(height: 10, alignment: .bottom)
+                    
+                    Text(media.trackTitle.isEmpty ? "Playing" : media.trackTitle)
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: 68, alignment: .leading)
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Open Media Player (⌘3)")
+            
+            Button(action: {
+                media.togglePlay()
+            }) {
+                Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 17, height: 17)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Pause/Play Music (⌘⏎)")
+            
+            Button(action: {
+                media.nextTrack()
+            }) {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 17, height: 17)
+                    .background(Color.white.opacity(0.16))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Next Track (⌘])")
+        }
+        .padding(.trailing, 12)
+    }
+}
+
+private struct CompactNotesWingLeft: View {
+    let model: NotchModel
+    
+    var body: some View {
+        Button(action: {
+            model.openFeature(.notes)
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "note.text")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+                Text("Scratchpad")
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            .padding(.leading, 12)
+        }
+        .buttonStyle(.plain)
+        .help("Open Scratchpad (⌘4)")
     }
 }

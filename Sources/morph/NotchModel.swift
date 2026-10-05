@@ -6,6 +6,7 @@ public enum MorphTab: String, CaseIterable, Identifiable {
     case timer = "Focus"
     case music = "Music"
     case notes = "Notes"
+    case profile = "Profile"
     
     public var id: String { rawValue }
     
@@ -15,8 +16,27 @@ public enum MorphTab: String, CaseIterable, Identifiable {
         case .timer: return "timer"
         case .music: return "play.circle.fill"
         case .notes: return "note.text"
+        case .profile: return "person.crop.circle"
         }
     }
+    
+    public var shortcutLabel: String {
+        switch self {
+        case .home: return "⌘1"
+        case .timer: return "⌘2"
+        case .music: return "⌘3"
+        case .notes: return "⌘4"
+        case .profile: return "⌘5"
+        }
+    }
+}
+
+public enum CompactHUDMode: String, Equatable {
+    case none
+    case pomodoroOnly
+    case mediaOnly
+    case dualActive
+    case notesPinned
 }
 
 @MainActor
@@ -25,19 +45,20 @@ public final class NotchModel: ObservableObject {
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
     
-    // Expanded Island Dimensions (640 x 300 pt)
+    // Expanded Island Dimensions (640 width, 225 shortened length)
     public let expandedWidth: CGFloat = 640
-    public let expandedHeight: CGFloat = 300
+    public let expandedHeight: CGFloat = 225
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
     @Published public var selectedTab: MorphTab = .home
     
-    // Sub-models for the 3 features
+    // Sub-models for the features
     public let pomodoro: PomodoroModel
     public let media: MediaControllerModel
     public let scratchpad: ScratchpadModel
+    public let supabase: SupabaseService
     
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
@@ -47,36 +68,69 @@ public final class NotchModel: ObservableObject {
     public init(
         pomodoro: PomodoroModel = PomodoroModel(),
         media: MediaControllerModel = MediaControllerModel(),
-        scratchpad: ScratchpadModel = ScratchpadModel()
+        scratchpad: ScratchpadModel = ScratchpadModel(),
+        supabase: SupabaseService = .shared
     ) {
         self.pomodoro = pomodoro
         self.media = media
         self.scratchpad = scratchpad
+        self.supabase = supabase
         
         detectScreenNotch()
         observeSubmodels()
     }
     
-    public var isCompactActive: Bool {
-        pomodoro.isRunning || media.isPlaying
+    @Published public var isNotePinnedToNotch: Bool = false
+    
+    public var hasActiveNotes: Bool {
+        !scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
-    public var compactHeight: CGFloat {
-        max(idleHeight + 16, 48)
-    }
-    
-    // Compact notch width when activity is running on the notch itself.
-    // Gives generous left & right wings (90-100 pt each) outside the physical notch
-    // so active timers and music visualizers are 100% visible to the user!
-    public var compactWidth: CGFloat {
-        if pomodoro.isRunning && media.isPlaying {
-            return idleWidth + 200 // 100 pt left wing for timer, 100 pt right wing for equalizer
-        } else if pomodoro.isRunning {
-            return idleWidth + 180 // 90 pt left/right wings
-        } else if media.isPlaying {
-            return idleWidth + 180 // 90 pt left/right wings
+    public var compactHUDMode: CompactHUDMode {
+        let timerRunning = pomodoro.isRunning
+        let musicPlaying = media.isPlaying
+        
+        if timerRunning && musicPlaying {
+            return .dualActive
+        } else if timerRunning {
+            return .pomodoroOnly
+        } else if musicPlaying {
+            return .mediaOnly
+        } else if isNotePinnedToNotch {
+            return .notesPinned
         } else {
+            return .none
+        }
+    }
+    
+    public var isCompactActive: Bool {
+        compactHUDMode != .none
+    }
+    
+    // Independent compact widths tailored to each feature:
+    // Sized generously to guarantee zero content touches or sits behind the camera notch
+    public var compactWidth: CGFloat {
+        switch compactHUDMode {
+        case .none:
             return idleWidth
+        case .pomodoroOnly:
+            return max(idleWidth + 240, 440)
+        case .mediaOnly:
+            return max(idleWidth + 260, 460)
+        case .dualActive:
+            return max(idleWidth + 320, 520)
+        case .notesPinned:
+            return max(idleWidth + 200, 400)
+        }
+    }
+    
+    // Independent compact heights tailored to each feature
+    public var compactHeight: CGFloat {
+        switch compactHUDMode {
+        case .notesPinned:
+            return max(idleHeight + 24, 56)
+        case .none, .pomodoroOnly, .mediaOnly, .dualActive:
+            return idleHeight
         }
     }
     
@@ -121,15 +175,32 @@ public final class NotchModel: ObservableObject {
     }
     
     private func observeSubmodels() {
-        // Trigger UI refresh when submodel playback/timer state changes
-        Publishers.Merge(
-            pomodoro.$isRunning.map { _ in () },
-            media.$isPlaying.map { _ in () }
+        // Trigger UI refresh when submodel playback/timer/note/supabase state changes
+        Publishers.MergeMany(
+            pomodoro.$isRunning.map { _ in () }.eraseToAnyPublisher(),
+            pomodoro.$timeRemaining.map { _ in () }.eraseToAnyPublisher(),
+            pomodoro.$mode.map { _ in () }.eraseToAnyPublisher(),
+            media.$isPlaying.map { _ in () }.eraseToAnyPublisher(),
+            media.$currentTime.map { _ in () }.eraseToAnyPublisher(),
+            media.$visualizerBars.map { _ in () }.eraseToAnyPublisher(),
+            media.$trackTitle.map { _ in () }.eraseToAnyPublisher(),
+            $isNotePinnedToNotch.map { _ in () }.eraseToAnyPublisher(),
+            scratchpad.$text.map { _ in () }.eraseToAnyPublisher(),
+            supabase.$currentUser.map { _ in () }.eraseToAnyPublisher()
         )
         .sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         .store(in: &cancellables)
+        
+        pomodoro.$completedSessionsCount
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { [weak self] in
+                    await self?.supabase.recordFocusSession(minutes: 25)
+                }
+            }
+            .store(in: &cancellables)
     }
     
     public func toggleExpand() {

@@ -32,6 +32,15 @@ public final class NotchPanel: NSPanel {
         return false
     }
     
+    public var onKeyEquivalent: ((NSEvent) -> Bool)?
+    
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let handled = onKeyEquivalent?(event), handled {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+    
     public func updatePosition(screen: NSScreen, width: CGFloat, height: CGFloat, animate: Bool = false) {
         let x = screen.frame.midX - (width / 2)
         let y = screen.frame.maxY - height

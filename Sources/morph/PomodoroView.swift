@@ -102,6 +102,7 @@ public struct PomodoroView: View {
                         .cornerRadius(7)
                     }
                     .buttonStyle(.plain)
+                    .help("Start/Pause Focus (⌘⏎)")
                     
                     Button(action: {
                         pomodoro.reset()
@@ -114,7 +115,7 @@ public struct PomodoroView: View {
                             .cornerRadius(7)
                     }
                     .buttonStyle(.plain)
-                    .help("Reset Timer")
+                    .help("Reset Timer (⌘⇧R)")
                     
                     Spacer()
                     
