@@ -601,24 +601,40 @@ private struct CompactMediaWingLeft: View {
     let model: NotchModel
     
     var body: some View {
-        Button(action: {
-            model.openFeature(.music)
-        }) {
-            HStack(spacing: 6) {
-                Image(systemName: "music.note")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundColor(.white)
-                
-                Text(media.trackTitle.isEmpty ? "Playing" : media.trackTitle)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .frame(maxWidth: 95, alignment: .leading)
+        HStack(spacing: 5) {
+            Button(action: {
+                model.openFeature(.music)
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    Text(media.trackTitle.isEmpty ? "Playing" : media.trackTitle)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: 78, alignment: .leading)
+                }
             }
-            .padding(.leading, 12)
+            .buttonStyle(.plain)
+            .help("Open Media Player (⌘3)")
+            
+            // Dedicated Notch Playlist Queue Trigger Button
+            Button(action: {
+                model.openFeature(.music)
+            }) {
+                Image(systemName: "music.note.list")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.8))
+                    .frame(width: 17, height: 17)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("View Playlist Queue")
         }
-        .buttonStyle(.plain)
-        .help("Open Media Player (⌘3)")
+        .padding(.leading, 12)
     }
 }
 
@@ -627,23 +643,52 @@ private struct CompactMediaWingRight: View {
     let model: NotchModel
     
     var body: some View {
-        HStack(spacing: 6) {
-            // Live Synchronous Equalizer
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(0..<3, id: \.self) { i in
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white, Color.white.opacity(0.4)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 2.5, height: max(3, 12 * CGFloat(media.visualizerBars[i % 3])))
-                        .animation(.easeOut(duration: 0.12), value: media.visualizerBars[i % 3])
+        HStack(spacing: 5) {
+            if media.showVolumeHUD {
+                // Sleek Notch Volume HUD Pill
+                HStack(spacing: 3.5) {
+                    Image(systemName: media.isMuted ? "speaker.slash.fill" : (media.volume > 0.5 ? "speaker.wave.2.fill" : "speaker.wave.1.fill"))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    // Mini volume track
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.2))
+                            .frame(width: 24, height: 3.5)
+                        
+                        Capsule()
+                            .fill(Color.white)
+                            .frame(width: max(0, min(24, 24 * CGFloat(media.isMuted ? 0 : media.volume))), height: 3.5)
+                    }
+                    
+                    Text("\(Int((media.isMuted ? 0 : media.volume) * 100))%")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.9))
                 }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.18))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                // Live Synchronous Equalizer
+                HStack(alignment: .bottom, spacing: 2) {
+                    ForEach(0..<3, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.white, Color.white.opacity(0.4)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .frame(width: 2.5, height: max(3, 12 * CGFloat(media.visualizerBars[i % 3])))
+                            .animation(.easeOut(duration: 0.12), value: media.visualizerBars[i % 3])
+                    }
+                }
+                .frame(height: 12, alignment: .bottom)
             }
-            .frame(height: 12, alignment: .bottom)
             
             Button(action: {
                 media.togglePlay()
@@ -745,29 +790,45 @@ private struct CompactDualWingRight: View {
     
     var body: some View {
         HStack(spacing: 5) {
-            Button(action: {
-                model.openFeature(.music)
-            }) {
-                HStack(spacing: 4) {
-                    HStack(alignment: .bottom, spacing: 1.5) {
-                        ForEach(0..<3, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(Color.white)
-                                .frame(width: 2, height: max(3, 10 * CGFloat(media.visualizerBars[i % 3])))
-                                .animation(.easeOut(duration: 0.12), value: media.visualizerBars[i % 3])
-                        }
-                    }
-                    .frame(height: 10, alignment: .bottom)
-                    
-                    Text(media.trackTitle.isEmpty ? "Playing" : media.trackTitle)
-                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+            if media.showVolumeHUD {
+                HStack(spacing: 3) {
+                    Image(systemName: media.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.system(size: 7.5, weight: .bold))
                         .foregroundColor(.white)
-                        .lineLimit(1)
-                        .frame(maxWidth: 68, alignment: .leading)
+                    Text("\(Int((media.isMuted ? 0 : media.volume) * 100))%")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.9))
                 }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.18))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                Button(action: {
+                    model.openFeature(.music)
+                }) {
+                    HStack(spacing: 4) {
+                        HStack(alignment: .bottom, spacing: 1.5) {
+                            ForEach(0..<3, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(Color.white)
+                                    .frame(width: 2, height: max(3, 10 * CGFloat(media.visualizerBars[i % 3])))
+                                    .animation(.easeOut(duration: 0.12), value: media.visualizerBars[i % 3])
+                            }
+                        }
+                        .frame(height: 10, alignment: .bottom)
+                        
+                        Text(media.trackTitle.isEmpty ? "Playing" : media.trackTitle)
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                            .frame(maxWidth: 68, alignment: .leading)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Open Media Player (⌘3)")
             }
-            .buttonStyle(.plain)
-            .help("Open Media Player (⌘3)")
             
             Button(action: {
                 media.togglePlay()

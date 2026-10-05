@@ -18,6 +18,9 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var sourceName: String = "YouTube Music Direct"
     @Published public var isDirectEngineConnected: Bool = false
     @Published public var isBrowserConnected: Bool = false
+    @Published public var playlist: [YTMPlaylistItem] = []
+    @Published public var showVolumeHUD: Bool = false
+    private var volumeHUDWorkItem: DispatchWorkItem?
     
     // Ambient 3-bar equalizer heights (0.15 ... 1.0)
     @Published public var visualizerBars: [CGFloat] = [0.18, 0.18, 0.18]
@@ -117,6 +120,7 @@ public final class MediaControllerModel: ObservableObject {
                     self.isDisliked = data.isDisliked
                     self.isShuffle = data.isShuffle
                     self.repeatMode = data.repeatMode
+                    self.playlist = data.queue
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
                 }
@@ -232,6 +236,18 @@ public final class MediaControllerModel: ObservableObject {
         executeBrowserSeek(to: currentTime)
     }
     
+    public func triggerVolumeHUD() {
+        showVolumeHUD = true
+        volumeHUDWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.showVolumeHUD = false
+            }
+        }
+        volumeHUDWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+    
     public func setVolume(_ newVol: Double) {
         volume = max(0, min(1, newVol))
         if volume > 0 && isMuted {
@@ -241,6 +257,7 @@ public final class MediaControllerModel: ObservableObject {
             engine.setVolume(volume)
         }
         executeBrowserVolume(volume)
+        triggerVolumeHUD()
     }
     
     public func toggleMute() {
@@ -249,6 +266,17 @@ public final class MediaControllerModel: ObservableObject {
             engine.toggleMute()
         }
         executeBrowserMute(isMuted)
+        triggerVolumeHUD()
+    }
+    
+    public func playQueueTrack(_ item: YTMPlaylistItem) {
+        if let idx = Int(item.id) {
+            engine.playQueueIndex(idx)
+        } else if let matchIdx = playlist.firstIndex(where: { $0.id == item.id }) {
+            engine.playQueueIndex(matchIdx)
+        } else {
+            playSearch(item.title + " " + item.artist)
+        }
     }
     
     public func toggleLike() {

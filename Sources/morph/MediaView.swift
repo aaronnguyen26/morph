@@ -7,6 +7,7 @@ public struct MediaView: View {
     @State private var scrubFraction: Double = 0.0
     @State private var isSearching: Bool = false
     @State private var searchQuery: String = ""
+    @State private var isShowingPlaylist: Bool = false
     
     public init(media: MediaControllerModel) {
         self.media = media
@@ -129,7 +130,7 @@ public struct MediaView: View {
             }
             .frame(width: 148)
             
-            // MARK: - Right Deck: Metadata, Actions, Scrubber, Volume & Quick Stations
+            // MARK: - Right Deck: Metadata / Playlist, Actions, Scrubber & Volume
             VStack(alignment: .leading, spacing: 9) {
                 // Header Row: Track Metadata OR Quick Search + Action Suite
                 HStack(alignment: .center, spacing: 8) {
@@ -177,6 +178,29 @@ public struct MediaView: View {
                     }
                     
                     Spacer()
+                    
+                    // Playlist Queue Button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                            isShowingPlaylist.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 10))
+                            if !media.playlist.isEmpty {
+                                Text("\(media.playlist.count)")
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            }
+                        }
+                        .foregroundColor(isShowingPlaylist ? .black : Color.white.opacity(0.85))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(isShowingPlaylist ? Color.white : Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isShowingPlaylist ? "Hide Playlist Queue" : "View Playlist / Up Next Queue")
                     
                     // Search Button
                     Button(action: {
@@ -256,61 +280,138 @@ public struct MediaView: View {
                     .help("Open YouTube Music Window to Browse or Sign In")
                 }
                 
-                // Timeline Scrubber
-                VStack(spacing: 4) {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(Color.white.opacity(0.15))
-                                .frame(height: 5)
-                            
-                            Capsule()
-                                .fill(Color.white)
-                                .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(effectiveProgress))), height: 5)
+                if isShowingPlaylist {
+                    // Inline Up Next / Playlist Queue Drawer
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text("UP NEXT")
+                                .font(.system(size: 8, weight: .heavy, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.45))
+                            Spacer()
+                            Text("\(media.playlist.count) tracks in queue")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.35))
                         }
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    isScrubbing = true
-                                    let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
-                                    scrubFraction = fraction
-                                }
-                                .onEnded { value in
-                                    let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
-                                    media.seek(to: fraction)
-                                    isScrubbing = false
-                                }
-                        )
-                    }
-                    .frame(height: 8)
-                    
-                    HStack {
-                        Text(effectiveCurrentTime)
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.5))
                         
-                        Spacer()
-                        
-                        // Live 3-bar mini visualizer
-                        HStack(alignment: .bottom, spacing: 2.5) {
-                            ForEach(0..<3, id: \.self) { i in
-                                RoundedRectangle(cornerRadius: 1)
-                                    .fill(Color.white.opacity(0.8))
-                                    .frame(width: 2.5, height: max(2.5, 10 * media.visualizerBars[i]))
+                        if media.playlist.isEmpty {
+                            HStack {
+                                Spacer()
+                                Text("No upcoming queue loaded yet. Start a playlist or song in Web View.")
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundColor(Color.white.opacity(0.5))
+                                Spacer()
                             }
+                            .frame(height: 48)
+                        } else {
+                            ScrollView(.vertical, showsIndicators: false) {
+                                VStack(spacing: 3) {
+                                    ForEach(media.playlist) { item in
+                                        Button(action: {
+                                            media.playQueueTrack(item)
+                                        }) {
+                                            HStack(spacing: 6) {
+                                                if item.isPlaying {
+                                                    Image(systemName: "speaker.wave.2.fill")
+                                                        .font(.system(size: 8))
+                                                        .foregroundColor(Color.white)
+                                                } else {
+                                                    Image(systemName: "play.circle")
+                                                        .font(.system(size: 8.5))
+                                                        .foregroundColor(Color.white.opacity(0.4))
+                                                }
+                                                
+                                                Text(item.title)
+                                                    .font(.system(size: 9.5, weight: item.isPlaying ? .bold : .medium))
+                                                    .foregroundColor(item.isPlaying ? .white : Color.white.opacity(0.85))
+                                                    .lineLimit(1)
+                                                
+                                                if !item.artist.isEmpty {
+                                                    Text("• \(item.artist)")
+                                                        .font(.system(size: 8.5, weight: .regular))
+                                                        .foregroundColor(Color.white.opacity(0.45))
+                                                        .lineLimit(1)
+                                                }
+                                                
+                                                Spacer()
+                                                
+                                                if !item.duration.isEmpty {
+                                                    Text(item.duration)
+                                                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                                                        .foregroundColor(Color.white.opacity(0.4))
+                                                }
+                                            }
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3.5)
+                                            .background(item.isPlaying ? Color.white.opacity(0.12) : Color.white.opacity(0.04))
+                                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+                            .frame(maxHeight: 62)
                         }
-                        .frame(height: 10, alignment: .bottom)
+                    }
+                    .padding(6)
+                    .background(Color.white.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                } else {
+                    // Timeline Scrubber
+                    VStack(spacing: 4) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(Color.white.opacity(0.15))
+                                    .frame(height: 5)
+                                
+                                Capsule()
+                                    .fill(Color.white)
+                                    .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(effectiveProgress))), height: 5)
+                            }
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        isScrubbing = true
+                                        let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
+                                        scrubFraction = fraction
+                                    }
+                                    .onEnded { value in
+                                        let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
+                                        media.seek(to: fraction)
+                                        isScrubbing = false
+                                    }
+                            )
+                        }
+                        .frame(height: 8)
                         
-                        Spacer()
-                        
-                        Text(media.formattedDuration)
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.5))
+                        HStack {
+                            Text(effectiveCurrentTime)
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.5))
+                            
+                            Spacer()
+                            
+                            // Live 3-bar mini visualizer
+                            HStack(alignment: .bottom, spacing: 2.5) {
+                                ForEach(0..<3, id: \.self) { i in
+                                    RoundedRectangle(cornerRadius: 1)
+                                        .fill(Color.white.opacity(0.8))
+                                        .frame(width: 2.5, height: max(2.5, 10 * media.visualizerBars[i]))
+                                }
+                            }
+                            .frame(height: 10, alignment: .bottom)
+                            
+                            Spacer()
+                            
+                            Text(media.formattedDuration)
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.5))
+                        }
                     }
                 }
                 
-                // Bottom Row: Volume Slider with Mute & Quick Station Pills + Status
+                // Bottom Row: Purposeful Volume Slider with Mute & Clean Status
                 HStack(spacing: 8) {
                     // Mute / Volume Icon
                     Button(action: {
@@ -344,34 +445,26 @@ public struct MediaView: View {
                                 }
                         )
                     }
-                    .frame(width: 72, height: 6)
+                    .frame(width: 80, height: 6)
                     
                     // Volume Percentage
                     Text("\(Int((media.isMuted ? 0 : media.volume) * 100))%")
                         .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.45))
                     
-                    Spacer(minLength: 4)
-                    
-                    // Quick Station Pills (One-tap play)
-                    HStack(spacing: 4) {
-                        vibeButton(title: "Supermix", vibe: "Supermix")
-                        vibeButton(title: "Chill", vibe: "Chill")
-                        vibeButton(title: "Focus", vibe: "Focus")
-                        vibeButton(title: "Lofi", vibe: "Lofi")
-                    }
+                    Spacer()
                     
                     // Status Badge
-                    HStack(spacing: 3) {
+                    HStack(spacing: 3.5) {
                         Circle()
                             .fill(media.isDirectEngineActive ? Color.green : (media.isBrowserConnected ? Color.blue : Color.orange))
-                            .frame(width: 4.5, height: 4.5)
+                            .frame(width: 5, height: 5)
                         Text(media.isDirectEngineActive ? "Direct" : (media.isBrowserConnected ? "Browser" : "Ready"))
                             .font(.system(size: 8.5, weight: .semibold))
                             .foregroundColor(Color.white.opacity(0.65))
                     }
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
                     .background(Color.white.opacity(0.06))
                     .clipShape(Capsule())
                 }
@@ -380,22 +473,6 @@ public struct MediaView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-    
-    private func vibeButton(title: String, vibe: String) -> some View {
-        Button(action: {
-            media.playQuickVibe(vibe)
-        }) {
-            Text(title)
-                .font(.system(size: 8.5, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.75))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2.5)
-                .background(Color.white.opacity(0.07))
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help("Play \(title) Station on YouTube Music")
     }
     
     private var defaultArtPlaceholder: some View {

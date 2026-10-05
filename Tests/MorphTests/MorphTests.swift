@@ -773,9 +773,7 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(media.formatTime(65), "1:05")
         XCTAssertEqual(media.formatTime(245), "4:05")
         
-        // 4. Quick Vibe & Search Dispatch
-        media.playQuickVibe("Chill")
-        XCTAssertTrue(media.isPlaying)
+        // 4. Search Dispatch
         media.playSearch("Lofi Beats")
         XCTAssertTrue(media.isPlaying)
         
@@ -787,6 +785,53 @@ final class MorphTests: XCTestCase {
         // 6. MediaView Body Instantiation
         let mediaView = MediaView(media: media)
         XCTAssertNotNil(mediaView.body)
+    }
+    
+    @MainActor
+    func testNotchVolumeHUDAndPlaylistQueue() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // 1. Initial Volume HUD state
+        XCTAssertFalse(media.showVolumeHUD, "Volume HUD must default to inactive")
+        
+        // 2. Adjusting volume triggers Notch HUD
+        media.setVolume(0.65)
+        XCTAssertEqual(media.volume, 0.65)
+        XCTAssertTrue(media.showVolumeHUD, "Setting volume must trigger notch volume HUD")
+        
+        // 3. Toggling mute triggers Notch HUD
+        media.toggleMute()
+        XCTAssertTrue(media.isMuted)
+        XCTAssertTrue(media.showVolumeHUD, "Toggling mute must trigger notch volume HUD")
+        
+        // 4. Playlist queue decoding and binding
+        let sampleQueue: [[String: Any]] = [
+            ["id": "0", "title": "Get Lucky", "artist": "Daft Punk", "duration": "4:08", "isPlaying": true],
+            ["id": "1", "title": "Instant Crush", "artist": "Daft Punk", "duration": "5:37", "isPlaying": false],
+            ["id": "2", "title": "Lose Yourself to Dance", "artist": "Daft Punk", "duration": "5:53", "isPlaying": false]
+        ]
+        
+        engine.parseIncomingPayload([
+            "title": "Get Lucky",
+            "artist": "Daft Punk",
+            "duration": 248.0,
+            "isPlaying": true,
+            "queue": sampleQueue
+        ])
+        
+        XCTAssertEqual(media.playlist.count, 3, "Playlist queue must parse all 3 tracks")
+        XCTAssertEqual(media.playlist[0].title, "Get Lucky")
+        XCTAssertTrue(media.playlist[0].isPlaying)
+        XCTAssertEqual(media.playlist[1].title, "Instant Crush")
+        XCTAssertEqual(media.playlist[2].duration, "5:53")
+        
+        // 5. Play Queue Item by Track
+        media.playQueueTrack(media.playlist[1])
+        
+        // 6. NotchModel Dual Wing and Media Wing Rendering
+        let notchModel = NotchModel(media: media)
+        XCTAssertNotNil(notchModel)
     }
 }
 

@@ -25,6 +25,22 @@ public enum YTMRepeatMode: String, Codable, CaseIterable {
     }
 }
 
+public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
+    public var id: String
+    public var title: String
+    public var artist: String
+    public var duration: String
+    public var isPlaying: Bool
+    
+    public init(id: String = UUID().uuidString, title: String, artist: String, duration: String = "", isPlaying: Bool = false) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.duration = duration
+        self.isPlaying = isPlaying
+    }
+}
+
 public struct YTMTrackData: Codable, Equatable {
     public var title: String
     public var artist: String
@@ -38,6 +54,7 @@ public struct YTMTrackData: Codable, Equatable {
     public var isDisliked: Bool
     public var isShuffle: Bool
     public var repeatMode: YTMRepeatMode
+    public var queue: [YTMPlaylistItem]
     
     public init(
         title: String = "",
@@ -51,7 +68,8 @@ public struct YTMTrackData: Codable, Equatable {
         isLiked: Bool = false,
         isDisliked: Bool = false,
         isShuffle: Bool = false,
-        repeatMode: YTMRepeatMode = .off
+        repeatMode: YTMRepeatMode = .off,
+        queue: [YTMPlaylistItem] = []
     ) {
         self.title = title
         self.artist = artist
@@ -65,6 +83,7 @@ public struct YTMTrackData: Codable, Equatable {
         self.isDisliked = isDisliked
         self.isShuffle = isShuffle
         self.repeatMode = repeatMode
+        self.queue = queue
     }
 }
 
@@ -208,6 +227,26 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let repStr = (body["repeatMode"] as? String) ?? "off"
         let repeatMode = YTMRepeatMode(rawValue: repStr) ?? .off
         
+        var parsedQueue: [YTMPlaylistItem] = []
+        if let rawQueue = body["queue"] as? [[String: Any]] {
+            for (idx, item) in rawQueue.enumerated() {
+                let qTitle = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let qArtist = (item["artist"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let qDuration = (item["duration"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let qIsPlaying = (item["isPlaying"] as? Bool) ?? false
+                let qId = (item["id"] as? String) ?? "\(idx)"
+                if !qTitle.isEmpty {
+                    parsedQueue.append(YTMPlaylistItem(
+                        id: qId,
+                        title: qTitle,
+                        artist: qArtist,
+                        duration: qDuration,
+                        isPlaying: qIsPlaying
+                    ))
+                }
+            }
+        }
+        
         self.trackData = YTMTrackData(
             title: title.isEmpty ? "YouTube Music" : title,
             artist: artist.isEmpty ? "Ready to play" : artist,
@@ -220,7 +259,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             isLiked: liked,
             isDisliked: disliked,
             isShuffle: shuffle,
-            repeatMode: repeatMode
+            repeatMode: repeatMode,
+            queue: parsedQueue
         )
         
         if !title.isEmpty && title != "YouTube Music" {
@@ -607,6 +647,24 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func playQueueIndex(_ index: Int) {
+        let script = """
+        (function() {
+            var items = document.querySelectorAll('ytmusic-player-queue-item, ytmusic-player-queue #contents ytmusic-player-queue-item');
+            if (items && items.length > \(index)) {
+                var target = items[\(index)];
+                var playBtn = target.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || target;
+                playBtn.click();
+                target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 350);
             }
         })();
         """
@@ -1006,6 +1064,36 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     }
                 }
                 
+                // Playlist Queue extraction
+                var queue = [];
+                try {
+                    var qItems = document.querySelectorAll('ytmusic-player-queue-item');
+                    if (!qItems || qItems.length === 0) {
+                        qItems = document.querySelectorAll('ytmusic-player-queue #contents ytmusic-player-queue-item');
+                    }
+                    if (qItems && qItems.length > 0) {
+                        for (var i = 0; i < Math.min(qItems.length, 30); i++) {
+                            var it = qItems[i];
+                            var qTitleEl = it.querySelector('.song-title') || it.querySelector('.title') || it.querySelector('yt-formatted-string.song-title');
+                            var qArtistEl = it.querySelector('.byline') || it.querySelector('.artist') || it.querySelector('yt-formatted-string.byline');
+                            var qDurEl = it.querySelector('.duration') || it.querySelector('yt-formatted-string.duration');
+                            var qTitle = qTitleEl ? (qTitleEl.innerText || qTitleEl.textContent || '').trim() : '';
+                            var qArtist = qArtistEl ? (qArtistEl.innerText || qArtistEl.textContent || '').trim() : '';
+                            var qDur = qDurEl ? (qDurEl.innerText || qDurEl.textContent || '').trim() : '';
+                            var isSel = it.hasAttribute('selected') || it.classList.contains('selected') || it.getAttribute('play-state') === 'playing';
+                            if (qTitle) {
+                                queue.push({
+                                    id: '' + i,
+                                    title: qTitle,
+                                    artist: qArtist,
+                                    duration: qDur,
+                                    isPlaying: isSel
+                                });
+                            }
+                        }
+                    }
+                } catch(qe) {}
+                
                 return {
                     title: title,
                     artist: artist,
@@ -1018,7 +1106,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     isLiked: isLiked,
                     isDisliked: isDisliked,
                     isShuffle: isShuffle,
-                    repeatMode: repeatMode
+                    repeatMode: repeatMode,
+                    queue: queue
                 };
             }
             
