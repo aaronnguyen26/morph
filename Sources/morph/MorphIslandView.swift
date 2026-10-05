@@ -21,11 +21,21 @@ public struct MorphIslandView: View {
     
     private var cornerRadius: CGFloat {
         if model.isExpanded {
-            return 24
+            return 28
         } else if model.isCompactActive {
-            return 11
+            return 20
         } else {
-            return 10 // Exact smooth curvature blending with physical notch
+            return 18 // Visually distinct, generous smooth curvature matching physical MacBook notch
+        }
+    }
+    
+    private var topRadius: CGFloat {
+        if model.isExpanded {
+            return 28
+        } else if !model.hasPhysicalNotch {
+            return cornerRadius
+        } else {
+            return 0
         }
     }
     
@@ -43,33 +53,39 @@ public struct MorphIslandView: View {
             ZStack(alignment: .top) {
                 // Background Base Shape: Pure OLED Black with Notch Contour
                 UnevenRoundedRectangle(
-                    topLeadingRadius: 0,
+                    topLeadingRadius: topRadius,
                     bottomLeadingRadius: cornerRadius,
                     bottomTrailingRadius: cornerRadius,
-                    topTrailingRadius: 0,
+                    topTrailingRadius: topRadius,
                     style: .continuous
                 )
                 .fill(Color.black)
                 .overlay(
                     // Notch Border Edges: Hairline border matching physical MacBook notch contour
-                    // Active even before the app is open so it blends seamlessly into the notch
                     UnevenRoundedRectangle(
-                        topLeadingRadius: 0,
+                        topLeadingRadius: topRadius,
                         bottomLeadingRadius: cornerRadius,
                         bottomTrailingRadius: cornerRadius,
-                        topTrailingRadius: 0,
+                        topTrailingRadius: topRadius,
                         style: .continuous
                     )
                     .stroke(
-                        Color.white.opacity(model.isExpanded ? 0.16 : 0.22),
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(model.isExpanded ? 0.20 : 0.28),
+                                Color.white.opacity(model.isExpanded ? 0.08 : 0.16)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
                         lineWidth: 1
                     )
                 )
                 .shadow(
-                    color: model.isExpanded ? Color.black.opacity(0.6) : Color.clear,
-                    radius: model.isExpanded ? 24 : 0,
+                    color: model.isExpanded ? Color.black.opacity(0.65) : Color.black.opacity(0.3),
+                    radius: model.isExpanded ? 24 : 8,
                     x: 0,
-                    y: model.isExpanded ? 10 : 0
+                    y: model.isExpanded ? 10 : 4
                 )
                 
                 // Content: Idle / Compact Notch vs Expanded Island
@@ -87,6 +103,15 @@ public struct MorphIslandView: View {
                         .transition(.opacity)
                 }
             }
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: topRadius,
+                    bottomLeadingRadius: cornerRadius,
+                    bottomTrailingRadius: cornerRadius,
+                    topTrailingRadius: topRadius,
+                    style: .continuous
+                )
+            )
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isCompactActive)
@@ -104,78 +129,150 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - 1. Idle Flush Notch View (Blends into physical notch with rounded border edge)
+    // MARK: - 1. Idle Flush Notch View (Smooth border radius, no sharp corners)
     private var idleFlushNotchView: some View {
-        Color.black
-            .frame(width: model.idleWidth, height: model.idleHeight)
-            .contentShape(Rectangle())
+        HStack {
+            Spacer()
+            // Ambient micro indicator
+            Circle()
+                .fill(Color.white.opacity(0.18))
+                .frame(width: 3.5, height: 3.5)
+            Spacer()
+        }
+        .frame(width: model.idleWidth, height: model.idleHeight)
+        .contentShape(Rectangle())
     }
     
-    // MARK: - 2. Compact Active Notch View (Displays on the notch itself when timer/music active)
+    // MARK: - 2. Compact Active Notch View (Dynamic Island extending below & around camera notch)
     private var compactActiveNotchView: some View {
-        HStack(spacing: 0) {
-            // Left Wing: Outside notch, 100% visible to user!
-            HStack(spacing: 5) {
-                if model.pomodoro.isRunning {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1.8)
-                            .frame(width: 12, height: 12)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                // Left Wing: Outside camera notch, 100% visible to user!
+                HStack(spacing: 6) {
+                    if model.pomodoro.isRunning {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white.opacity(0.2), lineWidth: 2)
+                                .frame(width: 14, height: 14)
+                            
+                            Circle()
+                                .trim(from: 0, to: CGFloat(model.pomodoro.progress))
+                                .stroke(Color(red: 0.2, green: 0.9, blue: 0.6), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                                .frame(width: 14, height: 14)
+                        }
                         
-                        Circle()
-                            .trim(from: 0, to: CGFloat(model.pomodoro.progress))
-                            .stroke(Color.white, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                            .frame(width: 12, height: 12)
-                    }
-                    
-                    Text(model.pomodoro.formattedTime)
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                } else if model.media.isPlaying {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(.white)
-                    
-                    Circle()
-                        .fill(Color.white.opacity(0.8))
-                        .frame(width: 4, height: 4)
-                }
-            }
-            .padding(.leading, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            
-            // Center: Black spacer matching hardware webcam cutout
-            Color.clear
-                .frame(width: model.idleWidth, height: model.idleHeight)
-            
-            // Right Wing: Outside notch, 100% visible to user!
-            HStack(spacing: 5) {
-                if model.media.isPlaying {
-                    HStack(alignment: .bottom, spacing: 2) {
-                        ForEach(0..<3, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(Color.white.opacity(0.9))
-                                .frame(width: 2.2, height: max(3, 11 * model.media.visualizerBars[i]))
-                                .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i])
+                        Text(model.pomodoro.formattedTime)
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                    } else if model.media.isPlaying {
+                        HStack(spacing: 5) {
+                            if let art = model.media.albumArtURL, let url = URL(string: art) {
+                                AsyncImage(url: url) { phase in
+                                    if let img = phase.image {
+                                        img.resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: 17, height: 17)
+                                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                                    } else {
+                                        Image(systemName: "music.note")
+                                            .font(.system(size: 9.5, weight: .bold))
+                                            .foregroundColor(.cyan)
+                                    }
+                                }
+                            } else {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 9.5, weight: .bold))
+                                    .foregroundColor(.cyan)
+                            }
+                            
+                            Text(model.media.trackTitle.isEmpty ? "Playing" : model.media.trackTitle)
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .frame(maxWidth: 82, alignment: .leading)
                         }
                     }
-                    .frame(height: 11, alignment: .bottom)
-                } else if model.pomodoro.isRunning {
-                    Text(model.pomodoro.mode == .work ? "FOCUS" : "BREAK")
-                        .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                }
+                .padding(.leading, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // Center: Blind spot spacer matching hardware camera cutout
+                Color.clear
+                    .frame(width: model.idleWidth, height: model.idleHeight)
+                
+                // Right Wing: Outside camera notch, 100% visible to user!
+                HStack(spacing: 6) {
+                    if model.media.isPlaying {
+                        HStack(alignment: .bottom, spacing: 2) {
+                            ForEach(0..<4, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 1)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Color(red: 0.4, green: 0.9, blue: 1.0), Color.white],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                                    .frame(width: 2.2, height: max(3, 13 * model.media.visualizerBars[i % 3]))
+                                    .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i % 3])
+                            }
+                        }
+                        .frame(height: 13, alignment: .bottom)
+                        
+                        Circle()
+                            .fill(Color.white.opacity(0.75))
+                            .frame(width: 4, height: 4)
+                    } else if model.pomodoro.isRunning {
+                        Text(model.pomodoro.mode == .work ? "FOCUS" : "BREAK")
+                            .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.9))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2.5)
+                            .background(Color.white.opacity(0.14))
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(.trailing, 12)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .frame(height: model.idleHeight)
+            
+            // Bottom Shelf: Sits directly BELOW the camera notch (100% visible to user!)
+            HStack(spacing: 6) {
+                if model.pomodoro.isRunning && model.media.isPlaying {
+                    Text("FOCUS • \(model.pomodoro.formattedTime)")
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.85))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.12))
-                        .cornerRadius(3)
+                    Text("•")
+                        .foregroundColor(Color.white.opacity(0.3))
+                        .font(.system(size: 7))
+                    Text(model.media.trackTitle.isEmpty ? "Audio" : model.media.trackTitle)
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .lineLimit(1)
+                } else if model.media.isPlaying {
+                    Text(model.media.artistName.isEmpty ? "YouTube Music Active" : model.media.artistName)
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .lineLimit(1)
+                } else if model.pomodoro.isRunning {
+                    Text("Deep Focus active • Hover to expand")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.7))
                 }
             }
-            .padding(.trailing, 10)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .frame(maxWidth: .infinity)
+            .frame(height: model.compactHeight - model.idleHeight)
+            .padding(.bottom, 2)
         }
-        .frame(width: model.compactWidth, height: model.idleHeight)
+        .frame(width: model.compactWidth, height: model.compactHeight)
         .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                model.isExpanded = true
+            }
+        }
     }
     
     // MARK: - 3. Expanded Island View (640 x 300 pt)
@@ -259,7 +356,7 @@ public struct MorphIslandView: View {
                 Spacer()
                 
                 // Tabs
-                HStack(spacing: 3) {
+                HStack(spacing: 3.5) {
                     ForEach(MorphTab.allCases) { tab in
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -271,14 +368,16 @@ public struct MorphIslandView: View {
                                     .font(.system(size: 8.5))
                                 Text(tab.rawValue)
                                     .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
-                            .foregroundColor(model.selectedTab == tab ? .black : Color.white.opacity(0.55))
+                            .foregroundColor(model.selectedTab == tab ? .black : Color.white.opacity(0.6))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3.5)
                             .background(
                                 model.selectedTab == tab
                                     ? Color.white
-                                    : Color.white.opacity(0.06)
+                                    : Color.white.opacity(0.08)
                             )
                             .clipShape(Capsule())
                         }

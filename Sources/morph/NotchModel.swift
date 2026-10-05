@@ -61,16 +61,20 @@ public final class NotchModel: ObservableObject {
         pomodoro.isRunning || media.isPlaying
     }
     
+    public var compactHeight: CGFloat {
+        max(idleHeight + 16, 48)
+    }
+    
     // Compact notch width when activity is running on the notch itself.
-    // Gives generous left & right wings (70-80 pt each) outside the physical notch
+    // Gives generous left & right wings (90-100 pt each) outside the physical notch
     // so active timers and music visualizers are 100% visible to the user!
     public var compactWidth: CGFloat {
         if pomodoro.isRunning && media.isPlaying {
-            return idleWidth + 160 // 80 pt left wing for timer, 80 pt right wing for equalizer
+            return idleWidth + 200 // 100 pt left wing for timer, 100 pt right wing for equalizer
         } else if pomodoro.isRunning {
-            return idleWidth + 150 // 75 pt left/right wings
+            return idleWidth + 180 // 90 pt left/right wings
         } else if media.isPlaying {
-            return idleWidth + 140 // 70 pt left/right wings
+            return idleWidth + 180 // 90 pt left/right wings
         } else {
             return idleWidth
         }
@@ -87,7 +91,13 @@ public final class NotchModel: ObservableObject {
     }
     
     public var currentHeight: CGFloat {
-        isExpanded ? expandedHeight : idleHeight
+        if isExpanded {
+            return expandedHeight
+        } else if isCompactActive {
+            return compactHeight
+        } else {
+            return idleHeight
+        }
     }
     
     public func detectScreenNotch() {

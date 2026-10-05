@@ -29,12 +29,16 @@ final class MorphTests: XCTestCase {
         // Compact Active state: Pomodoro running
         pomodoro.isRunning = true
         XCTAssertTrue(model.isCompactActive)
-        XCTAssertEqual(model.compactWidth, model.idleWidth + 150)
-        XCTAssertEqual(model.currentWidth, model.idleWidth + 150)
+        XCTAssertEqual(model.compactWidth, model.idleWidth + 180)
+        XCTAssertEqual(model.currentWidth, model.idleWidth + 180)
+        XCTAssertEqual(model.currentHeight, model.compactHeight)
+        XCTAssertGreaterThanOrEqual(model.compactHeight, 48)
+        XCTAssertGreaterThan(model.compactHeight, model.idleHeight, "Compact height must extend below idle notch height so it never sits behind the camera!")
         
         // Compact Active state: Both running
         media.isPlaying = true
-        XCTAssertEqual(model.compactWidth, model.idleWidth + 160)
+        XCTAssertEqual(model.compactWidth, model.idleWidth + 200)
+        XCTAssertEqual(model.currentHeight, model.compactHeight)
         
         // Expanded state overrides compact
         model.isExpanded = true
@@ -203,5 +207,37 @@ final class MorphTests: XCTestCase {
         
         media.toggleLike()
         XCTAssertTrue(media.isLiked)
+    }
+    
+    @MainActor
+    func testCameraNotchVisibilityGuarantees() {
+        let model = NotchModel()
+        
+        // 1. Idle resting state has valid non-zero dimensions
+        XCTAssertGreaterThan(model.idleWidth, 0)
+        XCTAssertGreaterThan(model.idleHeight, 0)
+        
+        // 2. Compact height must be strictly taller than idleHeight by at least 14pt
+        // so that the bottom portion drops down directly BELOW the physical camera notch
+        XCTAssertGreaterThanOrEqual(model.compactHeight - model.idleHeight, 14)
+        
+        // 3. Compact wings must extend on both sides outside the notch
+        model.media.isPlaying = true
+        let wingWidth = (model.compactWidth - model.idleWidth) / 2
+        XCTAssertGreaterThanOrEqual(wingWidth, 80, "Each wing must extend at least 80pt past the camera notch")
+    }
+    
+    func testMorphyMouthShapePaths() {
+        let singingMouth = MorphyMouthShape(isSinging: true, isFocused: false)
+        let singingPath = singingMouth.path(in: CGRect(x: 0, y: 0, width: 20, height: 10))
+        XCTAssertFalse(singingPath.isEmpty)
+        
+        let focusedMouth = MorphyMouthShape(isSinging: false, isFocused: true)
+        let focusedPath = focusedMouth.path(in: CGRect(x: 0, y: 0, width: 20, height: 10))
+        XCTAssertFalse(focusedPath.isEmpty)
+        
+        let happyMouth = MorphyMouthShape(isSinging: false, isFocused: false)
+        let happyPath = happyMouth.path(in: CGRect(x: 0, y: 0, width: 20, height: 10))
+        XCTAssertFalse(happyPath.isEmpty)
     }
 }
