@@ -695,4 +695,52 @@ final class MorphTests: XCTestCase {
         XCTAssertTrue(winKeys.contains("p"))
         XCTAssertTrue(winKeys.contains("r"))
     }
+    
+    @MainActor
+    func testHomePageFeatureButtonNavigation() {
+        let model = NotchModel()
+        model.selectedTab = .home
+        model.isExpanded = false
+        
+        // 1. Focus Feature Navigation (.timer)
+        model.openFeature(.timer)
+        XCTAssertEqual(model.selectedTab, .timer, "Clicking Focus button must navigate to the Timer/Focus page")
+        XCTAssertTrue(model.isExpanded, "Navigating to a feature must ensure the island is expanded")
+        
+        // Return to Home
+        model.returnToHome()
+        XCTAssertEqual(model.selectedTab, .home)
+        
+        // 2. Music Feature Navigation (.music)
+        model.openFeature(.music)
+        XCTAssertEqual(model.selectedTab, .music, "Clicking Music button must navigate to the Music page")
+        XCTAssertTrue(model.isExpanded)
+        
+        // Return to Home
+        model.returnToHome()
+        XCTAssertEqual(model.selectedTab, .home)
+        
+        // 3. Notes Feature Navigation (.notes)
+        model.openFeature(.notes)
+        XCTAssertEqual(model.selectedTab, .notes, "Clicking Notes button must navigate to the Notes page")
+        XCTAssertTrue(model.isExpanded)
+        
+        // Return to Home
+        model.returnToHome()
+        XCTAssertEqual(model.selectedTab, .home)
+        
+        // 4. Profile Feature Navigation (.profile)
+        model.openFeature(.profile)
+        XCTAssertEqual(model.selectedTab, .profile, "Clicking Profile button must navigate to the Profile page")
+        XCTAssertTrue(model.isExpanded)
+        
+        // Return to Home
+        model.returnToHome()
+        XCTAssertEqual(model.selectedTab, .home)
+        
+        // 5. Verify HomeView view hierarchy initializes without error
+        let homeView = HomeView(model: model)
+        XCTAssertNotNil(homeView.body)
+    }
 }
+

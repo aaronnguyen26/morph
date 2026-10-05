@@ -29,21 +29,27 @@ public struct HomeView: View {
                 .frame(height: 54)
             
             // 2. Minimalist Clean Greeting (No unsolicited metrics/chips)
-            Text("\(greetingText), \(model.supabase.currentUser.firstName)")
-                .font(.system(size: 17, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+            Button(action: {
+                model.openFeature(.profile)
+            }) {
+                Text("\(greetingText), \(model.supabase.currentUser.firstName)")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            .buttonStyle(.plain)
+            .help("Open Profile (⌘5)")
             
             // 3. Ultra-Clean Minimalist Action Pills (Pure Monochrome Luxury)
             HStack(spacing: 8) {
-                // Focus Toggle Pill
+                // Focus Feature Pill
                 Button(action: {
-                    model.pomodoro.toggle()
+                    model.openFeature(.timer)
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: model.pomodoro.isRunning ? "pause.fill" : "flame.fill")
+                        Image(systemName: model.pomodoro.isRunning ? "timer" : "flame.fill")
                             .font(.system(size: 8.5))
                             .foregroundColor(.white)
-                        Text(model.pomodoro.isRunning ? "Pause (\(model.pomodoro.formattedTime))" : "Start 25m Focus")
+                        Text(model.pomodoro.isRunning ? "Focus (\(model.pomodoro.formattedTime))" : "Focus")
                             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(.white)
@@ -61,17 +67,17 @@ public struct HomeView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("Start/Pause Focus (⌘⏎ or ⌘2)")
+                .help("Open Focus Timer (⌘2)")
                 
-                // Music Toggle Pill
+                // Music Feature Pill
                 Button(action: {
-                    model.media.togglePlay()
+                    model.openFeature(.music)
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: model.media.isPlaying ? "pause.fill" : "play.fill")
+                        Image(systemName: model.media.isPlaying ? "waveform" : "play.circle.fill")
                             .font(.system(size: 8.5))
                             .foregroundColor(.white)
-                        Text(model.media.isPlaying ? "Pause Music" : "Play Music")
+                        Text(model.media.isPlaying ? "Music Playing" : "Music")
                             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(.white)
@@ -89,9 +95,9 @@ public struct HomeView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("Play/Pause Music (⌘⏎ or ⌘3)")
+                .help("Open Music (⌘3)")
                 
-                // Notes Pill
+                // Notes Feature Pill
                 Button(action: {
                     model.openFeature(.notes)
                 }) {
@@ -114,6 +120,30 @@ public struct HomeView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open Notes (⌘4)")
+                
+                // Profile Feature Pill
+                Button(action: {
+                    model.openFeature(.profile)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.crop.circle")
+                            .font(.system(size: 8.5))
+                            .foregroundColor(.white)
+                        Text("Profile")
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Open Profile (⌘5)")
             }
             
             Spacer(minLength: 4)
