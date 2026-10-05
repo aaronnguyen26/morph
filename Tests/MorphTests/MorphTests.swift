@@ -742,5 +742,52 @@ final class MorphTests: XCTestCase {
         let homeView = HomeView(model: model)
         XCTAssertNotNil(homeView.body)
     }
+    
+    @MainActor
+    func testMediaSourceRoutingAndQuickVibes() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // 1. Ensure Player Window is hosted and non-nil
+        let window = engine.ensurePlayerWindow()
+        XCTAssertNotNil(window)
+        XCTAssertNotNil(engine.webView.window, "WKWebView must be hosted inside NSWindow hierarchy to prevent WebKit media throttling")
+        
+        // 2. Active Source Verification
+        XCTAssertFalse(media.isDirectEngineActive, "When engine has not loaded active song, isDirectEngineActive must be false")
+        
+        // Feed real track data
+        engine.parseIncomingPayload([
+            "title": "Around the World",
+            "artist": "Daft Punk",
+            "duration": 429.0,
+            "isPlaying": true
+        ])
+        XCTAssertTrue(media.isDirectEngineActive, "When engine plays a real track, isDirectEngineActive must be true")
+        XCTAssertEqual(media.trackTitle, "Around the World")
+        XCTAssertEqual(media.artistName, "Daft Punk")
+        XCTAssertEqual(media.formattedDuration, "7:09")
+        
+        // 3. Time formatting helper
+        XCTAssertEqual(media.formatTime(0), "0:00")
+        XCTAssertEqual(media.formatTime(65), "1:05")
+        XCTAssertEqual(media.formatTime(245), "4:05")
+        
+        // 4. Quick Vibe & Search Dispatch
+        media.playQuickVibe("Chill")
+        XCTAssertTrue(media.isPlaying)
+        media.playSearch("Lofi Beats")
+        XCTAssertTrue(media.isPlaying)
+        
+        // 5. Native Hardware System Media Key Dispatcher
+        MediaControllerModel.postSystemMediaKey(key: 16)
+        MediaControllerModel.postSystemMediaKey(key: 19)
+        MediaControllerModel.postSystemMediaKey(key: 20)
+        
+        // 6. MediaView Body Instantiation
+        let mediaView = MediaView(media: media)
+        XCTAssertNotNil(mediaView.body)
+    }
 }
+
 

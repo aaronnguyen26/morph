@@ -3,12 +3,25 @@ import SwiftUI
 public struct MediaView: View {
     @ObservedObject var media: MediaControllerModel
     
+    @State private var isScrubbing: Bool = false
+    @State private var scrubFraction: Double = 0.0
+    @State private var isSearching: Bool = false
+    @State private var searchQuery: String = ""
+    
     public init(media: MediaControllerModel) {
         self.media = media
     }
     
+    private var effectiveProgress: Double {
+        isScrubbing ? scrubFraction : media.progress
+    }
+    
+    private var effectiveCurrentTime: String {
+        isScrubbing ? media.formatTime(scrubFraction * media.duration) : media.formattedCurrentTime
+    }
+    
     public var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 16) {
             // MARK: - Left Deck: Album Art & Transport Suite
             VStack(spacing: 8) {
                 // Album Art (Real thumbnail or dark glass fallback)
@@ -116,32 +129,79 @@ public struct MediaView: View {
             }
             .frame(width: 148)
             
-            // MARK: - Right Deck: Metadata, Actions, Scrubber, Volume & Connection
-            VStack(alignment: .leading, spacing: 10) {
-                // Header Row: Track Metadata + Action Suite (Like, Dislike, Stop, Web View)
+            // MARK: - Right Deck: Metadata, Actions, Scrubber, Volume & Quick Stations
+            VStack(alignment: .leading, spacing: 9) {
+                // Header Row: Track Metadata OR Quick Search + Action Suite
                 HStack(alignment: .center, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(media.trackTitle)
-                            .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                        
-                        Text(media.artistName)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.6))
-                            .lineLimit(1)
+                    if isSearching {
+                        HStack(spacing: 5) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 10))
+                                .foregroundColor(Color.white.opacity(0.6))
+                            TextField("Search song or artist on YouTube Music...", text: $searchQuery)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundColor(.white)
+                                .onSubmit {
+                                    if !searchQuery.isEmpty {
+                                        media.playSearch(searchQuery)
+                                        isSearching = false
+                                    }
+                                }
+                            Button(action: {
+                                isSearching = false
+                                searchQuery = ""
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Color.white.opacity(0.5))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(Capsule())
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(media.trackTitle)
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            
+                            Text(media.artistName)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.6))
+                                .lineLimit(1)
+                        }
                     }
                     
                     Spacer()
+                    
+                    // Search Button
+                    Button(action: {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            isSearching.toggle()
+                        }
+                    }) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(isSearching ? .white : Color.white.opacity(0.65))
+                            .frame(width: 24, height: 24)
+                            .background(isSearching ? Color.white.opacity(0.2) : Color.white.opacity(0.08))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Search YouTube Music")
                     
                     // Thumbs Up / Like
                     Button(action: {
                         media.toggleLike()
                     }) {
                         Image(systemName: media.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                            .font(.system(size: 11))
-                            .foregroundColor(media.isLiked ? Color.white : Color.white.opacity(0.45))
-                            .frame(width: 26, height: 26)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(media.isLiked ? Color.white : Color.white.opacity(0.55))
+                            .frame(width: 24, height: 24)
                             .background(media.isLiked ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
                             .clipShape(Circle())
                     }
@@ -153,23 +213,23 @@ public struct MediaView: View {
                         media.toggleDislike()
                     }) {
                         Image(systemName: media.isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                            .font(.system(size: 11))
-                            .foregroundColor(media.isDisliked ? Color.white : Color.white.opacity(0.45))
-                            .frame(width: 26, height: 26)
+                            .font(.system(size: 10.5))
+                            .foregroundColor(media.isDisliked ? Color.white : Color.white.opacity(0.55))
+                            .frame(width: 24, height: 24)
                             .background(media.isDisliked ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .help(media.isDisliked ? "Disliked (Click to undislike)" : "Dislike Track")
                     
-                    // Dedicated Stop Button (Stops playback and resets to beginning)
+                    // Dedicated Stop Button
                     Button(action: {
                         media.stop()
                     }) {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(Color.white.opacity(0.75))
-                            .frame(width: 26, height: 26)
+                            .frame(width: 24, height: 24)
                             .background(Color.white.opacity(0.08))
                             .clipShape(Circle())
                     }
@@ -182,18 +242,18 @@ public struct MediaView: View {
                     }) {
                         HStack(spacing: 3.5) {
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 9))
+                                .font(.system(size: 8.5))
                             Text("Web View")
-                                .font(.system(size: 9.5, weight: .semibold))
+                                .font(.system(size: 9, weight: .semibold))
                         }
                         .foregroundColor(Color.white.opacity(0.9))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4.5)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
                         .background(Color.white.opacity(0.12))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help("Open YouTube Music to Sign In or Browse Playlists")
+                    .help("Open YouTube Music Window to Browse or Sign In")
                 }
                 
                 // Timeline Scrubber
@@ -206,21 +266,27 @@ public struct MediaView: View {
                             
                             Capsule()
                                 .fill(Color.white)
-                                .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(media.progress))), height: 5)
+                                .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(effectiveProgress))), height: 5)
                         }
                         .contentShape(Rectangle())
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { value in
-                                    let fraction = Double(value.location.x / geo.size.width)
+                                    isScrubbing = true
+                                    let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
+                                    scrubFraction = fraction
+                                }
+                                .onEnded { value in
+                                    let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
                                     media.seek(to: fraction)
+                                    isScrubbing = false
                                 }
                         )
                     }
                     .frame(height: 8)
                     
                     HStack {
-                        Text(media.formattedCurrentTime)
+                        Text(effectiveCurrentTime)
                             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                             .foregroundColor(Color.white.opacity(0.5))
                         
@@ -244,16 +310,16 @@ public struct MediaView: View {
                     }
                 }
                 
-                // Bottom Row: Volume Slider with Mute & Connection Status Badge
-                HStack(spacing: 12) {
+                // Bottom Row: Volume Slider with Mute & Quick Station Pills + Status
+                HStack(spacing: 8) {
                     // Mute / Volume Icon
                     Button(action: {
                         media.toggleMute()
                     }) {
                         Image(systemName: media.isMuted ? "speaker.slash.fill" : (media.volume > 0.5 ? "speaker.wave.2.fill" : "speaker.wave.1.fill"))
-                            .font(.system(size: 11))
+                            .font(.system(size: 10.5))
                             .foregroundColor(media.isMuted ? Color.white.opacity(0.4) : Color.white.opacity(0.85))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 18, height: 18)
                     }
                     .buttonStyle(.plain)
                     .help(media.isMuted ? "Unmute" : "Mute (⌘U)")
@@ -273,38 +339,63 @@ public struct MediaView: View {
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { value in
-                                    let fraction = Double(value.location.x / geo.size.width)
+                                    let fraction = max(0, min(1, Double(value.location.x / geo.size.width)))
                                     media.setVolume(fraction)
                                 }
                         )
                     }
-                    .frame(height: 6)
+                    .frame(width: 72, height: 6)
                     
                     // Volume Percentage
                     Text("\(Int((media.isMuted ? 0 : media.volume) * 100))%")
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.5))
-                        .frame(width: 32, alignment: .trailing)
+                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.45))
+                    
+                    Spacer(minLength: 4)
+                    
+                    // Quick Station Pills (One-tap play)
+                    HStack(spacing: 4) {
+                        vibeButton(title: "Supermix", vibe: "Supermix")
+                        vibeButton(title: "Chill", vibe: "Chill")
+                        vibeButton(title: "Focus", vibe: "Focus")
+                        vibeButton(title: "Lofi", vibe: "Lofi")
+                    }
                     
                     // Status Badge
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Circle()
-                            .fill(media.isDirectEngineConnected ? Color.green : Color.orange)
-                            .frame(width: 5, height: 5)
-                        Text(media.isDirectEngineConnected ? "YouTube Music Direct" : "Ready / Standby")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.55))
+                            .fill(media.isDirectEngineActive ? Color.green : (media.isBrowserConnected ? Color.blue : Color.orange))
+                            .frame(width: 4.5, height: 4.5)
+                        Text(media.isDirectEngineActive ? "Direct" : (media.isBrowserConnected ? "Browser" : "Ready"))
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.65))
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
                     .background(Color.white.opacity(0.06))
                     .clipShape(Capsule())
                 }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func vibeButton(title: String, vibe: String) -> some View {
+        Button(action: {
+            media.playQuickVibe(vibe)
+        }) {
+            Text(title)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.75))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.07))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Play \(title) Station on YouTube Music")
     }
     
     private var defaultArtPlaceholder: some View {
@@ -315,3 +406,4 @@ public struct MediaView: View {
         }
     }
 }
+

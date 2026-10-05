@@ -133,9 +133,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.webView.navigationDelegate = self
         self.webView.uiDelegate = self
         
+        // Host webView in playerWindow immediately so webView.window != nil (prevents WebKit throttling & audio suspension)
+        _ = ensurePlayerWindow()
+        
         // Initial load
         loadHome()
     }
+
     
     public func loadHome() {
         if let url = URL(string: kYTMURL) {
@@ -287,12 +291,25 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             if (v && v.paused) {
                 v.play().catch(function(){});
             }
-            var btn = document.querySelector('#play-pause-button') || document.querySelector('ytmusic-player-bar #play-pause-button');
+            var btn = document.querySelector('#play-pause-button') || 
+                      document.querySelector('ytmusic-player-bar #play-pause-button') ||
+                      document.querySelector('tp-yt-paper-icon-button#play-pause-button') ||
+                      document.querySelector('[aria-label*="Play" i]') ||
+                      document.querySelector('[aria-label*="Phát" i]');
             if (btn) {
                 var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
-                if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1) {
+                if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1 || label === '') {
                     btn.click();
                     var inner = btn.querySelector('button, #button, yt-icon');
+                    if (inner) inner.click();
+                }
+            }
+            // If neither has started, start the first playable item / supermix on page
+            if ((!p || typeof p.playVideo !== 'function') && (!v || !v.src)) {
+                var firstPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-two-row-item-renderer #play-button, ytmusic-play-button-renderer #button, #play-button');
+                if (firstPlay) {
+                    firstPlay.click();
+                    var inner = firstPlay.querySelector('button, #button, yt-icon');
                     if (inner) inner.click();
                 }
             }
@@ -318,10 +335,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             for (var i = 0; i < videos.length; i++) {
                 videos[i].pause();
             }
-            var btn = document.querySelector('#play-pause-button') || document.querySelector('ytmusic-player-bar #play-pause-button');
+            var btn = document.querySelector('#play-pause-button') || 
+                      document.querySelector('ytmusic-player-bar #play-pause-button') ||
+                      document.querySelector('tp-yt-paper-icon-button#play-pause-button') ||
+                      document.querySelector('[aria-label*="Pause" i]') ||
+                      document.querySelector('[aria-label*="Tạm dừng" i]');
             if (btn) {
                 var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
-                if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1) {
+                if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1 || label === '') {
                     btn.click();
                     var inner = btn.querySelector('button, #button, yt-icon');
                     if (inner) inner.click();
@@ -350,7 +371,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 videos[i].pause();
                 try { videos[i].currentTime = 0; } catch(e) {}
             }
-            var btn = document.querySelector('#play-pause-button') || document.querySelector('ytmusic-player-bar #play-pause-button');
+            var btn = document.querySelector('#play-pause-button') || 
+                      document.querySelector('ytmusic-player-bar #play-pause-button') ||
+                      document.querySelector('tp-yt-paper-icon-button#play-pause-button');
             if (btn) {
                 var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
                 if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1) {
@@ -385,7 +408,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             } else {
                 var btn = document.querySelector('.next-button') || 
                           document.querySelector('#right-controls .next-button') || 
-                          document.querySelector('ytmusic-player-bar .next-button');
+                          document.querySelector('ytmusic-player-bar .next-button') ||
+                          document.querySelector('tp-yt-paper-icon-button.next-button') ||
+                          document.querySelector('[aria-label*="Next" i]') ||
+                          document.querySelector('[aria-label*="tiếp" i]');
                 if (btn) {
                     btn.click();
                     var inner = btn.querySelector('button, #button, yt-icon');
@@ -393,7 +419,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 }
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 400);
+                setTimeout(window.morphSendUpdate, 350);
             }
         })();
         """
@@ -409,7 +435,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             } else {
                 var btn = document.querySelector('.previous-button') || 
                           document.querySelector('#left-controls .previous-button') || 
-                          document.querySelector('ytmusic-player-bar .previous-button');
+                          document.querySelector('ytmusic-player-bar .previous-button') ||
+                          document.querySelector('tp-yt-paper-icon-button.previous-button') ||
+                          document.querySelector('[aria-label*="Previous" i]') ||
+                          document.querySelector('[aria-label*="trước" i]');
                 if (btn) {
                     btn.click();
                     var inner = btn.querySelector('button, #button, yt-icon');
@@ -417,7 +446,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 }
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 400);
+                setTimeout(window.morphSendUpdate, 350);
             }
         })();
         """
@@ -498,11 +527,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var btn = document.querySelector('ytmusic-player-bar .shuffle') || 
                       document.querySelector('#right-controls .shuffle') || 
                       document.querySelector('.shuffle.ytmusic-player-bar') ||
-                      document.querySelector('tp-yt-paper-icon-button.shuffle');
+                      document.querySelector('tp-yt-paper-icon-button.shuffle') ||
+                      document.querySelector('[aria-label*="Shuffle" i]') ||
+                      document.querySelector('[aria-label*="xáo trộn" i]');
             if (btn) {
                 btn.click();
                 var inner = btn.querySelector('button, #button, yt-icon');
                 if (inner) inner.click();
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -518,11 +550,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var btn = document.querySelector('ytmusic-player-bar .repeat') || 
                       document.querySelector('#right-controls .repeat') || 
                       document.querySelector('.repeat.ytmusic-player-bar') ||
-                      document.querySelector('tp-yt-paper-icon-button.repeat');
+                      document.querySelector('tp-yt-paper-icon-button.repeat') ||
+                      document.querySelector('[aria-label*="Repeat" i]') ||
+                      document.querySelector('[aria-label*="lặp lại" i]');
             if (btn) {
                 btn.click();
                 var inner = btn.querySelector('button, #button, yt-icon');
                 if (inner) inner.click();
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -535,13 +570,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func toggleLike() {
         let script = """
         (function() {
-            var btn = document.querySelector('#like-button-renderer yt-icon-button.like') || 
-                      document.querySelector('ytmusic-like-button-renderer #like-button') ||
-                      document.querySelector('ytmusic-like-button-renderer .like');
+            var btn = document.querySelector('ytmusic-like-button-renderer #like-button') || 
+                      document.querySelector('ytmusic-like-button-renderer .like') ||
+                      document.querySelector('#like-button-renderer yt-icon-button.like') || 
+                      document.querySelector('ytmusic-like-button-renderer [aria-label*="Like" i]') ||
+                      document.querySelector('ytmusic-like-button-renderer [aria-label*="Thích" i]') ||
+                      document.querySelector('ytmusic-like-button-renderer yt-button-shape:first-child');
             if (btn) {
                 btn.click();
                 var inner = btn.querySelector('button, #button, yt-icon');
                 if (inner) inner.click();
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -554,13 +593,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func toggleDislike() {
         let script = """
         (function() {
-            var btn = document.querySelector('#like-button-renderer yt-icon-button.dislike') || 
-                      document.querySelector('ytmusic-like-button-renderer #dislike-button') ||
-                      document.querySelector('ytmusic-like-button-renderer .dislike');
+            var btn = document.querySelector('ytmusic-like-button-renderer #dislike-button') || 
+                      document.querySelector('ytmusic-like-button-renderer .dislike') ||
+                      document.querySelector('#like-button-renderer yt-icon-button.dislike') || 
+                      document.querySelector('ytmusic-like-button-renderer [aria-label*="Dislike" i]') ||
+                      document.querySelector('ytmusic-like-button-renderer [aria-label*="Không thích" i]') ||
+                      document.querySelector('ytmusic-like-button-renderer yt-button-shape:last-child');
             if (btn) {
                 btn.click();
                 var inner = btn.querySelector('button, #button, yt-icon');
                 if (inner) inner.click();
+                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -569,7 +612,55 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         """
         evaluate(script)
     }
-
+    
+    public func playSearch(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://music.youtube.com/search?q=\(encoded)") else { return }
+        
+        self.webView.load(URLRequest(url: url))
+        
+        // Auto-click the first playable track or album in search results
+        let autoPlayScript = """
+        var checkCount = 0;
+        var checkInterval = setInterval(function() {
+            checkCount++;
+            var firstPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-shelf-renderer #play-button, ytmusic-two-row-item-renderer #play-button, ytmusic-play-button-renderer #button');
+            if (firstPlay) {
+                clearInterval(checkInterval);
+                firstPlay.click();
+                var inner = firstPlay.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+            }
+            if (checkCount > 30) {
+                clearInterval(checkInterval);
+            }
+        }, 250);
+        """
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.evaluate(autoPlayScript)
+        }
+    }
+    
+    public func playVibe(_ vibe: String) {
+        let query: String
+        switch vibe.lowercased() {
+        case "supermix", "my mix":
+            query = "My Supermix"
+        case "chill":
+            query = "Chill Vibes"
+        case "focus":
+            query = "Deep Focus Study"
+        case "lofi":
+            query = "Lofi Hip Hop Beats"
+        case "hits", "top hits":
+            query = "Top Hits Today"
+        default:
+            query = vibe
+        }
+        playSearch(query: query)
+    }
     
     public func evaluate(_ js: String) {
         webView.evaluateJavaScript(js) { _, error in
@@ -594,47 +685,53 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     // MARK: - Dedicated Web View Window (With Navigation Toolbar)
-    public func showPlayerWindow() {
-        if playerWindow == nil {
-            let win = NSWindow(
-                contentRect: NSRect(x: 100, y: 100, width: 1100, height: 760),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            win.title = "YouTube Music — Morph Direct Engine"
-            win.titlebarAppearsTransparent = false
-            win.isReleasedWhenClosed = false
-            win.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
-            
-            let delegate = PlayerWindowDelegate { [weak self] in
-                self?.isPlayerWindowVisible = false
-            }
-            self.windowDelegate = delegate
-            win.delegate = delegate
-            
-            // Build Container with Top Navigation Toolbar + Web View
-            let container = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
-            container.autoresizingMask = [.width, .height]
-            
-            // Toolbar Hosting View (Height: 42 pt)
-            let toolbarView = NSHostingView(rootView: PlayerWindowToolbarView(engine: self))
-            toolbarView.frame = NSRect(x: 0, y: 760 - 42, width: 1100, height: 42)
-            toolbarView.autoresizingMask = [.width, .minYMargin]
-            
-            // Web View (Height: 718 pt)
-            self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - 42)
-            self.webView.autoresizingMask = [.width, .height]
-            
-            container.addSubview(self.webView)
-            container.addSubview(toolbarView)
-            
-            win.contentView = container
-            win.center()
-            self.playerWindow = win
+    @discardableResult
+    public func ensurePlayerWindow() -> NSWindow {
+        if let win = playerWindow {
+            return win
         }
+        let win = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 1100, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        win.title = "YouTube Music — Morph Direct Engine"
+        win.titlebarAppearsTransparent = false
+        win.isReleasedWhenClosed = false
+        win.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
         
-        playerWindow?.makeKeyAndOrderFront(nil)
+        let delegate = PlayerWindowDelegate { [weak self] in
+            self?.isPlayerWindowVisible = false
+        }
+        self.windowDelegate = delegate
+        win.delegate = delegate
+        
+        // Build Container with Top Navigation Toolbar + Web View
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
+        container.autoresizingMask = [.width, .height]
+        
+        // Toolbar Hosting View (Height: 42 pt)
+        let toolbarView = NSHostingView(rootView: PlayerWindowToolbarView(engine: self))
+        toolbarView.frame = NSRect(x: 0, y: 760 - 42, width: 1100, height: 42)
+        toolbarView.autoresizingMask = [.width, .minYMargin]
+        
+        // Web View (Height: 718 pt)
+        self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - 42)
+        self.webView.autoresizingMask = [.width, .height]
+        
+        container.addSubview(self.webView)
+        container.addSubview(toolbarView)
+        
+        win.contentView = container
+        win.center()
+        self.playerWindow = win
+        return win
+    }
+    
+    public func showPlayerWindow() {
+        let win = ensurePlayerWindow()
+        win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.isPlayerWindowVisible = true
     }
@@ -780,22 +877,52 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         return """
         (function() {
             function getTrackInfo() {
-                var titleEl = document.querySelector('ytmusic-player-bar .title') || document.querySelector('.title.ytmusic-player-bar');
-                var bylineEl = document.querySelector('ytmusic-player-bar .byline') || document.querySelector('.byline.ytmusic-player-bar');
-                var imgEl = document.querySelector('ytmusic-player-bar .thumbnail img') || document.querySelector('#song-image img') || document.querySelector('ytmusic-player-bar img');
+                var title = '';
+                var artist = '';
+                var art = null;
+                
+                // 1. First priority: navigator.mediaSession.metadata (Official, rock-solid)
+                if (navigator.mediaSession && navigator.mediaSession.metadata) {
+                    var m = navigator.mediaSession.metadata;
+                    if (m.title) title = m.title;
+                    if (m.artist) artist = m.artist;
+                    if (m.artwork && m.artwork.length > 0) {
+                        art = m.artwork[m.artwork.length - 1].src;
+                    }
+                }
+                
+                // 2. DOM fallback for title & artist
+                if (!title) {
+                    var titleEl = document.querySelector('ytmusic-player-bar .title') || 
+                                  document.querySelector('.title.ytmusic-player-bar') ||
+                                  document.querySelector('ytmusic-player-bar yt-formatted-string.title') ||
+                                  document.querySelector('.middle-controls .title');
+                    if (titleEl) title = (titleEl.innerText || titleEl.textContent || '').trim();
+                }
+                
+                if (!artist) {
+                    var bylineEl = document.querySelector('ytmusic-player-bar .byline') || 
+                                   document.querySelector('.byline.ytmusic-player-bar') ||
+                                   document.querySelector('ytmusic-player-bar yt-formatted-string.byline') ||
+                                   document.querySelector('.middle-controls .byline');
+                    if (bylineEl) artist = (bylineEl.innerText || bylineEl.textContent || '').trim();
+                }
+                
+                if (!art) {
+                    var imgEl = document.querySelector('ytmusic-player-bar .thumbnail img') || 
+                                document.querySelector('#song-image img') || 
+                                document.querySelector('ytmusic-player-bar img#img') ||
+                                document.querySelector('ytmusic-player-bar .image img');
+                    if (imgEl && imgEl.src && imgEl.src.indexOf('data:') !== 0) art = imgEl.src;
+                }
+                
                 var videoEl = document.querySelector('video');
                 var playerEl = document.getElementById('movie_player') || document.querySelector('#movie_player');
-                var likeBtn = document.querySelector('#like-button-renderer yt-icon-button.like') || document.querySelector('ytmusic-like-button-renderer .like');
-                var dislikeBtn = document.querySelector('#like-button-renderer yt-icon-button.dislike') || document.querySelector('ytmusic-like-button-renderer .dislike');
-                var shuffleBtn = document.querySelector('ytmusic-player-bar .shuffle') || document.querySelector('#right-controls .shuffle') || document.querySelector('.shuffle.ytmusic-player-bar');
-                var repeatBtn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat.ytmusic-player-bar');
-                
-                var title = titleEl ? (titleEl.innerText || titleEl.textContent || '') : '';
-                var artist = bylineEl ? (bylineEl.innerText || bylineEl.textContent || '') : '';
-                var art = imgEl ? imgEl.src : null;
                 
                 var isPlaying = false;
-                if (playerEl && typeof playerEl.getPlayerState === 'function') {
+                if (navigator.mediaSession && navigator.mediaSession.playbackState) {
+                    isPlaying = (navigator.mediaSession.playbackState === 'playing');
+                } else if (playerEl && typeof playerEl.getPlayerState === 'function') {
                     var s = playerEl.getPlayerState();
                     isPlaying = (s === 1 || s === 3);
                 } else if (videoEl) {
@@ -807,24 +934,72 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var volume = videoEl ? videoEl.volume : (playerEl && typeof playerEl.getVolume === 'function' ? (playerEl.getVolume() / 100) : 1.0);
                 var isMuted = videoEl ? videoEl.muted : (playerEl && typeof playerEl.isMuted === 'function' ? playerEl.isMuted() : false);
                 
-                var isLiked = likeBtn ? (likeBtn.getAttribute('aria-pressed') === 'true') : false;
-                var isDisliked = dislikeBtn ? (dislikeBtn.getAttribute('aria-pressed') === 'true') : false;
+                // Like / Dislike detection
+                var likeBtn = document.querySelector('ytmusic-like-button-renderer #like-button') ||
+                              document.querySelector('ytmusic-like-button-renderer .like') ||
+                              document.querySelector('#like-button-renderer yt-icon-button.like') ||
+                              document.querySelector('ytmusic-like-button-renderer [aria-label*="Like" i]') ||
+                              document.querySelector('ytmusic-like-button-renderer [aria-label*="Thích" i]') ||
+                              document.querySelector('ytmusic-like-button-renderer yt-button-shape:first-child');
+                var dislikeBtn = document.querySelector('ytmusic-like-button-renderer #dislike-button') ||
+                                 document.querySelector('ytmusic-like-button-renderer .dislike') ||
+                                 document.querySelector('#like-button-renderer yt-icon-button.dislike') ||
+                                 document.querySelector('ytmusic-like-button-renderer [aria-label*="Dislike" i]') ||
+                                 document.querySelector('ytmusic-like-button-renderer [aria-label*="Không thích" i]') ||
+                                 document.querySelector('ytmusic-like-button-renderer yt-button-shape:last-child');
                 
-                var isShuffle = false;
-                if (shuffleBtn) {
-                    isShuffle = shuffleBtn.getAttribute('aria-pressed') === 'true' || 
-                                shuffleBtn.getAttribute('aria-checked') === 'true' || 
-                                shuffleBtn.classList.contains('active') ||
-                                ((shuffleBtn.getAttribute('title') || '').toLowerCase().indexOf('on') !== -1);
+                var isLiked = false;
+                if (likeBtn) {
+                    var innerBtn = likeBtn.querySelector('button') || likeBtn;
+                    isLiked = (likeBtn.getAttribute('aria-pressed') === 'true' || 
+                               innerBtn.getAttribute('aria-pressed') === 'true' ||
+                               likeBtn.classList.contains('active') ||
+                               likeBtn.getAttribute('aria-checked') === 'true');
                 }
                 
+                var isDisliked = false;
+                if (dislikeBtn) {
+                    var innerBtn = dislikeBtn.querySelector('button') || dislikeBtn;
+                    isDisliked = (dislikeBtn.getAttribute('aria-pressed') === 'true' || 
+                                  innerBtn.getAttribute('aria-pressed') === 'true' ||
+                                  dislikeBtn.classList.contains('active') ||
+                                  dislikeBtn.getAttribute('aria-checked') === 'true');
+                }
+                
+                // Shuffle detection
+                var shuffleBtn = document.querySelector('ytmusic-player-bar .shuffle') || 
+                                 document.querySelector('#right-controls .shuffle') || 
+                                 document.querySelector('.shuffle.ytmusic-player-bar') ||
+                                 document.querySelector('tp-yt-paper-icon-button.shuffle') ||
+                                 document.querySelector('[aria-label*="Shuffle" i]') ||
+                                 document.querySelector('[aria-label*="xáo trộn" i]');
+                var isShuffle = false;
+                if (shuffleBtn) {
+                    var innerShuffle = shuffleBtn.querySelector('button') || shuffleBtn;
+                    var sTitle = (shuffleBtn.getAttribute('title') || shuffleBtn.getAttribute('aria-label') || '').toLowerCase();
+                    isShuffle = (shuffleBtn.getAttribute('aria-pressed') === 'true' || 
+                                 innerShuffle.getAttribute('aria-pressed') === 'true' ||
+                                 shuffleBtn.classList.contains('active') ||
+                                 sTitle.indexOf('on') !== -1 || sTitle.indexOf('bật') !== -1);
+                }
+                
+                // Repeat detection
+                var repeatBtn = document.querySelector('ytmusic-player-bar .repeat') || 
+                                document.querySelector('#right-controls .repeat') || 
+                                document.querySelector('.repeat.ytmusic-player-bar') ||
+                                document.querySelector('tp-yt-paper-icon-button.repeat') ||
+                                document.querySelector('[aria-label*="Repeat" i]') ||
+                                document.querySelector('[aria-label*="lặp lại" i]');
                 var repeatMode = 'off';
                 if (repeatBtn) {
-                    var rText = ((repeatBtn.getAttribute('aria-label') || repeatBtn.getAttribute('title') || '') + ' ' + (repeatBtn.innerText || '')).toLowerCase();
-                    var rPressed = repeatBtn.getAttribute('aria-pressed');
-                    if (rText.indexOf('one') !== -1 || rText.indexOf('1') !== -1) {
+                    var innerRepeat = repeatBtn.querySelector('button') || repeatBtn;
+                    var rText = ((repeatBtn.getAttribute('aria-label') || repeatBtn.getAttribute('title') || '') + ' ' + 
+                                 (innerRepeat.getAttribute('aria-label') || innerRepeat.getAttribute('title') || '') + ' ' +
+                                 (repeatBtn.innerText || '')).toLowerCase();
+                    var rPressed = repeatBtn.getAttribute('aria-pressed') === 'true' || innerRepeat.getAttribute('aria-pressed') === 'true';
+                    if (rText.indexOf('one') !== -1 || rText.indexOf('1') !== -1 || rText.indexOf('một') !== -1) {
                         repeatMode = 'one';
-                    } else if (rText.indexOf('all') !== -1 || rPressed === 'true') {
+                    } else if (rText.indexOf('all') !== -1 || rText.indexOf('tất cả') !== -1 || rPressed) {
                         repeatMode = 'all';
                     } else {
                         repeatMode = 'off';

@@ -67,6 +67,36 @@ public final class MediaControllerModel: ObservableObject {
             }
     }
     
+    public var isDirectEngineActive: Bool {
+        return !engine.trackData.title.isEmpty && engine.trackData.title != "YouTube Music" && engine.trackData.duration > 0
+    }
+    
+    /// Native macOS Hardware Media Key Event Dispatcher (NX_KEYTYPE_PLAY = 16, NX_KEYTYPE_FAST = 19, NX_KEYTYPE_REWIND = 20)
+    /// Directs playback control to macOS Now Playing audio daemon natively without requiring browser AppleScript JS permissions
+    public static func postSystemMediaKey(key: Int32) {
+        guard !ProcessInfo.processInfo.processName.contains("xctest") else { return }
+        func postKeyEvent(down: Bool) {
+            let flags = NSEvent.ModifierFlags(rawValue: down ? 0xa00 : 0xb00)
+            let data1 = Int((key << 16) | (down ? 0xa00 : 0xb00))
+            let ev = NSEvent.otherEvent(
+                with: .systemDefined,
+                location: .zero,
+                modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                subtype: 8,
+                data1: data1,
+                data2: -1
+            )
+            if let cgEv = ev?.cgEvent {
+                cgEv.post(tap: .cghidEventTap)
+            }
+        }
+        postKeyEvent(down: true)
+        postKeyEvent(down: false)
+    }
+
     private func setupEngineObservers() {
         // Observe direct WebKit engine track updates synchronously on MainActor
         engine.$trackData
@@ -74,15 +104,13 @@ public final class MediaControllerModel: ObservableObject {
                 guard let self = self else { return }
                 
                 // If YouTube Music is playing or has track data, prioritize direct engine
-                if !data.title.isEmpty && data.title != "YouTube Music" {
+                if !data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0 {
                     self.trackTitle = data.title
                     self.artistName = data.artist.isEmpty ? "YouTube Music" : data.artist
                     self.albumArtURL = data.albumArtURL
                     self.isPlaying = data.isPlaying
                     self.currentTime = data.currentTime
-                    if data.duration > 0 {
-                        self.duration = data.duration
-                    }
+                    self.duration = data.duration
                     self.volume = data.volume
                     self.isMuted = data.isMuted
                     self.isLiked = data.isLiked
@@ -91,14 +119,6 @@ public final class MediaControllerModel: ObservableObject {
                     self.repeatMode = data.repeatMode
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
-                }
-            }
-            .store(in: &cancellables)
-            
-        engine.$isEngineLoaded
-            .sink { [weak self] loaded in
-                if loaded {
-                    self?.isDirectEngineConnected = true
                 }
             }
             .store(in: &cancellables)
@@ -117,7 +137,7 @@ public final class MediaControllerModel: ObservableObject {
         return max(0, min(1, currentTime / duration))
     }
     
-    private func formatTime(_ time: TimeInterval) -> String {
+    public func formatTime(_ time: TimeInterval) -> String {
         let mins = Int(time) / 60
         let secs = Int(time) % 60
         return String(format: "%d:%02d", mins, secs)
@@ -125,14 +145,26 @@ public final class MediaControllerModel: ObservableObject {
     
     public func play() {
         isPlaying = true
-        engine.play()
-        executeBrowserPlay()
+        if isDirectEngineActive {
+            engine.play()
+        } else if isBrowserConnected {
+            executeBrowserPlay()
+            Self.postSystemMediaKey(key: 16)
+        } else {
+            // Kick off playback in direct engine and browser
+            engine.play()
+            executeBrowserPlay()
+            Self.postSystemMediaKey(key: 16)
+        }
     }
     
     public func pause() {
         isPlaying = false
         engine.pause()
         executeBrowserPause()
+        if !isDirectEngineActive && isBrowserConnected {
+            Self.postSystemMediaKey(key: 16)
+        }
     }
     
     public func stop() {
@@ -140,6 +172,9 @@ public final class MediaControllerModel: ObservableObject {
         currentTime = 0
         engine.stop()
         executeBrowserStop()
+        if !isDirectEngineActive && isBrowserConnected {
+            Self.postSystemMediaKey(key: 16)
+        }
     }
     
     public func togglePlay() {
@@ -151,25 +186,49 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func nextTrack() {
-        engine.nextTrack()
-        executeBrowserNextTrack()
-        if !isDirectEngineConnected && !isBrowserConnected {
+        if isDirectEngineActive {
+            engine.nextTrack()
+        } else if isBrowserConnected {
+            executeBrowserNextTrack()
+            Self.postSystemMediaKey(key: 19)
+        } else {
+            engine.nextTrack()
+            executeBrowserNextTrack()
+            Self.postSystemMediaKey(key: 19)
             simulateNextTrack()
         }
     }
     
     public func previousTrack() {
-        engine.previousTrack()
-        executeBrowserPreviousTrack()
-        if !isDirectEngineConnected && !isBrowserConnected {
+        if isDirectEngineActive {
+            engine.previousTrack()
+        } else if isBrowserConnected {
+            executeBrowserPreviousTrack()
+            Self.postSystemMediaKey(key: 20)
+        } else {
+            engine.previousTrack()
+            executeBrowserPreviousTrack()
+            Self.postSystemMediaKey(key: 20)
             currentTime = 0
         }
+    }
+    
+    public func playQuickVibe(_ vibe: String) {
+        isPlaying = true
+        engine.playVibe(vibe)
+    }
+    
+    public func playSearch(_ query: String) {
+        isPlaying = true
+        engine.playSearch(query: query)
     }
     
     public func seek(to progressFraction: Double) {
         let clamped = max(0, min(1, progressFraction))
         currentTime = clamped * duration
-        engine.seek(to: currentTime)
+        if isDirectEngineActive {
+            engine.seek(to: currentTime)
+        }
         executeBrowserSeek(to: currentTime)
     }
     
@@ -178,13 +237,17 @@ public final class MediaControllerModel: ObservableObject {
         if volume > 0 && isMuted {
             isMuted = false
         }
-        engine.setVolume(volume)
+        if isDirectEngineActive {
+            engine.setVolume(volume)
+        }
         executeBrowserVolume(volume)
     }
     
     public func toggleMute() {
         isMuted.toggle()
-        engine.toggleMute()
+        if isDirectEngineActive {
+            engine.toggleMute()
+        }
         executeBrowserMute(isMuted)
     }
     
@@ -365,7 +428,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPlayPause() {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -383,7 +446,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPlay() {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -401,7 +464,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPause() {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -419,7 +482,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserStop() {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -437,7 +500,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserNextTrack() {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -455,7 +518,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPreviousTrack() {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -473,7 +536,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserSeek(to seconds: TimeInterval) {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -491,7 +554,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserVolume(_ vol: Double) {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -509,7 +572,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserMute(_ muted: Bool) {
-        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
