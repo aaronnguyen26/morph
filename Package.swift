@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "morph",
             path: "Sources/morph"
+        ),
+        .testTarget(
+            name: "MorphTests",
+            dependencies: ["morph"],
+            path: "Tests/MorphTests"
         )
     ]
 )

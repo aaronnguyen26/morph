@@ -21,7 +21,7 @@ public struct MorphIslandView: View {
     
     private var cornerRadius: CGFloat {
         if model.isExpanded {
-            return 26
+            return 24
         } else if model.isCompactActive {
             return 11
         } else {
@@ -61,7 +61,7 @@ public struct MorphIslandView: View {
                         style: .continuous
                     )
                     .stroke(
-                        Color.white.opacity(model.isExpanded ? 0.14 : 0.12),
+                        Color.white.opacity(model.isExpanded ? 0.16 : 0.22),
                         lineWidth: 1
                     )
                 )
@@ -114,55 +114,71 @@ public struct MorphIslandView: View {
     // MARK: - 2. Compact Active Notch View (Displays on the notch itself when timer/music active)
     private var compactActiveNotchView: some View {
         HStack(spacing: 0) {
-            // Left Wing: Timer countdown & micro progress ring
-            HStack(spacing: 4) {
+            // Left Wing: Outside notch, 100% visible to user!
+            HStack(spacing: 5) {
                 if model.pomodoro.isRunning {
                     ZStack {
                         Circle()
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1.8)
-                            .frame(width: 11, height: 11)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1.8)
+                            .frame(width: 12, height: 12)
                         
                         Circle()
                             .trim(from: 0, to: CGFloat(model.pomodoro.progress))
                             .stroke(Color.white, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
                             .rotationEffect(.degrees(-90))
-                            .frame(width: 11, height: 11)
+                            .frame(width: 12, height: 12)
                     }
                     
                     Text(model.pomodoro.formattedTime)
-                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
+                } else if model.media.isPlaying {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    Circle()
+                        .fill(Color.white.opacity(0.8))
+                        .frame(width: 4, height: 4)
                 }
             }
-            .padding(.leading, 8)
+            .padding(.leading, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             
             // Center: Black spacer matching hardware webcam cutout
             Color.clear
                 .frame(width: model.idleWidth, height: model.idleHeight)
             
-            // Right Wing: Live 3-bar animated audio visualizer
-            HStack(spacing: 3) {
+            // Right Wing: Outside notch, 100% visible to user!
+            HStack(spacing: 5) {
                 if model.media.isPlaying {
                     HStack(alignment: .bottom, spacing: 2) {
                         ForEach(0..<3, id: \.self) { i in
                             RoundedRectangle(cornerRadius: 1)
-                                .fill(Color.white.opacity(0.85))
-                                .frame(width: 2, height: max(3, 10 * model.media.visualizerBars[i]))
+                                .fill(Color.white.opacity(0.9))
+                                .frame(width: 2.2, height: max(3, 11 * model.media.visualizerBars[i]))
                                 .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i])
                         }
                     }
-                    .frame(height: 10, alignment: .bottom)
+                    .frame(height: 11, alignment: .bottom)
+                } else if model.pomodoro.isRunning {
+                    Text(model.pomodoro.mode == .work ? "FOCUS" : "BREAK")
+                        .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.12))
+                        .cornerRadius(3)
                 }
             }
-            .padding(.trailing, 8)
+            .padding(.trailing, 10)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(width: model.compactWidth, height: model.idleHeight)
         .contentShape(Rectangle())
     }
     
-    // MARK: - 3. Expanded Island View (580 x 240 pt)
+    // MARK: - 3. Expanded Island View (640 x 300 pt)
     private var expandedView: some View {
         VStack(spacing: 4) {
             // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch

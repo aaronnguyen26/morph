@@ -25,9 +25,9 @@ public final class NotchModel: ObservableObject {
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
     
-    // Expanded Island Dimensions (580 x 240 pt)
-    public let expandedWidth: CGFloat = 580
-    public let expandedHeight: CGFloat = 240
+    // Expanded Island Dimensions (640 x 300 pt)
+    public let expandedWidth: CGFloat = 640
+    public let expandedHeight: CGFloat = 300
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
@@ -61,14 +61,16 @@ public final class NotchModel: ObservableObject {
         pomodoro.isRunning || media.isPlaying
     }
     
-    // Compact notch width when activity is running on the notch itself
+    // Compact notch width when activity is running on the notch itself.
+    // Gives generous left & right wings (70-80 pt each) outside the physical notch
+    // so active timers and music visualizers are 100% visible to the user!
     public var compactWidth: CGFloat {
         if pomodoro.isRunning && media.isPlaying {
-            return idleWidth + 84 // 42 pt left wing for timer, 42 pt right wing for equalizer
+            return idleWidth + 160 // 80 pt left wing for timer, 80 pt right wing for equalizer
         } else if pomodoro.isRunning {
-            return idleWidth + 64 // 32 pt on left/right for timer display
+            return idleWidth + 150 // 75 pt left/right wings
         } else if media.isPlaying {
-            return idleWidth + 50 // 25 pt on left/right for equalizer
+            return idleWidth + 140 // 70 pt left/right wings
         } else {
             return idleWidth
         }
