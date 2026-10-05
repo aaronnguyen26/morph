@@ -28,8 +28,8 @@ public final class MorphController: NSObject {
         let screen = targetScreen()
         model.detectScreenNotch()
         
-        let width = model.notchWidth
-        let height = model.notchHeight
+        let width = model.currentWidth
+        let height = model.currentHeight
         let x = screen.frame.midX - (width / 2)
         let y = screen.frame.maxY - height
         let initialFrame = NSRect(x: x, y: y, width: width, height: height)
@@ -56,8 +56,8 @@ public final class MorphController: NSObject {
         
         self.hostingView.getActiveBounds = { [weak self] in
             guard let self = self else { return .zero }
-            let w = self.model.isExpanded ? self.model.expandedWidth : self.model.notchWidth
-            let h = self.model.isExpanded ? self.model.expandedHeight : self.model.notchHeight
+            let w = self.model.currentWidth
+            let h = self.model.currentHeight
             let bounds = self.hostingView.bounds
             return NSRect(
                 x: (bounds.width - w) / 2,
@@ -92,17 +92,47 @@ public final class MorphController: NSObject {
                 }
             }
             .store(in: &cancellables)
+            
+        // Observe Pomodoro and Media state to dynamically size resting pill/idle window
+        Publishers.Merge(
+            model.pomodoro.$isRunning.map { _ in () },
+            model.media.$isPlaying.map { _ in () }
+        )
+        .sink { [weak self] _ in
+            guard let self = self, !self.model.isExpanded else { return }
+            self.resizePanelToRestingState()
+        }
+        .store(in: &cancellables)
+        
+        // Listen to external/scriptable distributed notifications
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.morph.toggleExpand"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.model.toggleExpand()
+            }
+        }
+        
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.morph.togglePin"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.model.togglePin()
+            }
+        }
     }
     
     private func setupMouseMonitors() {
-        // Global monitor tracks cursor across other background applications
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.checkMousePosition(NSEvent.mouseLocation)
             }
         }
         
-        // Local monitor tracks cursor when Morph window or its elements are active
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
             self?.checkMousePosition(NSEvent.mouseLocation)
             return event
@@ -128,8 +158,8 @@ public final class MorphController: NSObject {
                 collapseWorkItem = nil
             }
         } else {
-            let w = model.notchWidth
-            let h = model.notchHeight
+            let w = model.currentWidth
+            let h = model.currentHeight
             let minX = screen.frame.midX - (w / 2)
             let maxX = screen.frame.midX + (w / 2)
             let minY = screen.frame.maxY - h - 4
@@ -148,7 +178,7 @@ public final class MorphController: NSObject {
         
         if !model.isExpanded {
             expandPanel()
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                 self.model.isExpanded = true
             }
         }
@@ -184,22 +214,22 @@ public final class MorphController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.38) { [weak self] in
             guard let self = self else { return }
             guard !self.model.isExpanded else { return }
-            self.resizePanelToCollapsed()
+            self.resizePanelToRestingState()
         }
     }
     
-    private func resizePanelToCollapsed() {
+    private func resizePanelToRestingState() {
         let screen = targetScreen()
-        let w = model.notchWidth
-        let h = model.notchHeight
+        let w = model.currentWidth
+        let h = model.currentHeight
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
     }
     
     private func handleScreenChange() {
         model.detectScreenNotch()
         let screen = targetScreen()
-        let w = model.isExpanded ? model.expandedWidth : model.notchWidth
-        let h = model.isExpanded ? model.expandedHeight : model.notchHeight
+        let w = model.currentWidth
+        let h = model.currentHeight
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
     }
 }

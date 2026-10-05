@@ -5,8 +5,6 @@ public struct MorphIslandView: View {
     var onMouseEnter: () -> Void
     var onMouseExit: () -> Void
     
-    @State private var isPulsing: Bool = false
-    
     public init(model: NotchModel, onMouseEnter: @escaping () -> Void, onMouseExit: @escaping () -> Void) {
         self.model = model
         self.onMouseEnter = onMouseEnter
@@ -14,21 +12,25 @@ public struct MorphIslandView: View {
     }
     
     private var currentWidth: CGFloat {
-        model.isExpanded ? model.expandedWidth : model.notchWidth
+        model.currentWidth
     }
     
     private var currentHeight: CGFloat {
-        model.isExpanded ? model.expandedHeight : model.notchHeight
+        model.currentHeight
     }
     
     private var cornerRadius: CGFloat {
-        model.isExpanded ? 24 : 12
+        switch model.currentDisplayState {
+        case .idle: return 12
+        case .pill: return 18
+        case .expanded: return 22
+        }
     }
     
     public var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // Background shape
+                // Background Base Shape
                 UnevenRoundedRectangle(
                     topLeadingRadius: 0,
                     bottomLeadingRadius: cornerRadius,
@@ -38,15 +40,15 @@ public struct MorphIslandView: View {
                 )
                 .fill(Color(red: 0.05, green: 0.05, blue: 0.07))
                 .overlay(
-                    // Subtle ambient glow
+                    // Ambient radial glow
                     RadialGradient(
                         colors: [
-                            model.selectedAccent.color.opacity(model.isExpanded ? 0.15 : 0.05),
+                            model.selectedAccent.color.opacity(model.isExpanded ? 0.16 : 0.08),
                             Color.clear
                         ],
                         center: .top,
                         startRadius: 5,
-                        endRadius: model.isExpanded ? 220 : 60
+                        endRadius: model.isExpanded ? 240 : 80
                     )
                 )
                 .overlay(
@@ -62,7 +64,7 @@ public struct MorphIslandView: View {
                         LinearGradient(
                             colors: [
                                 Color.white.opacity(0.18),
-                                model.selectedAccent.color.opacity(model.isExpanded ? 0.45 : 0.2),
+                                model.selectedAccent.color.opacity(model.isExpanded ? 0.45 : 0.25),
                                 Color.white.opacity(0.08)
                             ],
                             startPoint: .topLeading,
@@ -74,31 +76,33 @@ public struct MorphIslandView: View {
                 .shadow(
                     color: model.isExpanded
                         ? model.selectedAccent.color.opacity(0.25)
-                        : Color.black.opacity(0.4),
-                    radius: model.isExpanded ? 24 : 8,
+                        : (model.pomodoro.isCompleted ? Color(red: 0.2, green: 0.9, blue: 0.55).opacity(0.4) : Color.black.opacity(0.4)),
+                    radius: model.isExpanded ? 20 : 8,
                     x: 0,
-                    y: model.isExpanded ? 10 : 3
+                    y: model.isExpanded ? 8 : 2
                 )
-                .shadow(color: Color.black.opacity(0.7), radius: 16, x: 0, y: 8)
                 
-                // Content Switcher
-                if model.isExpanded {
-                    expandedContent
+                // Content based on Display State
+                switch model.currentDisplayState {
+                case .expanded:
+                    expandedView
                         .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
+                            insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top)),
                             removal: .opacity
                         ))
-                } else {
-                    collapsedNotchContent
+                case .pill:
+                    activePillView
+                        .transition(.opacity)
+                case .idle:
+                    idleNotchView
                         .transition(.opacity)
                 }
             }
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
-            .animation(.spring(response: 0.38, dampingFraction: 0.78), value: model.isExpanded)
-            .animation(.easeInOut(duration: 0.25), value: model.selectedAccent)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: model.isPinned)
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.currentDisplayState)
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.selectedTab)
+            .animation(.easeInOut(duration: 0.2), value: model.selectedAccent)
             
-            // Spacer fills bottom if in larger frame
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -111,319 +115,202 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - Collapsed Notch View
-    private var collapsedNotchContent: some View {
-        HStack(spacing: 8) {
-            // Left subtle indicator
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(model.selectedAccent.color)
-                    .frame(width: 5, height: 5)
-                    .shadow(color: model.selectedAccent.color, radius: 4)
-                
-                Text("MORPH")
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.45))
-                    .tracking(1.2)
-            }
-            .padding(.leading, 12)
+    // MARK: - 1. Idle Notch View (179 x 32 pt)
+    private var idleNotchView: some View {
+        HStack {
+            Circle()
+                .fill(model.selectedAccent.color)
+                .frame(width: 4, height: 4)
+                .padding(.leading, 12)
             
             Spacer()
             
-            // Right subtle wave / activity
-            HStack(spacing: 2.5) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.white.opacity(0.4))
-                    .frame(width: 2, height: 7)
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(model.selectedAccent.color.opacity(0.8))
-                    .frame(width: 2, height: 11)
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.white.opacity(0.4))
-                    .frame(width: 2, height: 6)
+            Text("MORPH")
+                .font(.system(size: 8, weight: .bold, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.35))
+                .tracking(1.2)
+            
+            Spacer()
+            
+            Circle()
+                .fill(Color.white.opacity(0.2))
+                .frame(width: 4, height: 4)
+                .padding(.trailing, 12)
+        }
+        .frame(width: model.idleWidth, height: model.idleHeight)
+    }
+    
+    // MARK: - 2. Active Pill View (300 x 44 pt)
+    private var activePillView: some View {
+        HStack(spacing: 0) {
+            // Left Wing: Pomodoro Status (Width ~55 pt)
+            HStack(spacing: 5) {
+                // Mini countdown ring or flame icon
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.15), lineWidth: 2)
+                        .frame(width: 14, height: 14)
+                    
+                    Circle()
+                        .trim(from: 0, to: CGFloat(model.pomodoro.progress))
+                        .stroke(
+                            model.pomodoro.isCompleted ? Color(red: 0.2, green: 0.9, blue: 0.55) : model.selectedAccent.color,
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 14, height: 14)
+                    
+                    if model.pomodoro.isRunning {
+                        Circle()
+                            .fill(model.selectedAccent.color)
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                
+                Text(model.pomodoro.formattedTime)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(model.pomodoro.isCompleted ? Color(red: 0.2, green: 0.9, blue: 0.55) : .white)
             }
+            .frame(width: 55, alignment: .leading)
+            .padding(.leading, 12)
+            
+            // Center Cutout Spacer (Hardware Notch Baseline ~179 pt)
+            Spacer()
+                .frame(minWidth: model.idleWidth - 10)
+            
+            // Right Wing: Audio Visualizer & Media State (Width ~55 pt)
+            HStack(spacing: 5) {
+                if model.media.isMuted {
+                    Image(systemName: "speaker.slash.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.red)
+                } else {
+                    // Live 3-Bar Equalizer
+                    HStack(alignment: .bottom, spacing: 2.5) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(model.selectedAccent.color)
+                                .frame(width: 2.5, height: max(3, 14 * model.media.visualizerBars[i]))
+                                .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i])
+                        }
+                    }
+                    .frame(height: 14, alignment: .bottom)
+                }
+                
+                Image(systemName: model.media.isPlaying ? "play.circle.fill" : "pause.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.white.opacity(0.6))
+            }
+            .frame(width: 55, alignment: .trailing)
             .padding(.trailing, 12)
         }
-        .frame(width: model.notchWidth, height: model.notchHeight)
+        .frame(width: model.pillWidth, height: model.pillHeight)
         .contentShape(Rectangle())
     }
     
-    // MARK: - Expanded Content
-    private var expandedContent: some View {
-        VStack(spacing: 14) {
-            // Header Bar
-            headerBar
+    // MARK: - 3. Expanded Island View (440 x 140 pt)
+    private var expandedView: some View {
+        VStack(spacing: 6) {
+            // Top Navigation & Control Bar
+            topNavigationBar
             
-            // Hero Status
-            heroBanner
-            
-            // 3 Feature Cards
-            featureCardsRow
-            
-            // Footer Action Bar
-            footerBar
+            // Main Feature Body (440 x 140 pt ratio)
+            ZStack {
+                switch model.selectedTab {
+                case .timer:
+                    PomodoroView(pomodoro: model.pomodoro, accentColor: model.selectedAccent.color)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                case .music:
+                    MediaView(media: model.media, accentColor: model.selectedAccent.color)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                case .notes:
+                    ScratchpadView(scratchpad: model.scratchpad, accentColor: model.selectedAccent.color)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                }
+            }
+            .frame(maxHeight: .infinity)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
         .frame(width: model.expandedWidth, height: model.expandedHeight, alignment: .top)
     }
     
-    // MARK: - Header Bar
-    private var headerBar: some View {
-        HStack(alignment: .center) {
-            // Brand & Status
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(model.selectedAccent.color.opacity(0.18))
-                        .frame(width: 24, height: 24)
-                    
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(model.selectedAccent.color)
-                }
+    // MARK: - Top Navigation Bar
+    private var topNavigationBar: some View {
+        HStack(alignment: .center, spacing: 8) {
+            // Brand Logo & Title
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(model.selectedAccent.color)
                 
                 Text("MORPH")
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .font(.system(size: 11, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
-                    .tracking(1.5)
-                
-                // Status Pill
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color(red: 0.2, green: 0.9, blue: 0.55))
-                        .frame(width: 6, height: 6)
-                        .shadow(color: Color(red: 0.2, green: 0.9, blue: 0.55), radius: 3)
-                    
-                    Text(model.isPinned ? "PINNED" : "ACTIVE")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.55))
-                        .tracking(0.8)
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Color(red: 0.2, green: 0.9, blue: 0.55).opacity(0.12))
-                .clipShape(Capsule())
+                    .tracking(1.2)
             }
             
             Spacer()
             
-            // Screen Info Badge
-            HStack(spacing: 5) {
-                Image(systemName: model.hasPhysicalNotch ? "laptopcomputer" : "display")
-                    .font(.system(size: 10))
-                Text(model.hasPhysicalNotch ? "MacBook Notch" : "Simulated Notch")
-                    .font(.system(size: 10.5, weight: .medium))
+            // Three Feature Navigation Tabs
+            HStack(spacing: 4) {
+                ForEach(MorphTab.allCases) { tab in
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            model.selectedTab = tab
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: tab.iconName)
+                                .font(.system(size: 9))
+                            Text(tab.rawValue)
+                                .font(.system(size: 10, weight: model.selectedTab == tab ? .bold : .medium))
+                        }
+                        .foregroundColor(model.selectedTab == tab ? .white : Color.white.opacity(0.55))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(
+                            model.selectedTab == tab
+                                ? model.selectedAccent.color.opacity(0.28)
+                                : Color.white.opacity(0.06)
+                        )
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .foregroundColor(Color.white.opacity(0.55))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3.5)
-            .background(Color.white.opacity(0.06))
-            .clipShape(Capsule())
+            
+            Spacer()
             
             // Pin Toggle Button
             Button(action: {
                 model.togglePin()
             }) {
                 Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(model.isPinned ? model.selectedAccent.color : Color.white.opacity(0.6))
-                    .frame(width: 24, height: 24)
-                    .background(model.isPinned ? model.selectedAccent.color.opacity(0.2) : Color.white.opacity(0.07))
+                    .font(.system(size: 10))
+                    .foregroundColor(model.isPinned ? model.selectedAccent.color : Color.white.opacity(0.5))
+                    .frame(width: 20, height: 20)
+                    .background(model.isPinned ? model.selectedAccent.color.opacity(0.2) : Color.white.opacity(0.06))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin (allows auto-collapse)" : "Pin open (keeps expanded)")
+            .help(model.isPinned ? "Unpin Window" : "Pin Window Open")
             
-            // Close / Collapse Button
+            // Collapse Button
             Button(action: {
                 model.isPinned = false
                 model.isExpanded = false
             }) {
                 Image(systemName: "chevron.up")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.7))
-                    .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.07))
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.6))
+                    .frame(width: 20, height: 20)
+                    .background(Color.white.opacity(0.06))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Collapse to notch")
         }
-    }
-    
-    // MARK: - Hero Banner
-    private var heroBanner: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Notch Expanded Screen")
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                
-                Text("Hover over the notch area to expand • Move cursor away to collapse")
-                    .font(.system(size: 11, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.55))
-            }
-            
-            Spacer()
-            
-            // Live Dimension Tag
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(Int(model.expandedWidth)) × \(Int(model.expandedHeight)) pt")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(model.selectedAccent.color)
-                Text("Screen Resolution")
-                    .font(.system(size: 9))
-                    .foregroundColor(Color.white.opacity(0.4))
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(Color.black.opacity(0.3))
-            .cornerRadius(7)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.07), lineWidth: 1)
-                )
-        )
-    }
-    
-    // MARK: - 3 Feature Cards
-    private var featureCardsRow: some View {
-        HStack(spacing: 10) {
-            // Card 1: Hardware Specs
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "aspectratio")
-                        .font(.system(size: 11))
-                        .foregroundColor(model.selectedAccent.color)
-                    Text("Hardware Notch")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.6))
-                }
-                
-                Text("\(Int(model.notchWidth)) × \(Int(model.notchHeight)) pt")
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                
-                Text(model.hasPhysicalNotch ? "Detected on Display" : "Simulated Overlay")
-                    .font(.system(size: 9.5))
-                    .foregroundColor(Color.white.opacity(0.45))
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            
-            // Card 2: Interactive Test Card
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "cursorarrow.rays")
-                        .font(.system(size: 11))
-                        .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.55))
-                    Text("Hover Dynamics")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.6))
-                }
-                
-                Text("Spring 120Hz")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                
-                Text("Zero Latency Response")
-                    .font(.system(size: 9.5))
-                    .foregroundColor(Color.white.opacity(0.45))
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            
-            // Card 3: Color Palette Picker
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: "paintpalette.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(model.selectedAccent.color)
-                    Text("Accent Theme")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.6))
-                }
-                
-                // Color dots
-                HStack(spacing: 6) {
-                    ForEach(AccentTheme.allCases) { theme in
-                        Circle()
-                            .fill(theme.color)
-                            .frame(width: 14, height: 14)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: model.selectedAccent == theme ? 2 : 0)
-                            )
-                            .scaleEffect(model.selectedAccent == theme ? 1.15 : 1.0)
-                            .onTapGesture {
-                                model.selectedAccent = theme
-                            }
-                    }
-                }
-                .padding(.top, 2)
-                
-                Text(model.selectedAccent.rawValue)
-                    .font(.system(size: 9.5))
-                    .foregroundColor(Color.white.opacity(0.45))
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-        }
-    }
-    
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Color.white.opacity(0.04))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
-            )
-    }
-    
-    // MARK: - Footer Bar
-    private var footerBar: some View {
-        HStack {
-            // Test pulse button
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                    isPulsing = true
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    isPulsing = false
-                }
-            }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "waveform.path")
-                        .font(.system(size: 10))
-                    Text("Trigger Pulse Effect")
-                        .font(.system(size: 10.5, weight: .medium))
-                }
-                .foregroundColor(model.selectedAccent.color)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4.5)
-                .background(model.selectedAccent.color.opacity(0.12))
-                .clipShape(Capsule())
-                .scaleEffect(isPulsing ? 1.06 : 1.0)
-            }
-            .buttonStyle(.plain)
-            
-            Spacer()
-            
-            Text("Morph v1.0 • Ready for Features")
-                .font(.system(size: 10))
-                .foregroundColor(Color.white.opacity(0.35))
-        }
-        .padding(.top, 2)
     }
 }

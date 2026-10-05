@@ -23,17 +23,18 @@ public final class MenuBarManager: NSObject {
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Morph")
             button.imagePosition = .imageLeft
-            button.toolTip = "Morph Notch Control"
+            button.toolTip = "Morph Productivity Notch"
         }
         
         rebuildMenu()
     }
     
     private func observeModel() {
-        Publishers.Merge3(
+        Publishers.Merge4(
             model.$isExpanded.map { _ in () },
             model.$isPinned.map { _ in () },
-            model.$selectedAccent.map { _ in () }
+            model.$selectedTab.map { _ in () },
+            model.pomodoro.$isRunning.map { _ in () }
         )
         .receive(on: RunLoop.main)
         .sink { [weak self] in
@@ -46,12 +47,12 @@ public final class MenuBarManager: NSObject {
         let menu = NSMenu()
         
         // Title Header
-        let titleItem = NSMenuItem(title: "Morph — Notch Assistant", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "Morph — Everyday Productivity", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
         
         let screenInfo = NSMenuItem(
-            title: "\(model.hasPhysicalNotch ? "MacBook Notch" : "Simulated Notch"): \(Int(model.notchWidth)) × \(Int(model.notchHeight)) pt",
+            title: "Hardware Baseline: \(Int(model.idleWidth)) × \(Int(model.idleHeight)) pt",
             action: nil,
             keyEquivalent: ""
         )
@@ -62,7 +63,7 @@ public final class MenuBarManager: NSObject {
         
         // Toggle Expand
         let expandItem = NSMenuItem(
-            title: model.isExpanded ? "Collapse Notch Window" : "Expand Notch Window",
+            title: model.isExpanded ? "Collapse Notch Island" : "Expand Notch Island",
             action: #selector(toggleExpand),
             keyEquivalent: "m"
         )
@@ -72,13 +73,43 @@ public final class MenuBarManager: NSObject {
         
         // Toggle Pin
         let pinItem = NSMenuItem(
-            title: model.isPinned ? "Unpin Window (Allow Auto-Collapse)" : "Pin Window Open",
+            title: model.isPinned ? "Unpin Island (Allow Auto-Collapse)" : "Pin Island Open",
             action: #selector(togglePin),
             keyEquivalent: "p"
         )
         pinItem.keyEquivalentModifierMask = [.command, .control]
         pinItem.target = self
         menu.addItem(pinItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        
+        // Suite Submenu 1: Pomodoro
+        let pomodoroItem = NSMenuItem(
+            title: "Focus Timer: \(model.pomodoro.isRunning ? "Running (\(model.pomodoro.formattedTime))" : "Paused")",
+            action: #selector(togglePomodoro),
+            keyEquivalent: ""
+        )
+        pomodoroItem.target = self
+        menu.addItem(pomodoroItem)
+        
+        // Suite Submenu 2: Media
+        let mediaItem = NSMenuItem(
+            title: "Music: \(model.media.isPlaying ? "Playing (\(model.media.trackTitle))" : "Paused")",
+            action: #selector(toggleMedia),
+            keyEquivalent: ""
+        )
+        mediaItem.target = self
+        menu.addItem(mediaItem)
+        
+        // Suite Submenu 3: Copy Scratchpad
+        let notesItem = NSMenuItem(
+            title: "Copy Scratchpad Notes",
+            action: #selector(copyNotes),
+            keyEquivalent: "c"
+        )
+        notesItem.keyEquivalentModifierMask = [.command, .control]
+        notesItem.target = self
+        menu.addItem(notesItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -91,7 +122,7 @@ public final class MenuBarManager: NSObject {
             item.state = (model.selectedAccent == theme) ? .on : .off
             themesMenu.addItem(item)
         }
-        let themesParent = NSMenuItem(title: "Accent Theme", action: nil, keyEquivalent: "")
+        let themesParent = NSMenuItem(title: "Accent Glow Theme", action: nil, keyEquivalent: "")
         themesParent.submenu = themesMenu
         menu.addItem(themesParent)
         
@@ -116,6 +147,18 @@ public final class MenuBarManager: NSObject {
     
     @objc private func togglePin() {
         model.togglePin()
+    }
+    
+    @objc private func togglePomodoro() {
+        model.pomodoro.toggle()
+    }
+    
+    @objc private func toggleMedia() {
+        model.media.togglePlay()
+    }
+    
+    @objc private func copyNotes() {
+        model.scratchpad.copyAll()
     }
     
     @objc private func selectTheme(_ sender: NSMenuItem) {

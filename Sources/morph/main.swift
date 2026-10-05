@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.controller = controller
         self.menuBarManager = MenuBarManager(model: model, controller: controller)
         
-        print("Morph launched successfully. Tracking notch at: \(model.notchWidth) x \(model.notchHeight) pt")
+        print("Morph launched successfully. Tracking notch at: \(model.idleWidth) x \(model.idleHeight) pt")
     }
     
     func applicationWillTerminate(_ notification: Notification) {
