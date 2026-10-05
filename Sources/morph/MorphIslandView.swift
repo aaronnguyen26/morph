@@ -20,13 +20,22 @@ public struct MorphIslandView: View {
     }
     
     private var cornerRadius: CGFloat {
-        model.isExpanded ? 22 : 12
+        model.isExpanded ? 26 : 12
+    }
+    
+    // Notch blind-spot geometry
+    private var notchBlindWidth: CGFloat {
+        max(model.idleWidth + 10, 185)
+    }
+    
+    private var notchBlindHeight: CGFloat {
+        max(model.idleHeight + 2, 34)
     }
     
     public var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // Background Base Shape
+                // Background Base Shape: Pure OLED Black with Notch Contour
                 UnevenRoundedRectangle(
                     topLeadingRadius: 0,
                     bottomLeadingRadius: cornerRadius,
@@ -34,21 +43,9 @@ public struct MorphIslandView: View {
                     topTrailingRadius: 0,
                     style: .continuous
                 )
-                .fill(Color(red: 0.04, green: 0.04, blue: 0.06))
+                .fill(Color.black)
                 .overlay(
-                    // Subtle ambient radial glow when expanded
-                    RadialGradient(
-                        colors: [
-                            model.selectedAccent.color.opacity(model.isExpanded ? 0.16 : 0.0),
-                            Color.clear
-                        ],
-                        center: .top,
-                        startRadius: 5,
-                        endRadius: model.isExpanded ? 240 : 40
-                    )
-                )
-                .overlay(
-                    // Border stroke (visible when expanded, subtle when idle)
+                    // Notch Border Edges: Hairline border matching physical MacBook notch contour
                     UnevenRoundedRectangle(
                         topLeadingRadius: 0,
                         bottomLeadingRadius: cornerRadius,
@@ -57,38 +54,22 @@ public struct MorphIslandView: View {
                         style: .continuous
                     )
                     .stroke(
-                        model.isExpanded
-                            ? LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.18),
-                                    model.selectedAccent.color.opacity(0.4),
-                                    Color.white.opacity(0.08)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                            : LinearGradient(
-                                colors: [Color.clear, Color.clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
+                        model.isExpanded ? Color.white.opacity(0.14) : Color.clear,
                         lineWidth: 1
                     )
                 )
                 .shadow(
-                    color: model.isExpanded
-                        ? model.selectedAccent.color.opacity(0.25)
-                        : Color.clear,
-                    radius: model.isExpanded ? 20 : 0,
+                    color: model.isExpanded ? Color.black.opacity(0.6) : Color.clear,
+                    radius: model.isExpanded ? 24 : 0,
                     x: 0,
-                    y: model.isExpanded ? 8 : 0
+                    y: model.isExpanded ? 10 : 0
                 )
                 
                 // Content: Idle Notch vs Expanded Island
                 if model.isExpanded {
                     expandedView
                         .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .top)),
+                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
                             removal: .opacity
                         ))
                 } else {
@@ -99,7 +80,6 @@ public struct MorphIslandView: View {
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
             .animation(.spring(response: 0.3, dampingFraction: 0.78), value: model.selectedTab)
-            .animation(.easeInOut(duration: 0.2), value: model.selectedAccent)
             
             Spacer(minLength: 0)
         }
@@ -113,138 +93,151 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - Idle Flush Notch View (179 x 32 pt, 100% Flush, Never Sticking Out)
+    // MARK: - Idle Flush Notch View (100% Flush, Never Sticking Out)
     private var idleFlushNotchView: some View {
         Color.black
             .frame(width: model.idleWidth, height: model.idleHeight)
             .contentShape(Rectangle())
     }
     
-    // MARK: - Expanded Island View (460 x 175 pt)
+    // MARK: - Expanded Island View (580 x 240 pt)
     private var expandedView: some View {
-        VStack(spacing: 6) {
-            // Top Navigation Bar
-            topNavigationBar
+        VStack(spacing: 4) {
+            // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
+            topNotchRow
+                .frame(height: notchBlindHeight)
             
-            // Active Tab Workspace / Home Hub
+            // Main Feature Body: Sits completely BELOW the notch blind spot!
             ZStack {
                 switch model.selectedTab {
                 case .home:
                     HomeView(model: model)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 case .timer:
-                    PomodoroView(pomodoro: model.pomodoro, accentColor: model.selectedAccent.color)
+                    PomodoroView(pomodoro: model.pomodoro)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 case .music:
-                    MediaView(media: model.media, accentColor: model.selectedAccent.color)
+                    MediaView(media: model.media)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 case .notes:
-                    ScratchpadView(scratchpad: model.scratchpad, accentColor: model.selectedAccent.color)
+                    ScratchpadView(scratchpad: model.scratchpad)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 }
             }
             .frame(maxHeight: .infinity)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
         .frame(width: model.expandedWidth, height: model.expandedHeight, alignment: .top)
     }
     
-    // MARK: - Top Navigation Bar
-    private var topNavigationBar: some View {
-        HStack(alignment: .center, spacing: 8) {
-            // Brand Logo or Back to Home Button
-            if model.selectedTab != .home {
-                Button(action: {
-                    model.returnToHome()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("Home")
-                            .font(.system(size: 10, weight: .bold))
-                    }
-                    .foregroundColor(model.selectedAccent.color)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(model.selectedAccent.color.opacity(0.15))
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            } else {
-                HStack(spacing: 5) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(model.selectedAccent.color)
-                    
-                    Text("MORPH")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                        .tracking(1.2)
-                }
-            }
-            
-            Spacer()
-            
-            // Four Navigation Tabs: [Home] [Focus] [Music] [Notes]
-            HStack(spacing: 3) {
-                ForEach(MorphTab.allCases) { tab in
+    // MARK: - Top Notch Row (Wings visible, Center completely empty)
+    private var topNotchRow: some View {
+        HStack(spacing: 0) {
+            // LEFT WING (Outside Notch: 100% Visible)
+            HStack(spacing: 6) {
+                if model.selectedTab != .home {
                     Button(action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                            model.selectedTab = tab
-                        }
+                        model.returnToHome()
                     }) {
                         HStack(spacing: 4) {
-                            Image(systemName: tab.iconName)
-                                .font(.system(size: 8.5))
-                            Text(tab.rawValue)
-                                .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("Home")
+                                .font(.system(size: 10.5, weight: .bold))
                         }
-                        .foregroundColor(model.selectedTab == tab ? .white : Color.white.opacity(0.55))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            model.selectedTab == tab
-                                ? model.selectedAccent.color.opacity(0.28)
-                                : Color.white.opacity(0.06)
-                        )
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.12))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                } else {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color.white.opacity(0.8))
+                            .frame(width: 5, height: 5)
+                        
+                        Text("MORPH")
+                            .font(.system(size: 11, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .tracking(1.4)
+                    }
                 }
+                
+                Spacer()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             
-            Spacer()
+            // CENTER BLIND SPOT: Sits directly beneath hardware camera notch.
+            // MUST BE KEPT COMPLETELY CLEAR OF ANY TEXT OR FEATURES!
+            Color.clear
+                .frame(width: notchBlindWidth, height: notchBlindHeight)
             
-            // Pin Toggle Button
-            Button(action: {
-                model.togglePin()
-            }) {
-                Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 9.5))
-                    .foregroundColor(model.isPinned ? model.selectedAccent.color : Color.white.opacity(0.5))
-                    .frame(width: 20, height: 20)
-                    .background(model.isPinned ? model.selectedAccent.color.opacity(0.2) : Color.white.opacity(0.06))
-                    .clipShape(Circle())
+            // RIGHT WING (Outside Notch: 100% Visible)
+            HStack(spacing: 5) {
+                Spacer()
+                
+                // Tabs
+                HStack(spacing: 3) {
+                    ForEach(MorphTab.allCases) { tab in
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                model.selectedTab = tab
+                            }
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: tab.iconName)
+                                    .font(.system(size: 8.5))
+                                Text(tab.rawValue)
+                                    .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
+                            }
+                            .foregroundColor(model.selectedTab == tab ? .black : Color.white.opacity(0.55))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3.5)
+                            .background(
+                                model.selectedTab == tab
+                                    ? Color.white
+                                    : Color.white.opacity(0.06)
+                            )
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                // Pin Button
+                Button(action: {
+                    model.togglePin()
+                }) {
+                    Image(systemName: model.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 9.5))
+                        .foregroundColor(model.isPinned ? .white : Color.white.opacity(0.5))
+                        .frame(width: 22, height: 22)
+                        .background(model.isPinned ? Color.white.opacity(0.25) : Color.white.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(model.isPinned ? "Unpin Window" : "Pin Window Open")
+                
+                // Collapse Button
+                Button(action: {
+                    model.isPinned = false
+                    model.isExpanded = false
+                }) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.6))
+                        .frame(width: 22, height: 22)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Collapse to notch")
             }
-            .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin Island" : "Pin Island Open")
-            
-            // Collapse Button
-            Button(action: {
-                model.isPinned = false
-                model.isExpanded = false
-            }) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.6))
-                    .frame(width: 20, height: 20)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Collapse to notch")
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 }

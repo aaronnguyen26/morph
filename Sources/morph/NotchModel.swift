@@ -19,41 +19,20 @@ public enum MorphTab: String, CaseIterable, Identifiable {
     }
 }
 
-public enum AccentTheme: String, CaseIterable, Identifiable {
-    case emerald = "Emerald"
-    case cyan = "Cyan"
-    case violet = "Violet"
-    case amber = "Amber"
-    case monochrome = "Silver"
-    
-    public var id: String { rawValue }
-    
-    public var color: Color {
-        switch self {
-        case .emerald: return Color(red: 0.20, green: 0.90, blue: 0.55)
-        case .cyan: return Color(red: 0.15, green: 0.85, blue: 1.0)
-        case .violet: return Color(red: 0.65, green: 0.40, blue: 1.0)
-        case .amber: return Color(red: 1.0, green: 0.65, blue: 0.20)
-        case .monochrome: return Color(white: 0.85)
-        }
-    }
-}
-
 @MainActor
 public final class NotchModel: ObservableObject {
     // Exact Hardware Notch Baseline (Flush when idle)
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
     
-    // Expanded Island Dimensions
-    public let expandedWidth: CGFloat = 460
-    public let expandedHeight: CGFloat = 175
+    // Expanded Island Dimensions (Expansive, spacious 580 x 240 pt)
+    public let expandedWidth: CGFloat = 580
+    public let expandedHeight: CGFloat = 240
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
     @Published public var selectedTab: MorphTab = .home
-    @Published public var selectedAccent: AccentTheme = .emerald
     
     // Sub-models for the 3 features
     public let pomodoro: PomodoroModel
@@ -62,8 +41,6 @@ public final class NotchModel: ObservableObject {
     
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
-    
-    private var cancellables = Set<AnyCancellable>()
     
     public init(
         pomodoro: PomodoroModel = PomodoroModel(),
@@ -75,10 +52,8 @@ public final class NotchModel: ObservableObject {
         self.scratchpad = scratchpad
         
         detectScreenNotch()
-        observeSubmodels()
     }
     
-    // Width and Height strictly adapt: Flush notch when resting, expanded island when active
     public var currentWidth: CGFloat {
         isExpanded ? expandedWidth : idleWidth
     }
@@ -107,21 +82,8 @@ public final class NotchModel: ObservableObject {
         }
     }
     
-    private func observeSubmodels() {
-        // When Pomodoro finishes, trigger an emerald completion pulse
-        pomodoro.$isCompleted
-            .filter { $0 }
-            .sink { [weak self] _ in
-                self?.selectedAccent = .emerald
-            }
-            .store(in: &cancellables)
-    }
-    
     public func toggleExpand() {
         isExpanded.toggle()
-        if isExpanded && selectedTab != .home {
-            // Keep current tab or default to home if desired
-        }
     }
     
     public func togglePin() {

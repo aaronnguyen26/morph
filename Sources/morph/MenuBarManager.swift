@@ -111,20 +111,6 @@ public final class MenuBarManager: NSObject {
         notesItem.target = self
         menu.addItem(notesItem)
         
-        menu.addItem(NSMenuItem.separator())
-        
-        // Accent Color Submenu
-        let themesMenu = NSMenu()
-        for theme in AccentTheme.allCases {
-            let item = NSMenuItem(title: theme.rawValue, action: #selector(selectTheme(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = theme
-            item.state = (model.selectedAccent == theme) ? .on : .off
-            themesMenu.addItem(item)
-        }
-        let themesParent = NSMenuItem(title: "Accent Glow Theme", action: nil, keyEquivalent: "")
-        themesParent.submenu = themesMenu
-        menu.addItem(themesParent)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -159,12 +145,6 @@ public final class MenuBarManager: NSObject {
     
     @objc private func copyNotes() {
         model.scratchpad.copyAll()
-    }
-    
-    @objc private func selectTheme(_ sender: NSMenuItem) {
-        if let theme = sender.representedObject as? AccentTheme {
-            model.selectedAccent = theme
-        }
     }
     
     @objc private func quitApp() {

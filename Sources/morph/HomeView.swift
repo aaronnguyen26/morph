@@ -4,85 +4,81 @@ public struct HomeView: View {
     @ObservedObject var model: NotchModel
     
     public var body: some View {
-        VStack(spacing: 8) {
-            // Three Feature Cards
-            HStack(spacing: 8) {
-                // Feature 1: Pomodoro Focus Timer
-                focusCard
-                
-                // Feature 2: YouTube Music Player
-                musicCard
-                
-                // Feature 3: Quick Scratchpad Notepad
-                notesCard
-            }
-            .frame(maxHeight: .infinity)
+        HStack(spacing: 12) {
+            // Feature 1: Focus Timer
+            focusCard
+            
+            // Feature 2: Media Player
+            musicCard
+            
+            // Feature 3: Scratchpad
+            notesCard
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 2)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     // MARK: - Focus Card
     private var focusCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Card Header
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
             HStack {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "timer")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color(red: 0.20, green: 0.90, blue: 0.55))
-                    Text("FOCUS")
-                        .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
-                        .tracking(0.8)
+                    Text("FOCUS")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .tracking(1.0)
                 }
                 
                 Spacer()
                 
                 // Status Pill
                 Text(model.pomodoro.isRunning ? "ACTIVE" : "READY")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(red: 0.20, green: 0.90, blue: 0.55))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color(red: 0.20, green: 0.90, blue: 0.55).opacity(0.15))
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.1))
                     .cornerRadius(4)
             }
             
-            // Main Timer Display
-            VStack(alignment: .leading, spacing: 1) {
+            // Large Time
+            VStack(alignment: .leading, spacing: 2) {
                 Text(model.pomodoro.formattedTime)
-                    .font(.system(size: 18, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 24, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                 
                 Text(model.pomodoro.mode.rawValue)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.5))
             }
             
             Spacer()
             
             // Action Buttons
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Button(action: {
                     model.pomodoro.toggle()
                 }) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Image(systemName: model.pomodoro.isRunning ? "pause.fill" : "play.fill")
-                            .font(.system(size: 8.5))
+                            .font(.system(size: 9))
                         Text(model.pomodoro.isRunning ? "Pause" : "Start")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                     }
                     .foregroundColor(model.pomodoro.isRunning ? .white : .black)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
                     .background(
                         model.pomodoro.isRunning
                             ? Color.white.opacity(0.2)
-                            : Color(red: 0.20, green: 0.90, blue: 0.55)
+                            : Color.white
                     )
-                    .cornerRadius(5)
+                    .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
                 
@@ -92,20 +88,20 @@ public struct HomeView: View {
                     model.openFeature(.timer)
                 }) {
                     Text("Open →")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Color(red: 0.20, green: 0.90, blue: 0.55))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.75))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(white: 0.07))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color(red: 0.20, green: 0.90, blue: 0.55).opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())
@@ -116,41 +112,41 @@ public struct HomeView: View {
     
     // MARK: - Music Card
     private var musicCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Card Header
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
             HStack {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "music.note")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color(red: 0.15, green: 0.85, blue: 1.0))
-                    Text("MUSIC")
-                        .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
-                        .tracking(0.8)
+                    Text("MUSIC")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .tracking(1.0)
                 }
                 
                 Spacer()
                 
-                // Live 3-Bar Equalizer
-                HStack(alignment: .bottom, spacing: 2) {
+                // Live 3-Bar Equalizer in Crisp White
+                HStack(alignment: .bottom, spacing: 2.5) {
                     ForEach(0..<3, id: \.self) { i in
                         RoundedRectangle(cornerRadius: 1)
-                            .fill(Color(red: 0.15, green: 0.85, blue: 1.0))
-                            .frame(width: 2, height: max(3, 11 * model.media.visualizerBars[i]))
+                            .fill(Color.white.opacity(0.85))
+                            .frame(width: 2.5, height: max(3, 12 * model.media.visualizerBars[i]))
                     }
                 }
-                .frame(height: 11, alignment: .bottom)
+                .frame(height: 12, alignment: .bottom)
             }
             
-            // Track Info Display
-            VStack(alignment: .leading, spacing: 1) {
+            // Track Info
+            VStack(alignment: .leading, spacing: 2) {
                 Text(model.media.trackTitle)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 
                 Text(model.media.artistName)
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: 10.5, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.5))
                     .lineLimit(1)
             }
@@ -158,21 +154,21 @@ public struct HomeView: View {
             Spacer()
             
             // Action Buttons
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 Button(action: {
                     model.media.togglePlay()
                 }) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 4) {
                         Image(systemName: model.media.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 8.5))
+                            .font(.system(size: 9))
                         Text(model.media.isPlaying ? "Pause" : "Play")
-                            .font(.system(size: 9.5, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                     }
                     .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color(red: 0.15, green: 0.85, blue: 1.0).opacity(0.3))
-                    .cornerRadius(5)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.2))
+                    .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
                 
@@ -182,20 +178,20 @@ public struct HomeView: View {
                     model.openFeature(.music)
                 }) {
                     Text("Open →")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Color(red: 0.15, green: 0.85, blue: 1.0))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.75))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(white: 0.07))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color(red: 0.15, green: 0.85, blue: 1.0).opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())
@@ -206,57 +202,57 @@ public struct HomeView: View {
     
     // MARK: - Notes Card
     private var notesCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Card Header
+        VStack(alignment: .leading, spacing: 8) {
+            // Header
             HStack {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Image(systemName: "note.text")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color(red: 1.0, green: 0.65, blue: 0.20))
-                    Text("SCRATCHPAD")
-                        .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
-                        .tracking(0.8)
+                    Text("SCRATCHPAD")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .tracking(1.0)
                 }
                 
                 Spacer()
                 
-                Text(model.scratchpad.text.isEmpty ? "EMPTY" : "\(model.scratchpad.wordCount)W")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color(red: 1.0, green: 0.65, blue: 0.20))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color(red: 1.0, green: 0.65, blue: 0.20).opacity(0.15))
+                Text(model.scratchpad.text.isEmpty ? "EMPTY" : "\(model.scratchpad.wordCount) WORDS")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.7))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.1))
                     .cornerRadius(4)
             }
             
-            // Note Snippet Display
-            VStack(alignment: .leading, spacing: 1) {
-                Text(model.scratchpad.text.isEmpty ? "Click to write thoughts, links, or quick tasks..." : model.scratchpad.text)
-                    .font(.system(size: 10, weight: .regular))
+            // Preview
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.scratchpad.text.isEmpty ? "Click to write quick thoughts, tasks, or links..." : model.scratchpad.text)
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundColor(model.scratchpad.text.isEmpty ? Color.white.opacity(0.4) : Color.white.opacity(0.85))
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
             
             Spacer()
             
             // Action Buttons
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 if !model.scratchpad.text.isEmpty {
                     Button(action: {
                         model.scratchpad.copyAll()
                     }) {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
                             Image(systemName: model.scratchpad.showCopiedAlert ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 8))
+                                .font(.system(size: 8.5))
                             Text(model.scratchpad.showCopiedAlert ? "Copied" : "Copy")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.system(size: 10, weight: .medium))
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(5)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.15))
+                        .cornerRadius(6)
                     }
                     .buttonStyle(.plain)
                 }
@@ -267,20 +263,20 @@ public struct HomeView: View {
                     model.openFeature(.notes)
                 }) {
                     Text("Open →")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Color(red: 1.0, green: 0.65, blue: 0.20))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.75))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(white: 0.07))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color(red: 1.0, green: 0.65, blue: 0.20).opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
         )
         .contentShape(Rectangle())
