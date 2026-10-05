@@ -53,6 +53,9 @@ public final class MorphController: NSObject {
         self.hostingView.onMouseExit = { [weak self] in
             self?.handleMouseExit()
         }
+        self.hostingView.isExpanded = { [weak self] in
+            self?.model.isExpanded ?? false
+        }
         
         self.hostingView.getActiveBounds = { [weak self] in
             guard let self = self else { return .zero }
@@ -90,7 +93,6 @@ public final class MorphController: NSObject {
                 guard let self = self else { return }
                 if expanded {
                     self.expandPanel()
-                    self.panel.makeKey()
                 } else if !self.model.isPinned {
                     self.scheduleWindowShrink()
                 }
@@ -214,11 +216,6 @@ public final class MorphController: NSObject {
                 self?.checkMousePosition(NSEvent.mouseLocation)
             }
         }
-        
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            self?.checkMousePosition(NSEvent.mouseLocation)
-            return event
-        }
     }
     
     public func checkMousePosition(_ mouseLoc: NSPoint) {
@@ -234,7 +231,9 @@ public final class MorphController: NSObject {
             
             let isInside = (mouseLoc.x >= minX && mouseLoc.x <= maxX && mouseLoc.y >= minY && mouseLoc.y <= maxY)
             if !isInside && !model.isPinned {
-                handleMouseExit()
+                if model.isHovered {
+                    handleMouseExit()
+                }
             } else if isInside {
                 collapseWorkItem?.cancel()
                 collapseWorkItem = nil
@@ -248,7 +247,9 @@ public final class MorphController: NSObject {
             let maxY = screen.frame.maxY + 2
             
             if mouseLoc.x >= minX && mouseLoc.x <= maxX && mouseLoc.y >= minY && mouseLoc.y <= maxY {
-                handleMouseEnter()
+                if !model.isHovered || !model.isExpanded {
+                    handleMouseEnter()
+                }
             }
         }
     }
@@ -256,6 +257,8 @@ public final class MorphController: NSObject {
     public func handleMouseEnter() {
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
+        
+        guard !model.isHovered || !model.isExpanded else { return }
         model.isHovered = true
         
         if !model.isExpanded {
@@ -263,11 +266,12 @@ public final class MorphController: NSObject {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                 self.model.isExpanded = true
             }
+            panel.makeKey()
         }
-        panel.makeKey()
     }
     
     public func handleMouseExit() {
+        guard model.isHovered else { return }
         model.isHovered = false
         guard !model.isPinned else { return }
         

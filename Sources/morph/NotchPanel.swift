@@ -16,7 +16,9 @@ public final class NotchPanel: NSPanel {
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         self.isMovable = false
         self.isMovableByWindowBackground = false
-        self.acceptsMouseMovedEvents = true
+        self.acceptsMouseMovedEvents = false
+        self.becomesKeyOnlyIfNeeded = true
+        self.hidesOnDeactivate = false
         self.titleVisibility = .hidden
         self.titlebarAppearsTransparent = true
         self.standardWindowButton(.closeButton)?.isHidden = true
@@ -46,6 +48,8 @@ public final class NotchPanel: NSPanel {
         let y = screen.frame.maxY - height
         let newFrame = NSRect(x: x, y: y, width: width, height: height)
         
-        self.setFrame(newFrame, display: true, animate: animate)
+        if self.frame != newFrame {
+            self.setFrame(newFrame, display: true, animate: animate)
+        }
     }
 }

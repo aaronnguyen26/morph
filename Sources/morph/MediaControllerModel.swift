@@ -24,6 +24,14 @@ public final class MediaControllerModel: ObservableObject {
     
     public let engine: YouTubeMusicEngine
     
+    private var isTestingEnvironment: Bool {
+        return ProcessInfo.processInfo.processName.contains("xctest") ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
+            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
+            NSClassFromString("XCTestCase") != nil
+    }
+    
     private var cancellables = Set<AnyCancellable>()
     private var visualizerTimer: AnyCancellable?
     private var browserPollTimer: AnyCancellable?
@@ -33,9 +41,11 @@ public final class MediaControllerModel: ObservableObject {
         self.engine = engine
         
         setupEngineObservers()
-        startVisualizer()
-        startPlaybackTicker()
-        startBrowserPolling()
+        if !isTestingEnvironment {
+            startVisualizer()
+            startPlaybackTicker()
+            startBrowserPolling()
+        }
     }
     
     private func startPlaybackTicker() {
@@ -267,42 +277,56 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func pollBrowserState() async {
-        let script = """
-        tell application "System Events"
-            set chromeRunning to (name of processes) contains "Google Chrome"
-            set safariRunning to (name of processes) contains "Safari"
-        end tell
+        guard !isTestingEnvironment else { return }
         
-        if chromeRunning then
-            tell application "Google Chrome"
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        if (URL of t) contains "music.youtube.com" then
-                            return "CHROME_YTM:" & (title of t)
-                        end if
-                    end repeat
-                end repeat
-            end tell
-        end if
+        // Fast, non-blocking check using Cocoa NSRunningApplication
+        let chromeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty
+        let safariRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty
+        guard chromeRunning || safariRunning else { return }
         
-        if safariRunning then
-            tell application "Safari"
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        if (URL of t) contains "music.youtube.com" then
-                            return "SAFARI_YTM:" & (name of t)
-                        end if
-                    end repeat
-                end repeat
-            end tell
-        end if
+        // Run off-main asynchronously so the main thread and UI runloop are never blocked
+        let result: String = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                var script = ""
+                if chromeRunning {
+                    script = """
+                    tell application "Google Chrome"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    return "CHROME_YTM:" & (title of t)
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return "NONE"
+                    """
+                } else if safariRunning {
+                    script = """
+                    tell application "Safari"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    return "SAFARI_YTM:" & (name of t)
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return "NONE"
+                    """
+                }
+                
+                guard let appleScript = NSAppleScript(source: script) else {
+                    continuation.resume(returning: "NONE")
+                    return
+                }
+                var error: NSDictionary?
+                let res = appleScript.executeAndReturnError(&error).stringValue ?? "NONE"
+                continuation.resume(returning: res)
+            }
+        }
         
-        return "NONE"
-        """
-        
-        guard let appleScript = NSAppleScript(source: script) else { return }
-        var error: NSDictionary?
-        let result = appleScript.executeAndReturnError(&error).stringValue ?? "NONE"
+        guard !engine.trackData.isPlaying else { return }
         
         if result.starts(with: "CHROME_YTM:") {
             let rawTitle = result.replacingOccurrences(of: "CHROME_YTM:", with: "")
@@ -341,205 +365,172 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPlayPause() {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "document.querySelector('video') ? (document.querySelector('video').paused ? document.querySelector('video').play() : document.querySelector('video').pause()) : null;"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "document.querySelector('video') ? (document.querySelector('video').paused ? document.querySelector('video').play() : document.querySelector('video').pause()) : null;"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserPlay() {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "var v = document.querySelector('video'); if (v && v.paused) { v.play(); }"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "var v = document.querySelector('video'); if (v && v.paused) { v.play(); }"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserPause() {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); }"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); }"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserStop() {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = 0; }"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = 0; }"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserNextTrack() {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "document.querySelector('.next-button') ? document.querySelector('.next-button').click() : null;"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "document.querySelector('.next-button') ? document.querySelector('.next-button').click() : null;"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserPreviousTrack() {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "document.querySelector('.previous-button') ? document.querySelector('.previous-button').click() : null;"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "document.querySelector('.previous-button') ? document.querySelector('.previous-button').click() : null;"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserSeek(to seconds: TimeInterval) {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.currentTime = \(seconds); }"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "var v = document.querySelector('video'); if (v) { v.currentTime = \(seconds); }"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserVolume(_ vol: Double) {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.volume = \(vol); }"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "var v = document.querySelector('video'); if (v) { v.volume = \(vol); }"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func executeBrowserMute(_ muted: Bool) {
-        guard !isDirectEngineConnected else { return }
+        guard !isDirectEngineConnected && !isTestingEnvironment else { return }
         let script = """
-        tell application "System Events"
-            if (name of processes) contains "Google Chrome" then
-                tell application "Google Chrome"
-                    repeat with w in windows
-                        repeat with t in tabs of w
-                            if (URL of t) contains "music.youtube.com" then
-                                try
-                                    execute t javascript "var v = document.querySelector('video'); if (v) { v.muted = \(muted); }"
-                                end try
-                            end if
-                        end repeat
-                    end repeat
-                end tell
-            end if
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "var v = document.querySelector('video'); if (v) { v.muted = \(muted); }"
+                        end try
+                    end if
+                end repeat
+            end repeat
         end tell
         """
         runScriptAsync(script)
     }
     
     private func runScriptAsync(_ scriptSource: String) {
-        Task.detached(priority: .userInitiated) {
+        guard !isTestingEnvironment else { return }
+        guard !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty else { return }
+        
+        Task.detached(priority: .utility) {
             var error: NSDictionary?
             if let script = NSAppleScript(source: scriptSource) {
                 script.executeAndReturnError(&error)

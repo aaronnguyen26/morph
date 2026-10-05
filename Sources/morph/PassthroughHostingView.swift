@@ -5,8 +5,10 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     public var onMouseEnter: (() -> Void)?
     public var onMouseExit: (() -> Void)?
     public var getActiveBounds: (() -> NSRect)?
+    public var isExpanded: (() -> Bool)?
     
     private var trackingArea: NSTrackingArea?
+    private var isMouseInside: Bool = false
     
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -15,7 +17,6 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
         }
         let options: NSTrackingArea.Options = [
             .mouseEnteredAndExited,
-            .mouseMoved,
             .activeAlways,
             .inVisibleRect
         ]
@@ -25,16 +26,25 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     }
     
     public override func mouseEntered(with event: NSEvent) {
-        onMouseEnter?()
+        if !isMouseInside {
+            isMouseInside = true
+            onMouseEnter?()
+        }
         super.mouseEntered(with: event)
     }
     
     public override func mouseExited(with event: NSEvent) {
-        onMouseExit?()
+        if isMouseInside {
+            isMouseInside = false
+            onMouseExit?()
+        }
         super.mouseExited(with: event)
     }
     
     public override func hitTest(_ point: NSPoint) -> NSView? {
+        if let expanded = isExpanded?(), expanded {
+            return super.hitTest(point)
+        }
         if let activeBounds = getActiveBounds?() {
             if !activeBounds.contains(point) {
                 return nil

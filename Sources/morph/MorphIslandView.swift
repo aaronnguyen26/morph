@@ -458,10 +458,23 @@ public struct MorphIslandView: View {
     }
     
     // MARK: - Background Image Texture
+    private static let cachedBackgroundImage: NSImage? = {
+        if let url = Bundle.main.url(forResource: "morph_bg", withExtension: "jpg"),
+           let img = NSImage(contentsOf: url) {
+            return img
+        }
+        let localPath = "Resources/morph_bg.jpg"
+        if FileManager.default.fileExists(atPath: localPath),
+           let img = NSImage(contentsOfFile: localPath) {
+            return img
+        }
+        return nil
+    }()
+    
     @ViewBuilder
     private var backgroundImageView: some View {
         if model.isExpanded {
-            if let image = loadBackgroundImage() {
+            if let image = Self.cachedBackgroundImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -481,19 +494,6 @@ public struct MorphIslandView: View {
                 )
             }
         }
-    }
-    
-    private func loadBackgroundImage() -> NSImage? {
-        if let url = Bundle.main.url(forResource: "morph_bg", withExtension: "jpg"),
-           let img = NSImage(contentsOf: url) {
-            return img
-        }
-        let localPath = "Resources/morph_bg.jpg"
-        if FileManager.default.fileExists(atPath: localPath),
-           let img = NSImage(contentsOfFile: localPath) {
-            return img
-        }
-        return nil
     }
     
     private func shortcutForTab(_ tab: MorphTab) -> String {

@@ -24,6 +24,14 @@ public final class SupabaseService: ObservableObject {
     private let userDefaultsKey = "com.morph.supabase.cached_profile"
     private var urlSession: URLSession
     
+    private var isTesting: Bool {
+        return ProcessInfo.processInfo.processName.contains("xctest") ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
+            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
+            NSClassFromString("XCTestCase") != nil
+    }
+    
     public init(session: URLSession? = nil) {
         if let session = session {
             self.urlSession = session
@@ -53,7 +61,7 @@ public final class SupabaseService: ObservableObject {
         isSyncing = true
         connectionState = .connecting
         
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+        guard !isTesting else {
             connectionState = .connected
             isSyncing = false
             return
@@ -119,7 +127,7 @@ public final class SupabaseService: ObservableObject {
         
         saveToLocalCache(currentUser)
         
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+        guard !isTesting else {
             connectionState = .connected
             lastSyncTime = Date()
             return
