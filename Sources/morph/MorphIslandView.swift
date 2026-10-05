@@ -20,7 +20,13 @@ public struct MorphIslandView: View {
     }
     
     private var cornerRadius: CGFloat {
-        model.isExpanded ? 26 : 12
+        if model.isExpanded {
+            return 26
+        } else if model.isCompactActive {
+            return 11
+        } else {
+            return 10 // Exact smooth curvature blending with physical notch
+        }
     }
     
     // Notch blind-spot geometry
@@ -46,6 +52,7 @@ public struct MorphIslandView: View {
                 .fill(Color.black)
                 .overlay(
                     // Notch Border Edges: Hairline border matching physical MacBook notch contour
+                    // Active even before the app is open so it blends seamlessly into the notch
                     UnevenRoundedRectangle(
                         topLeadingRadius: 0,
                         bottomLeadingRadius: cornerRadius,
@@ -54,7 +61,7 @@ public struct MorphIslandView: View {
                         style: .continuous
                     )
                     .stroke(
-                        model.isExpanded ? Color.white.opacity(0.14) : Color.clear,
+                        Color.white.opacity(model.isExpanded ? 0.14 : 0.12),
                         lineWidth: 1
                     )
                 )
@@ -65,13 +72,16 @@ public struct MorphIslandView: View {
                     y: model.isExpanded ? 10 : 0
                 )
                 
-                // Content: Idle Notch vs Expanded Island
+                // Content: Idle / Compact Notch vs Expanded Island
                 if model.isExpanded {
                     expandedView
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
                             removal: .opacity
                         ))
+                } else if model.isCompactActive {
+                    compactActiveNotchView
+                        .transition(.opacity)
                 } else {
                     idleFlushNotchView
                         .transition(.opacity)
@@ -79,6 +89,7 @@ public struct MorphIslandView: View {
             }
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isCompactActive)
             .animation(.spring(response: 0.3, dampingFraction: 0.78), value: model.selectedTab)
             
             Spacer(minLength: 0)
@@ -93,14 +104,65 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - Idle Flush Notch View (100% Flush, Never Sticking Out)
+    // MARK: - 1. Idle Flush Notch View (Blends into physical notch with rounded border edge)
     private var idleFlushNotchView: some View {
         Color.black
             .frame(width: model.idleWidth, height: model.idleHeight)
             .contentShape(Rectangle())
     }
     
-    // MARK: - Expanded Island View (580 x 240 pt)
+    // MARK: - 2. Compact Active Notch View (Displays on the notch itself when timer/music active)
+    private var compactActiveNotchView: some View {
+        HStack(spacing: 0) {
+            // Left Wing: Timer countdown & micro progress ring
+            HStack(spacing: 4) {
+                if model.pomodoro.isRunning {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1.8)
+                            .frame(width: 11, height: 11)
+                        
+                        Circle()
+                            .trim(from: 0, to: CGFloat(model.pomodoro.progress))
+                            .stroke(Color.white, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                            .frame(width: 11, height: 11)
+                    }
+                    
+                    Text(model.pomodoro.formattedTime)
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(.leading, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            
+            // Center: Black spacer matching hardware webcam cutout
+            Color.clear
+                .frame(width: model.idleWidth, height: model.idleHeight)
+            
+            // Right Wing: Live 3-bar animated audio visualizer
+            HStack(spacing: 3) {
+                if model.media.isPlaying {
+                    HStack(alignment: .bottom, spacing: 2) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(Color.white.opacity(0.85))
+                                .frame(width: 2, height: max(3, 10 * model.media.visualizerBars[i]))
+                                .animation(.easeOut(duration: 0.1), value: model.media.visualizerBars[i])
+                        }
+                    }
+                    .frame(height: 10, alignment: .bottom)
+                }
+            }
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(width: model.compactWidth, height: model.idleHeight)
+        .contentShape(Rectangle())
+    }
+    
+    // MARK: - 3. Expanded Island View (580 x 240 pt)
     private var expandedView: some View {
         VStack(spacing: 4) {
             // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch

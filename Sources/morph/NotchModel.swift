@@ -21,11 +21,11 @@ public enum MorphTab: String, CaseIterable, Identifiable {
 
 @MainActor
 public final class NotchModel: ObservableObject {
-    // Exact Hardware Notch Baseline (Flush when idle)
+    // Exact Hardware Notch Baseline
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
     
-    // Expanded Island Dimensions (Expansive, spacious 580 x 240 pt)
+    // Expanded Island Dimensions (580 x 240 pt)
     public let expandedWidth: CGFloat = 580
     public let expandedHeight: CGFloat = 240
     
@@ -42,6 +42,8 @@ public final class NotchModel: ObservableObject {
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
     
+    private var cancellables = Set<AnyCancellable>()
+    
     public init(
         pomodoro: PomodoroModel = PomodoroModel(),
         media: MediaControllerModel = MediaControllerModel(),
@@ -52,10 +54,34 @@ public final class NotchModel: ObservableObject {
         self.scratchpad = scratchpad
         
         detectScreenNotch()
+        observeSubmodels()
+    }
+    
+    public var isCompactActive: Bool {
+        pomodoro.isRunning || media.isPlaying
+    }
+    
+    // Compact notch width when activity is running on the notch itself
+    public var compactWidth: CGFloat {
+        if pomodoro.isRunning && media.isPlaying {
+            return idleWidth + 84 // 42 pt left wing for timer, 42 pt right wing for equalizer
+        } else if pomodoro.isRunning {
+            return idleWidth + 64 // 32 pt on left/right for timer display
+        } else if media.isPlaying {
+            return idleWidth + 50 // 25 pt on left/right for equalizer
+        } else {
+            return idleWidth
+        }
     }
     
     public var currentWidth: CGFloat {
-        isExpanded ? expandedWidth : idleWidth
+        if isExpanded {
+            return expandedWidth
+        } else if isCompactActive {
+            return compactWidth
+        } else {
+            return idleWidth
+        }
     }
     
     public var currentHeight: CGFloat {
@@ -80,6 +106,18 @@ public final class NotchModel: ObservableObject {
             self.idleHeight = screen.safeAreaInsets.top > 0 ? screen.safeAreaInsets.top : 32
             self.hasPhysicalNotch = false
         }
+    }
+    
+    private func observeSubmodels() {
+        // Trigger UI refresh when submodel playback/timer state changes
+        Publishers.Merge(
+            pomodoro.$isRunning.map { _ in () },
+            media.$isPlaying.map { _ in () }
+        )
+        .sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        .store(in: &cancellables)
     }
     
     public func toggleExpand() {

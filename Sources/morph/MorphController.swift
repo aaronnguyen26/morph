@@ -92,6 +92,17 @@ public final class MorphController: NSObject {
                 }
             }
             .store(in: &cancellables)
+            
+        // Observe Pomodoro and Media state to dynamically size compact notch indicators
+        Publishers.Merge(
+            model.pomodoro.$isRunning.map { _ in () },
+            model.media.$isPlaying.map { _ in () }
+        )
+        .sink { [weak self] _ in
+            guard let self = self, !self.model.isExpanded else { return }
+            self.resizePanelToRestingState()
+        }
+        .store(in: &cancellables)
         
         // Listen to external/scriptable distributed notifications
         DistributedNotificationCenter.default().addObserver(
