@@ -38,13 +38,16 @@ public struct YTMTrackData: Codable, Equatable {
 }
 
 @MainActor
-public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessageHandler, WKNavigationDelegate {
+public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     public static let shared = YouTubeMusicEngine()
     
     @Published public var trackData: YTMTrackData = YTMTrackData()
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
+    @Published public var currentURLString: String = "https://music.youtube.com"
     @Published public var connectionState: String = "Connecting..."
+    @Published public var canGoBack: Bool = false
+    @Published public var canGoForward: Bool = false
     
     public private(set) var webView: WKWebView!
     private var playerWindow: NSWindow?
@@ -52,7 +55,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     private let kHandlerName = "morphYTM"
     private let kYTMURL = "https://music.youtube.com"
-    private let kCustomUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+    // Modern Desktop Chrome User Agent on macOS to ensure standard browser classification
+    private let kCustomUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     
     public override init() {
         super.init()
@@ -63,8 +67,18 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let contentController = WKUserContentController()
         contentController.add(self, name: kHandlerName)
         
+        // 1. Injected at Document Start: Chrome Stealth Fingerprint
+        // Satisfies Google Botguard checks on accounts.google.com before any scripts run
+        let stealthScript = WKUserScript(
+            source: chromeStealthJavaScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        contentController.addUserScript(stealthScript)
+        
+        // 2. Injected at Document End: YouTube Music Player Observers & Event Bridge
         let bridgeScript = WKUserScript(
-            source: injectedJavaScript,
+            source: injectedPlayerObserverJavaScript,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         )
@@ -72,20 +86,66 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
-        config.websiteDataStore = WKWebsiteDataStore.default() // Persistent store across app restarts
+        config.websiteDataStore = WKWebsiteDataStore.default() // Persistent cookies across restarts
         config.mediaTypesRequiringUserActionForPlayback = [] // Allow background auto-playback
         config.allowsAirPlayForMediaPlayback = true
         
-        // Initialize web view with desktop size
-        let rect = NSRect(x: 0, y: 0, width: 1024, height: 768)
+        // Enable popup window handling required for Google OAuth authorization
+        let preferences = WKPreferences()
+        preferences.javaScriptCanOpenWindowsAutomatically = true
+        config.preferences = preferences
+        
+        // Initialize web view with standard desktop dimensions
+        let rect = NSRect(x: 0, y: 0, width: 1080, height: 720)
         self.webView = WKWebView(frame: rect, configuration: config)
         self.webView.customUserAgent = kCustomUserAgent
         self.webView.navigationDelegate = self
+        self.webView.uiDelegate = self
         
-        // Load YouTube Music
+        // Initial load
+        loadHome()
+    }
+    
+    public func loadHome() {
         if let url = URL(string: kYTMURL) {
             let request = URLRequest(url: url)
             self.webView.load(request)
+        }
+    }
+    
+    public func loadGoogleSignIn() {
+        // Direct Google Sign-In endpoint that redirects back to YouTube Music once completed
+        let signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
+        if let url = URL(string: signInURLString) {
+            let request = URLRequest(url: url)
+            self.webView.load(request)
+        }
+    }
+    
+    public func goBack() {
+        if webView.canGoBack {
+            webView.goBack()
+        }
+    }
+    
+    public func goForward() {
+        if webView.canGoForward {
+            webView.goForward()
+        }
+    }
+    
+    public func reload() {
+        webView.reload()
+    }
+    
+    public func clearCookiesAndCache() {
+        let dataStore = WKWebsiteDataStore.default()
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        let dateFrom = Date(timeIntervalSince1970: 0)
+        dataStore.removeData(ofTypes: types, modifiedSince: dateFrom) { [weak self] in
+            DispatchQueue.main.async {
+                self?.loadHome()
+            }
         }
     }
     
@@ -126,15 +186,55 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
-    // MARK: - Navigation Delegate
+    // MARK: - WKNavigationDelegate
+    public func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        updateNavigationState()
+    }
+    
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         self.isEngineLoaded = true
+        updateNavigationState()
         self.connectionState = "YouTube Music Loaded"
         injectPeriodicObserver()
     }
     
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        updateNavigationState()
         self.connectionState = "Load failed: \(error.localizedDescription)"
+    }
+    
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        updateNavigationState()
+        decisionHandler(.allow)
+    }
+    
+    private func updateNavigationState() {
+        self.canGoBack = webView.canGoBack
+        self.canGoForward = webView.canGoForward
+        if let url = webView.url?.absoluteString {
+            self.currentURLString = url
+        }
+    }
+    
+    // MARK: - WKUIDelegate (Handles Google Sign-in Popups & Window Open)
+    public func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        // When Google Sign-in or YouTube opens a popup or target=_blank, load it directly in this webview
+        if navigationAction.targetFrame == nil || !navigationAction.targetFrame!.isMainFrame {
+            webView.load(navigationAction.request)
+        }
+        return nil
+    }
+    
+    public func webViewDidClose(_ webView: WKWebView) {
+        // If a Google sign-in popup calls window.close() upon auth completion, navigate back to YouTube Music home
+        if let url = webView.url?.absoluteString, url.contains("accounts.google.com") {
+            loadHome()
+        }
     }
     
     // MARK: - Direct Playback Commands
@@ -226,7 +326,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     private func injectPeriodicObserver() {
-        // Run observer periodically to ensure state updates even if backgrounded
         let script = """
         if (!window._morphObserverInstalled) {
             window._morphObserverInstalled = true;
@@ -240,19 +339,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
-    // MARK: - Dedicated Web View Window (For Google Sign-In & Music Browsing)
+    // MARK: - Dedicated Web View Window (With Navigation Toolbar)
     public func showPlayerWindow() {
         if playerWindow == nil {
             let win = NSWindow(
-                contentRect: NSRect(x: 100, y: 100, width: 1080, height: 720),
+                contentRect: NSRect(x: 100, y: 100, width: 1100, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
                 backing: .buffered,
                 defer: false
             )
             win.title = "YouTube Music — Morph Direct Engine"
-            win.titlebarAppearsTransparent = true
+            win.titlebarAppearsTransparent = false
             win.isReleasedWhenClosed = false
-            win.backgroundColor = NSColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1.0)
+            win.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
             
             let delegate = PlayerWindowDelegate { [weak self] in
                 self?.isPlayerWindowVisible = false
@@ -260,7 +359,23 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             self.windowDelegate = delegate
             win.delegate = delegate
             
-            win.contentView = webView
+            // Build Container with Top Navigation Toolbar + Web View
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
+            container.autoresizingMask = [.width, .height]
+            
+            // Toolbar Hosting View (Height: 42 pt)
+            let toolbarView = NSHostingView(rootView: PlayerWindowToolbarView(engine: self))
+            toolbarView.frame = NSRect(x: 0, y: 760 - 42, width: 1100, height: 42)
+            toolbarView.autoresizingMask = [.width, .minYMargin]
+            
+            // Web View (Height: 718 pt)
+            self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - 42)
+            self.webView.autoresizingMask = [.width, .height]
+            
+            container.addSubview(self.webView)
+            container.addSubview(toolbarView)
+            
+            win.contentView = container
             win.center()
             self.playerWindow = win
         }
@@ -283,8 +398,131 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
-    // MARK: - Injected JavaScript Code
-    private var injectedJavaScript: String {
+    // MARK: - Chrome Stealth Fingerprint Script (Injected at .atDocumentStart)
+    private var chromeStealthJavaScript: String {
+        return """
+        (function() {
+            // 1. Emulate standard window.chrome namespace
+            if (!window.chrome) {
+                window.chrome = {
+                    app: {
+                        isInstalled: false,
+                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+                    },
+                    runtime: {
+                        OnInstalledReason: {},
+                        OnRestartRequiredReason: {},
+                        PlatformArch: { ARM: 'arm', X86_64: 'x86_64' },
+                        PlatformNaclArch: {},
+                        PlatformOs: { MAC: 'mac' },
+                        RequestUpdateCheckStatus: {}
+                    },
+                    loadTimes: function() {
+                        return {
+                            requestTime: performance.now() / 1000,
+                            startLoadTime: performance.now() / 1000,
+                            commitLoadTime: performance.now() / 1000,
+                            finishDocumentLoadTime: performance.now() / 1000,
+                            firstPaintTime: performance.now() / 1000,
+                            finishLoadTime: performance.now() / 1000,
+                            wasFetchedViaSpdy: true,
+                            wasNpnNegotiated: true,
+                            npnNegotiatedProtocol: 'h2',
+                            wasAlternateProtocolAvailable: false,
+                            connectionInfo: 'h2'
+                        };
+                    },
+                    csi: function() {
+                        return {
+                            startE: Date.now(),
+                            onloadT: Date.now(),
+                            pageT: performance.now(),
+                            tran: 15
+                        };
+                    }
+                };
+            }
+            
+            // 2. Set vendor to 'Google Inc.'
+            try {
+                Object.defineProperty(navigator, 'vendor', {
+                    get: function() { return 'Google Inc.'; },
+                    configurable: true
+                });
+            } catch(e) {}
+            
+            // 3. Ensure webdriver is false (not automated)
+            try {
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: function() { return false; },
+                    configurable: true
+                });
+            } catch(e) {}
+            
+            // 4. Emulate navigator.userAgentData client hints
+            try {
+                if (!navigator.userAgentData) {
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: function() {
+                            return {
+                                brands: [
+                                    { brand: 'Chromium', version: '131' },
+                                    { brand: 'Google Chrome', version: '131' },
+                                    { brand: 'Not_A Brand', version: '24' }
+                                ],
+                                mobile: false,
+                                platform: 'macOS',
+                                getHighEntropyValues: function(hints) {
+                                    return Promise.resolve({
+                                        architecture: 'arm',
+                                        bitness: '64',
+                                        brands: [
+                                            { brand: 'Chromium', version: '131' },
+                                            { brand: 'Google Chrome', version: '131' },
+                                            { brand: 'Not_A Brand', version: '24' }
+                                        ],
+                                        mobile: false,
+                                        model: '',
+                                        platform: 'macOS',
+                                        platformVersion: '15.0.0',
+                                        uaFullVersion: '131.0.6778.86'
+                                    });
+                                }
+                            };
+                        },
+                        configurable: true
+                    });
+                }
+            } catch(e) {}
+            
+            // 5. Emulate standard Chrome plugins
+            try {
+                if (!navigator.plugins || navigator.plugins.length === 0) {
+                    var fakePlugins = [
+                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' }
+                    ];
+                    fakePlugins.item = function(i) { return this[i]; };
+                    fakePlugins.namedItem = function(name) {
+                        for (var i = 0; i < this.length; i++) {
+                            if (this[i].name === name) return this[i];
+                        }
+                        return null;
+                    };
+                    fakePlugins.refresh = function() {};
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: function() { return fakePlugins; },
+                        configurable: true
+                    });
+                }
+            } catch(e) {}
+        })();
+        """
+    }
+    
+    // MARK: - Injected Player Observer JavaScript Code (.atDocumentEnd)
+    private var injectedPlayerObserverJavaScript: String {
         return """
         (function() {
             function getTrackInfo() {
@@ -324,7 +562,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 } catch(e) {}
             };
             
-            // Set up video event listeners
             function attachVideoListeners() {
                 var v = document.querySelector('video');
                 if (v && !v._morphListeners) {
@@ -337,7 +574,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 }
             }
             
-            // Observe DOM changes on player bar
             var observer = new MutationObserver(function() {
                 attachVideoListeners();
                 window.morphSendUpdate();
@@ -360,6 +596,130 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }, 1000);
         })();
         """
+    }
+}
+
+// MARK: - Player Window Toolbar (Back, Forward, Reload, Direct Sign-in, Home)
+public struct PlayerWindowToolbarView: View {
+    @ObservedObject var engine: YouTubeMusicEngine
+    
+    public init(engine: YouTubeMusicEngine) {
+        self.engine = engine
+    }
+    
+    public var body: some View {
+        HStack(spacing: 10) {
+            // Navigation History
+            HStack(spacing: 4) {
+                Button(action: {
+                    engine.goBack()
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(engine.canGoBack ? .white : Color.white.opacity(0.3))
+                        .frame(width: 26, height: 26)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!engine.canGoBack)
+                
+                Button(action: {
+                    engine.goForward()
+                }) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(engine.canGoForward ? .white : Color.white.opacity(0.3))
+                        .frame(width: 26, height: 26)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!engine.canGoForward)
+                
+                Button(action: {
+                    engine.reload()
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 26, height: 26)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            
+            // Home Button
+            Button(action: {
+                engine.loadHome()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "music.note.house.fill")
+                        .font(.system(size: 10))
+                    Text("YouTube Music")
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4.5)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
+            
+            // URL Status Pill
+            Text(engine.currentURLString.replacingOccurrences(of: "https://", with: ""))
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundColor(Color.white.opacity(0.45))
+                .lineLimit(1)
+                .frame(maxWidth: 300)
+            
+            Spacer()
+            
+            // Direct Google Sign-In Action Button
+            Button(action: {
+                engine.loadGoogleSignIn()
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 10.5, weight: .bold))
+                    Text("Sign In with Google")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.white)
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            
+            // Clear & Reset Cache Button
+            Button(action: {
+                engine.clearCookiesAndCache()
+            }) {
+                Image(systemName: "trash")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .frame(width: 24, height: 24)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear Cookies & Reset YouTube Music Session")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 42)
+        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+        .overlay(
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1),
+            alignment: .bottom
+        )
     }
 }
 
