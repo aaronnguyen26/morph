@@ -85,7 +85,51 @@ public final class NotchModel: ObservableObject {
         
         detectScreenNotch()
         observeSubmodels()
+        checkInitialLaunchStep()
     }
+    
+    private var isTesting: Bool {
+        return ProcessInfo.processInfo.processName.contains("xctest") ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
+            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
+            NSClassFromString("XCTestCase") != nil
+    }
+    
+    /// Ensures that profile sign-in is the first step whenever someone opens the app unauthenticated,
+    /// and auto-propagates the user email to Google Calendar to prevent double sign-in.
+    public func checkInitialLaunchStep(forceLaunchCheck: Bool = false) {
+        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "com.morph.has_completed_profile_onboarding")
+        let isAuthenticated = supabase.currentUser.isAuthenticated
+        
+        // Auto-propagate user email to Google Calendar immediately
+        if isAuthenticated {
+            calendar.configureUser(email: supabase.currentUser.email)
+        }
+        
+        // Guard against automatically mutating test state unless explicitly requested
+        if isTesting && !forceLaunchCheck {
+            return
+        }
+        
+        // If profile sign-in hasn't been completed yet, route to profile tab as first step
+        if !hasCompletedOnboarding || !isAuthenticated {
+            self.selectedTab = .profile
+            self.isExpanded = true
+        }
+    }
+
+    
+    public func completeProfileSignIn() {
+        UserDefaults.standard.set(true, forKey: "com.morph.has_completed_profile_onboarding")
+        if supabase.currentUser.isAuthenticated {
+            calendar.configureUser(email: supabase.currentUser.email)
+        }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            self.selectedTab = .home
+        }
+    }
+
     
     @Published public var isNotePinnedToNotch: Bool = false
     
@@ -212,6 +256,19 @@ public final class NotchModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { [weak self] in
                     await self?.supabase.recordFocusSession(minutes: 25)
+                }
+            }
+            .store(in: &cancellables)
+            
+        // Whenever currentUser email updates, propagate to Google Calendar automatically
+        supabase.$currentUser
+            .map(\.email)
+            .removeDuplicates()
+            .sink { [weak self] email in
+                guard let self = self else { return }
+                let clean = email.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !clean.isEmpty && clean.contains("@") {
+                    self.calendar.configureUser(email: clean)
                 }
             }
             .store(in: &cancellables)

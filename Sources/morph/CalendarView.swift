@@ -102,14 +102,21 @@ public struct CalendarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             
-            // Google Calendar Sync Pill
+            // Google Calendar Sync Pill (SSO synced from profile email)
             HStack(spacing: 5) {
                 Circle()
-                    .fill(Color.green)
+                    .fill(calendar.isSignedIn ? Color.green : Color.orange)
                     .frame(width: 4.5, height: 4.5)
-                Text("Google Calendar Connected")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.55))
+                if let email = calendar.configuredUserEmail, !email.isEmpty {
+                    Text(email)
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .lineLimit(1)
+                } else {
+                    Text(calendar.isSignedIn ? "Google Calendar Connected" : "Connecting Account...")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.55))
+                }
                 
                 Spacer()
                 
@@ -117,6 +124,8 @@ public struct CalendarView: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 7.5))
                         .foregroundColor(Color.white.opacity(0.6))
+                        .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
+                        .animation(calendar.isSyncing ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
                 }
                 .buttonStyle(.plain)
                 .help("Sync Google Calendar")

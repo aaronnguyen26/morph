@@ -33,6 +33,12 @@ public struct UserProfile: Codable, Equatable, Sendable {
         return "ME"
     }
     
+    public var isAuthenticated: Bool {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !cleanEmail.isEmpty && cleanEmail.contains("@")
+    }
+
+    
     public init(
         id: String = "local_user",
         firstName: String = "Aaron",

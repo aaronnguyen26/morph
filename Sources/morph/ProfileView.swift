@@ -33,16 +33,22 @@ public struct ProfileView: View {
     }
     
     private func saveProfileChanges() {
+        let cleanEmail = draftEmail.trimmingCharacters(in: .whitespaces)
         Task {
             await supabase.updateProfile(
                 firstName: draftFirstName.trimmingCharacters(in: .whitespaces),
                 lastName: draftLastName.trimmingCharacters(in: .whitespaces),
-                email: draftEmail.trimmingCharacters(in: .whitespaces),
+                email: cleanEmail,
                 avatarInitials: draftInitials.trimmingCharacters(in: .whitespaces),
                 targetRole: draftRole.trimmingCharacters(in: .whitespaces),
                 currentStatus: draftStatus.trimmingCharacters(in: .whitespaces)
             )
+            // Propagate profile email to Google Calendar SSO immediately
+            if !cleanEmail.isEmpty && cleanEmail.contains("@") {
+                model.calendar.configureUser(email: cleanEmail)
+            }
         }
+        model.completeProfileSignIn()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
             isEditingProfile = false
         }
@@ -96,6 +102,25 @@ public struct ProfileView: View {
                 }
                 
                 Spacer()
+                
+                // Continue to Morph Button (when in Profile tab)
+                Button(action: {
+                    model.completeProfileSignIn()
+                }) {
+                    HStack(spacing: 3) {
+                        Text("Continue")
+                            .font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Go to Morph Home")
                 
                 // Edit Profile Button
                 Button(action: {
@@ -179,6 +204,29 @@ public struct ProfileView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .stroke(Color.white.opacity(0.09), lineWidth: 0.5)
+                )
+                
+                // Google Calendar SSO Card
+                VStack(spacing: 2) {
+                    Text("CALENDAR SSO")
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.cyan.opacity(0.8))
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(model.calendar.isSignedIn ? Color.green : Color.orange)
+                            .frame(width: 4, height: 4)
+                        Text(model.calendar.isSignedIn ? "Synced" : "Pending")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.cyan.opacity(0.18), lineWidth: 0.5)
                 )
                 
                 // Cloud Database Card
@@ -367,6 +415,27 @@ public struct ProfileView: View {
                         .background(Color.white.opacity(0.06))
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
+            }
+            
+            // Input Grid Row 3: Account Email (SSO to Google Calendar)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("ACCOUNT EMAIL (SSO TO GOOGLE CALENDAR)")
+                        .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.5))
+                    Spacer()
+                    Text("Auto-configures Google Calendar")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundColor(.cyan.opacity(0.8))
+                }
+                TextField("user@gmail.com", text: $draftEmail)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .textFieldStyle(.plain)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         }
     }

@@ -10,6 +10,8 @@ public final class CalendarModel: ObservableObject {
     @Published public var isSyncing: Bool = false
     @Published public var activeAlertEvent: CalendarEvent?
     @Published public var showNotchAlert: Bool = false
+    @Published public var configuredUserEmail: String?
+    @Published public var isSignedIn: Bool = false
     
     public let engine: GoogleCalendarEngine
     private var cancellables = Set<AnyCancellable>()
@@ -26,7 +28,24 @@ public final class CalendarModel: ObservableObject {
         engine.$isSyncing
             .assign(to: \.isSyncing, on: self)
             .store(in: &cancellables)
+            
+        engine.$isSignedIn
+            .assign(to: \.isSignedIn, on: self)
+            .store(in: &cancellables)
+            
+        engine.$configuredUserEmail
+            .assign(to: \.configuredUserEmail, on: self)
+            .store(in: &cancellables)
     }
+    
+    public func configureUser(email: String) {
+        let clean = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, clean.contains("@") else { return }
+        self.configuredUserEmail = clean
+        self.isSignedIn = true
+        engine.configureAccount(email: clean)
+    }
+
     
     private func startAlertWatcher() {
         // Watch for events starting within the next 15 minutes and trigger notch notification

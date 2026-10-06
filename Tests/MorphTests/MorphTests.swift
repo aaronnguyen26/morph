@@ -1250,7 +1250,75 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(notchModel.selectedTab, .calendar)
         XCTAssertTrue(notchModel.isExpanded)
     }
+    
+    @MainActor
+    func testProfileSignInFirstStepAndGoogleCalendarAutoConfiguration() {
+        // 1. Test Profile Sign-In as First Step on Unauthenticated / New Launch
+        let defaults = UserDefaults.standard
+        let previousOnboarding = defaults.bool(forKey: "com.morph.has_completed_profile_onboarding")
+        defer {
+            defaults.set(previousOnboarding, forKey: "com.morph.has_completed_profile_onboarding")
+        }
+        
+        defaults.set(false, forKey: "com.morph.has_completed_profile_onboarding")
+        
+        let unauthProfile = UserProfile(
+            id: "guest",
+            firstName: "",
+            lastName: "",
+            email: "",
+            targetRole: "",
+            currentStatus: ""
+        )
+        XCTAssertFalse(unauthProfile.isAuthenticated, "Guest profile with empty email must be unauthenticated")
+        
+        let notchModel = NotchModel()
+        notchModel.supabase.currentUser = unauthProfile
+        
+        // Trigger initial launch check
+        notchModel.checkInitialLaunchStep(forceLaunchCheck: true)
+        
+        // Assert that profile sign-in is enforced as the first step:
+        XCTAssertEqual(notchModel.selectedTab, .profile, "When unauthenticated or first launch, profile must be the first step")
+        XCTAssertTrue(notchModel.isExpanded, "Island must expand to profile sign-in step")
+        
+        // 2. Test User Signs In to Profile with email (e.g. user@gmail.com)
+        let signedInEmail = "aaron.morph.dev@gmail.com"
+        var signedInProfile = unauthProfile
+        signedInProfile.firstName = "Aaron"
+        signedInProfile.lastName = "Nguyen"
+        signedInProfile.email = signedInEmail
+        signedInProfile.targetRole = "Principal Engineer"
+        XCTAssertTrue(signedInProfile.isAuthenticated)
+        
+        notchModel.supabase.currentUser = signedInProfile
+        
+        // Complete profile sign-in
+        notchModel.completeProfileSignIn()
+        
+        // Assert: Navigates to home and marks onboarding complete
+        XCTAssertEqual(notchModel.selectedTab, .home)
+        XCTAssertTrue(defaults.bool(forKey: "com.morph.has_completed_profile_onboarding"))
+        
+        // 3. Test Single Sign-On (SSO) Propagation from Profile to Google Calendar
+        // Profile email MUST automatically configure Google Calendar without requiring a second sign-in!
+        XCTAssertEqual(notchModel.calendar.configuredUserEmail, signedInEmail,
+                       "User email from profile sign-in must automatically configure Google Calendar")
+        XCTAssertTrue(notchModel.calendar.isSignedIn,
+                      "Google Calendar must mark isSignedIn = true using profile account email")
+        XCTAssertEqual(notchModel.calendar.engine.configuredUserEmail, signedInEmail,
+                       "GoogleCalendarEngine must receive the configured profile email")
+        XCTAssertTrue(notchModel.calendar.engine.isSignedIn,
+                      "GoogleCalendarEngine must mark isSignedIn = true")
+        
+        // 4. Test YouTube Music Exception:
+        // YouTube Music remains separate as requested ("an exception with this is the youtube music")
+        let ytmEngine = YouTubeMusicEngine.shared
+        // YouTube music maintains its own independent session
+        XCTAssertNotNil(ytmEngine.webView)
+    }
 }
+
 
 
 

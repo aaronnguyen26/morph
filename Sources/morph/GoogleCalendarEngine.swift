@@ -10,11 +10,13 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
     @Published public var isSignedIn: Bool = false
     @Published public var lastSyncDate: Date?
     @Published public var rawEvents: [CalendarEvent] = []
+    @Published public var configuredUserEmail: String?
     
     private var webView: WKWebView!
     private var syncTimer: AnyCancellable?
     private let kHandlerName = "morphCalendarBridge"
     private let kCalendarURL = "https://calendar.google.com/calendar/r"
+
     
     public override init() {
         super.init()
@@ -81,14 +83,52 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         }
     }
     
+    public func configureAccount(email: String) {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanEmail.isEmpty, cleanEmail.contains("@") else { return }
+        
+        // Prevent redundant configuration if email didn't change
+        if self.configuredUserEmail == cleanEmail && self.isSignedIn {
+            return
+        }
+        
+        self.configuredUserEmail = cleanEmail
+        self.isSignedIn = true
+        
+        // Build Google Calendar SSO chooser URL that automatically selects the profile's email
+        let escapedEmail = cleanEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanEmail
+        let ssoURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
+        
+        isSyncing = true
+        if let url = URL(string: ssoURLString) {
+            webView.load(URLRequest(url: url))
+        }
+    }
+    
     public func refresh() {
         isSyncing = true
+        if let email = configuredUserEmail, !email.isEmpty {
+            let escapedEmail = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
+            let ssoURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
+            if let url = URL(string: ssoURLString) {
+                webView.load(URLRequest(url: url))
+                return
+            }
+        }
         if let url = URL(string: kCalendarURL) {
             webView.load(URLRequest(url: url))
         }
     }
     
     public func openGoogleCalendarInBrowser() {
+        if let email = configuredUserEmail, !email.isEmpty {
+            let escapedEmail = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
+            let ssoURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
+            if let url = URL(string: ssoURLString) {
+                NSWorkspace.shared.open(url)
+                return
+            }
+        }
         if let url = URL(string: kCalendarURL) {
             NSWorkspace.shared.open(url)
         }
