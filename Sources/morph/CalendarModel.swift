@@ -36,6 +36,16 @@ public final class CalendarModel: ObservableObject {
         engine.$configuredUserEmail
             .assign(to: \.configuredUserEmail, on: self)
             .store(in: &cancellables)
+            
+        engine.$rawEvents
+            .sink { [weak self] newEvents in
+                guard let self = self else { return }
+                if !newEvents.isEmpty {
+                    self.events = newEvents
+                    self.evaluateUpcomingAlerts()
+                }
+            }
+            .store(in: &cancellables)
     }
     
     public func configureUser(email: String) {

@@ -1317,7 +1317,72 @@ final class MorphTests: XCTestCase {
         // YouTube music maintains its own independent session
         XCTAssertNotNil(ytmEngine.webView)
     }
+    
+    @MainActor
+    func testGoogleCalendarEventExtractionAndProfileEmailSync() {
+        let engine = GoogleCalendarEngine()
+        let calendar = CalendarModel(engine: engine)
+        
+        let testEmail = "minh7898888@gmail.com"
+        calendar.configureUser(email: testEmail)
+        
+        XCTAssertEqual(calendar.configuredUserEmail, testEmail)
+        XCTAssertEqual(engine.configuredUserEmail, testEmail)
+        XCTAssertTrue(calendar.isSignedIn)
+        XCTAssertTrue(engine.isSignedIn)
+        
+        let fakeNow = Date()
+        let fakePayload: [String: Any] = [
+            "isSignedIn": true,
+            "events": [
+                [
+                    "id": "real_google_evt_101",
+                    "title": "Staff Engineering Design Review",
+                    "description": "Morph Calendar & Notch synchronization architecture",
+                    "startTimeMs": fakeNow.addingTimeInterval(600).timeIntervalSince1970 * 1000.0,
+                    "endTimeMs": fakeNow.addingTimeInterval(3600).timeIntervalSince1970 * 1000.0,
+                    "meetLink": "https://meet.google.com/xyz-123-abc",
+                    "location": "Google Meet",
+                    "attendees": ["minh7898888@gmail.com", "lead@company.com"]
+                ],
+                [
+                    "id": "real_google_evt_102",
+                    "title": "Product Growth Sync",
+                    "description": "Weekly metrics overview",
+                    "timeText": "4:00 PM",
+                    "location": "Room 402"
+                ]
+            ]
+        ]
+        
+        engine.parseIncomingPayload(fakePayload)
+        
+        XCTAssertEqual(engine.rawEvents.count, 2)
+        XCTAssertEqual(engine.rawEvents[0].title, "Staff Engineering Design Review")
+        XCTAssertEqual(engine.rawEvents[0].meetLink, "https://meet.google.com/xyz-123-abc")
+        XCTAssertEqual(engine.rawEvents[0].location, "Google Meet")
+        XCTAssertEqual(engine.rawEvents[1].title, "Product Growth Sync")
+        
+        // Verify CalendarModel automatically updates its events list from engine
+        XCTAssertEqual(calendar.events.count, 2)
+        XCTAssertEqual(calendar.events.first?.title, "Staff Engineering Design Review")
+        
+        // Verify alert watcher triggers for event within 15 minutes
+        XCTAssertTrue(calendar.events[0].isStartingSoon)
+        calendar.evaluateUpcomingAlerts()
+        XCTAssertTrue(calendar.showNotchAlert)
+        XCTAssertEqual(calendar.activeAlertEvent?.title, "Staff Engineering Design Review")
+        
+        // Verify calendar window controls
+        let win = engine.ensureCalendarWindow()
+        XCTAssertNotNil(win)
+        engine.showCalendarWindow()
+        XCTAssertTrue(engine.isCalendarWindowVisible)
+        engine.hideCalendarWindow()
+        XCTAssertFalse(engine.isCalendarWindowVisible)
+    }
 }
+
 
 
 

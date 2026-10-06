@@ -219,6 +219,22 @@ public struct CalendarView: View {
                 }
                 .buttonStyle(.plain)
                 
+                Button(action: { calendar.engine.showCalendarWindow() }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "macwindow")
+                            .font(.system(size: 7.5, weight: .bold))
+                        Text("Web")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Open Google Calendar Window (Sync / Sign In)")
+                
                 Button(action: { calendar.openGoogleCalendar() }) {
                     Image(systemName: "arrow.up.right.square")
                         .font(.system(size: 8.5))
@@ -228,7 +244,7 @@ public struct CalendarView: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Open Google Calendar Web")
+                .help("Open Google Calendar in Browser")
             }
             
             if isAddingEvent {
