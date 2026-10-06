@@ -41,6 +41,34 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
     }
 }
 
+public struct YTMPlaylist: Identifiable, Codable, Equatable {
+    public var id: String
+    public var title: String
+    public var subtitle: String
+    public var thumbnailURL: String?
+    public var trackCount: Int?
+    public var tracks: [YTMPlaylistItem]
+    public var browseId: String?
+    
+    public init(
+        id: String = UUID().uuidString,
+        title: String,
+        subtitle: String = "",
+        thumbnailURL: String? = nil,
+        trackCount: Int? = nil,
+        tracks: [YTMPlaylistItem] = [],
+        browseId: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.thumbnailURL = thumbnailURL
+        self.trackCount = trackCount
+        self.tracks = tracks
+        self.browseId = browseId
+    }
+}
+
 public struct YTMTrackData: Codable, Equatable {
     public var title: String
     public var artist: String
@@ -55,6 +83,7 @@ public struct YTMTrackData: Codable, Equatable {
     public var isShuffle: Bool
     public var repeatMode: YTMRepeatMode
     public var queue: [YTMPlaylistItem]
+    public var playlists: [YTMPlaylist]
     
     public init(
         title: String = "",
@@ -69,7 +98,8 @@ public struct YTMTrackData: Codable, Equatable {
         isDisliked: Bool = false,
         isShuffle: Bool = false,
         repeatMode: YTMRepeatMode = .off,
-        queue: [YTMPlaylistItem] = []
+        queue: [YTMPlaylistItem] = [],
+        playlists: [YTMPlaylist] = []
     ) {
         self.title = title
         self.artist = artist
@@ -84,6 +114,7 @@ public struct YTMTrackData: Codable, Equatable {
         self.isShuffle = isShuffle
         self.repeatMode = repeatMode
         self.queue = queue
+        self.playlists = playlists
     }
 }
 
@@ -92,6 +123,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public static let shared = YouTubeMusicEngine()
     
     @Published public var trackData: YTMTrackData = YTMTrackData()
+    @Published public var userPlaylists: [YTMPlaylist] = []
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
     @Published public var currentURLString: String = "https://music.youtube.com"
@@ -247,6 +279,29 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
         }
         
+        var parsedPlaylists: [YTMPlaylist] = []
+        if let rawPlaylists = body["playlists"] as? [[String: Any]] {
+            for (idx, item) in rawPlaylists.enumerated() {
+                let pId = (item["id"] as? String) ?? "\(idx)"
+                let pTitle = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let pSub = (item["subtitle"] as? String) ?? "Playlist"
+                let pThumb = item["thumbnailURL"] as? String
+                let pBrowse = item["browseId"] as? String
+                if !pTitle.isEmpty {
+                    parsedPlaylists.append(YTMPlaylist(
+                        id: pId,
+                        title: pTitle,
+                        subtitle: pSub,
+                        thumbnailURL: pThumb,
+                        browseId: pBrowse
+                    ))
+                }
+            }
+        }
+        if !parsedPlaylists.isEmpty {
+            self.userPlaylists = parsedPlaylists
+        }
+        
         self.trackData = YTMTrackData(
             title: title.isEmpty ? "YouTube Music" : title,
             artist: artist.isEmpty ? "Ready to play" : artist,
@@ -260,7 +315,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             isDisliked: disliked,
             isShuffle: shuffle,
             repeatMode: repeatMode,
-            queue: parsedQueue
+            queue: parsedQueue,
+            playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists
         )
         
         if !title.isEmpty && title != "YouTube Music" {
@@ -662,6 +718,94 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var playBtn = target.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || target;
                 playBtn.click();
                 target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 350);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func loadPlaylist(id: String) {
+        let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanId.isEmpty else { return }
+        let urlString = "https://music.youtube.com/playlist?list=\(cleanId)"
+        if let url = URL(string: urlString) {
+            self.webView.load(URLRequest(url: url))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.fetchTracksFromCurrentPage()
+        }
+    }
+    
+    public func fetchTracksFromCurrentPage() {
+        let script = """
+        (function() {
+            var tracks = [];
+            var items = document.querySelectorAll('ytmusic-responsive-list-item-renderer');
+            for (var i = 0; i < Math.min(items.length, 50); i++) {
+                var it = items[i];
+                var tEl = it.querySelector('.title yt-formatted-string') || it.querySelector('.title') || it.querySelector('.flex-columns:first-child yt-formatted-string');
+                var bEl = it.querySelector('.secondary-flex-columns yt-formatted-string') || it.querySelector('.byline') || it.querySelector('yt-formatted-string.byline');
+                var dEl = it.querySelector('.fixed-columns yt-formatted-string') || it.querySelector('.duration') || it.querySelector('yt-formatted-string.duration');
+                var title = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
+                var artist = bEl ? (bEl.innerText || bEl.textContent || '').trim() : '';
+                var dur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
+                var isSel = it.hasAttribute('selected') || it.classList.contains('selected');
+                if (title) {
+                    tracks.push({
+                        id: '' + i,
+                        title: title,
+                        artist: artist,
+                        duration: dur,
+                        isPlaying: isSel
+                    });
+                }
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate();
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func playPlaylistSong(index: Int) {
+        let script = """
+        (function() {
+            var items = document.querySelectorAll('ytmusic-responsive-list-item-renderer');
+            if (items && items.length > \(index)) {
+                var target = items[\(index)];
+                var playBtn = target.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || target;
+                playBtn.click();
+                var inner = target.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+                target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                setTimeout(window.morphSendUpdate, 350);
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
+    public func playEntirePlaylist() {
+        let script = """
+        (function() {
+            var playBtn = document.querySelector('ytmusic-play-button-renderer #button, ytmusic-responsive-header-renderer #play-button, #play-button, tp-yt-paper-button.play-button');
+            if (playBtn) {
+                playBtn.click();
+                var inner = playBtn.querySelector('button, #button, yt-icon');
+                if (inner) inner.click();
+            } else {
+                var firstTrack = document.querySelector('ytmusic-responsive-list-item-renderer');
+                if (firstTrack) {
+                    firstTrack.click();
+                    var pBtn = firstTrack.querySelector('#play-button, .play-button');
+                    if (pBtn) pBtn.click();
+                }
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 350);
@@ -1094,6 +1238,90 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     }
                 } catch(qe) {}
                 
+                // User Playlists extraction (Sidebar Guide + Page Shelves)
+                var playlists = [];
+                var seenPlaylists = {};
+                try {
+                    // 1. Sidebar Guide Entries
+                    var guideEntries = document.querySelectorAll('ytmusic-guide-entry-renderer');
+                    for (var g = 0; g < guideEntries.length; g++) {
+                        var gel = guideEntries[g];
+                        var gLink = gel.querySelector('a') || gel;
+                        var gHref = gLink.getAttribute('href') || '';
+                        var gTitleEl = gel.querySelector('yt-formatted-string.title') || gel.querySelector('.title') || gel.querySelector('tp-yt-paper-item');
+                        var gTitle = gTitleEl ? (gTitleEl.innerText || gTitleEl.textContent || '').trim() : '';
+                        
+                        if (gHref.indexOf('playlist?list=') !== -1 || gHref.indexOf('browse/VL') !== -1) {
+                            var gId = '';
+                            var gMatch = gHref.match(/[?&]list=([^&]+)/);
+                            if (gMatch) gId = gMatch[1];
+                            else if (gHref.indexOf('browse/VL') !== -1) gId = gHref.split('browse/VL')[1].split('/')[0];
+                            
+                            var gImg = gel.querySelector('img');
+                            var gThumb = gImg ? gImg.src : null;
+                            
+                            if (gTitle && gId && !seenPlaylists[gId]) {
+                                seenPlaylists[gId] = true;
+                                playlists.push({
+                                    id: gId,
+                                    title: gTitle,
+                                    subtitle: 'Playlist',
+                                    thumbnailURL: gThumb,
+                                    browseId: gHref
+                                });
+                            }
+                        }
+                    }
+                    
+                    // 2. Shelf / Two-Row items
+                    var twoRow = document.querySelectorAll('ytmusic-two-row-item-renderer, ytmusic-responsive-list-item-renderer');
+                    for (var r = 0; r < twoRow.length; r++) {
+                        var rItem = twoRow[r];
+                        var rA = rItem.querySelector('a.yt-simple-endpoint') || rItem.querySelector('a');
+                        var rHref = rA ? (rA.getAttribute('href') || '') : '';
+                        if (rHref.indexOf('playlist?list=') !== -1 || rHref.indexOf('browse/VL') !== -1) {
+                            var rId = '';
+                            var rM = rHref.match(/[?&]list=([^&]+)/);
+                            if (rM) rId = rM[1];
+                            else if (rHref.indexOf('browse/VL') !== -1) rId = rHref.split('browse/VL')[1].split('/')[0];
+                            
+                            var rTEl = rItem.querySelector('.title yt-formatted-string') || rItem.querySelector('.title') || rItem.querySelector('a.title');
+                            var rSEl = rItem.querySelector('.subtitle yt-formatted-string') || rItem.querySelector('.subtitle');
+                            var rImg = rItem.querySelector('img#img') || rItem.querySelector('img');
+                            
+                            var rTitle = rTEl ? (rTEl.innerText || rTEl.textContent || '').trim() : '';
+                            var rSub = rSEl ? (rSEl.innerText || rSEl.textContent || '').trim() : 'Playlist';
+                            var rThumb = rImg ? rImg.src : null;
+                            
+                            if (rTitle && rId && !seenPlaylists[rId]) {
+                                seenPlaylists[rId] = true;
+                                playlists.push({
+                                    id: rId,
+                                    title: rTitle,
+                                    subtitle: rSub,
+                                    thumbnailURL: rThumb,
+                                    browseId: rHref
+                                });
+                            }
+                        }
+                    }
+                    
+                    // 3. Ensure Liked Music if link is present
+                    if (!seenPlaylists['LM']) {
+                        var lEl = document.querySelector('a[href*="list=LM"]');
+                        if (lEl) {
+                            seenPlaylists['LM'] = true;
+                            playlists.unshift({
+                                id: 'LM',
+                                title: 'Liked Music',
+                                subtitle: 'Auto Playlist',
+                                thumbnailURL: null,
+                                browseId: 'playlist?list=LM'
+                            });
+                        }
+                    }
+                } catch(pe) {}
+                
                 return {
                     title: title,
                     artist: artist,
@@ -1107,7 +1335,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     isDisliked: isDisliked,
                     isShuffle: isShuffle,
                     repeatMode: repeatMode,
-                    queue: queue
+                    queue: queue,
+                    playlists: playlists
                 };
             }
             

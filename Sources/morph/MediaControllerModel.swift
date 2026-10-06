@@ -19,6 +19,12 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isDirectEngineConnected: Bool = false
     @Published public var isBrowserConnected: Bool = false
     @Published public var playlist: [YTMPlaylistItem] = []
+    @Published public var playlists: [YTMPlaylist] = []
+    @Published public var selectedPlaylist: YTMPlaylist? = nil
+    @Published public var isSearchingPlaylists: Bool = false
+    @Published public var playlistSearchQuery: String = ""
+    @Published public var isSearchingSongs: Bool = false
+    @Published public var songSearchQuery: String = ""
     @Published public var showVolumeHUD: Bool = false
     private var volumeHUDWorkItem: DispatchWorkItem?
     
@@ -42,6 +48,7 @@ public final class MediaControllerModel: ObservableObject {
     
     public init(engine: YouTubeMusicEngine = YouTubeMusicEngine.shared) {
         self.engine = engine
+        self.playlists = Self.defaultCuratedPlaylists
         
         setupEngineObservers()
         if !isTestingEnvironment {
@@ -124,6 +131,40 @@ public final class MediaControllerModel: ObservableObject {
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
                 }
+                
+                if !data.playlists.isEmpty {
+                    var merged = self.playlists
+                    for ep in data.playlists {
+                        if let existingIdx = merged.firstIndex(where: { $0.id == ep.id }) {
+                            merged[existingIdx] = ep
+                        } else {
+                            merged.append(ep)
+                        }
+                    }
+                    self.playlists = merged
+                }
+                
+                // If a playlist was loaded and engine provided queue, update selectedPlaylist tracks
+                if let sel = self.selectedPlaylist, !data.queue.isEmpty {
+                    var updated = sel
+                    updated.tracks = data.queue
+                    self.selectedPlaylist = updated
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$userPlaylists
+            .sink { [weak self] enginePlaylists in
+                guard let self = self, !enginePlaylists.isEmpty else { return }
+                var merged = self.playlists
+                for ep in enginePlaylists {
+                    if let existingIdx = merged.firstIndex(where: { $0.id == ep.id }) {
+                        merged[existingIdx] = ep
+                    } else {
+                        merged.append(ep)
+                    }
+                }
+                self.playlists = merged
             }
             .store(in: &cancellables)
     }
@@ -269,7 +310,203 @@ public final class MediaControllerModel: ObservableObject {
         triggerVolumeHUD()
     }
     
+    // Curated default focus playlist tracks when live YouTube Music queue is not yet loaded
+    public static let defaultCuratedPlaylist: [YTMPlaylistItem] = [
+        YTMPlaylistItem(id: "curated_0", title: "Starboy", artist: "The Weeknd • Daft Punk", duration: "3:50"),
+        YTMPlaylistItem(id: "curated_1", title: "Midnight City", artist: "M83", duration: "4:04"),
+        YTMPlaylistItem(id: "curated_2", title: "Blinding Lights", artist: "The Weeknd", duration: "3:20"),
+        YTMPlaylistItem(id: "curated_3", title: "Get Lucky", artist: "Daft Punk • Pharrell Williams", duration: "4:08"),
+        YTMPlaylistItem(id: "curated_4", title: "Resonance", artist: "HOME • Chillwave", duration: "3:32"),
+        YTMPlaylistItem(id: "curated_5", title: "After Hours", artist: "The Weeknd", duration: "6:01"),
+        YTMPlaylistItem(id: "curated_6", title: "Nightcall", artist: "Kavinsky", duration: "4:19"),
+        YTMPlaylistItem(id: "curated_7", title: "Instant Crush", artist: "Daft Punk • Julian Casablancas", duration: "5:37")
+    ]
+    
+    // Curated default playlists for initial load & offline/preview mode
+    public static let defaultCuratedPlaylists: [YTMPlaylist] = [
+        YTMPlaylist(
+            id: "pl_liked",
+            title: "Liked Music",
+            subtitle: "Auto Playlist • 8 tracks",
+            thumbnailURL: nil,
+            trackCount: 8,
+            tracks: [
+                YTMPlaylistItem(id: "lm_0", title: "Starboy", artist: "The Weeknd • Daft Punk", duration: "3:50"),
+                YTMPlaylistItem(id: "lm_1", title: "Blinding Lights", artist: "The Weeknd", duration: "3:20"),
+                YTMPlaylistItem(id: "lm_2", title: "One More Time", artist: "Daft Punk", duration: "5:20"),
+                YTMPlaylistItem(id: "lm_3", title: "Midnight City", artist: "M83", duration: "4:04"),
+                YTMPlaylistItem(id: "lm_4", title: "Get Lucky", artist: "Daft Punk • Pharrell Williams", duration: "4:08"),
+                YTMPlaylistItem(id: "lm_5", title: "Instant Crush", artist: "Daft Punk • Julian Casablancas", duration: "5:37"),
+                YTMPlaylistItem(id: "lm_6", title: "After Hours", artist: "The Weeknd", duration: "6:01"),
+                YTMPlaylistItem(id: "lm_7", title: "Nightcall", artist: "Kavinsky", duration: "4:19")
+            ],
+            browseId: "playlist?list=LM"
+        ),
+        YTMPlaylist(
+            id: "pl_supermix",
+            title: "My Supermix",
+            subtitle: "YouTube Music Mix • 6 tracks",
+            thumbnailURL: nil,
+            trackCount: 6,
+            tracks: [
+                YTMPlaylistItem(id: "sm_0", title: "Save Your Tears", artist: "The Weeknd", duration: "3:35"),
+                YTMPlaylistItem(id: "sm_1", title: "Harder, Better, Faster, Stronger", artist: "Daft Punk", duration: "3:44"),
+                YTMPlaylistItem(id: "sm_2", title: "Around the World", artist: "Daft Punk", duration: "7:09"),
+                YTMPlaylistItem(id: "sm_3", title: "Technologic", artist: "Daft Punk", duration: "4:44"),
+                YTMPlaylistItem(id: "sm_4", title: "I Feel It Coming", artist: "The Weeknd • Daft Punk", duration: "4:29"),
+                YTMPlaylistItem(id: "sm_5", title: "Out of Time", artist: "The Weeknd", duration: "3:34")
+            ],
+            browseId: "RDTMAK5uy_kset8DisdE7LSD4TNjEVvrKAcG-EiGS4"
+        ),
+        YTMPlaylist(
+            id: "pl_focus",
+            title: "Deep Focus & Study",
+            subtitle: "Ambient & Instrumental • 5 tracks",
+            thumbnailURL: nil,
+            trackCount: 5,
+            tracks: [
+                YTMPlaylistItem(id: "fc_0", title: "Resonance", artist: "HOME • Chillwave", duration: "3:32"),
+                YTMPlaylistItem(id: "fc_1", title: "Weightless", artist: "Marconi Union", duration: "8:00"),
+                YTMPlaylistItem(id: "fc_2", title: "Solaris", artist: "Stellardrone", duration: "5:12"),
+                YTMPlaylistItem(id: "fc_3", title: "Daylight", artist: "Tycho", duration: "4:41"),
+                YTMPlaylistItem(id: "fc_4", title: "Awake", artist: "Tycho", duration: "4:43")
+            ],
+            browseId: "RDCLAK5uy_focus"
+        ),
+        YTMPlaylist(
+            id: "pl_synthwave",
+            title: "Night Drive Synthwave",
+            subtitle: "Retro Electro • 5 tracks",
+            thumbnailURL: nil,
+            trackCount: 5,
+            tracks: [
+                YTMPlaylistItem(id: "sw_0", title: "Sunset", artist: "The Midnight", duration: "5:26"),
+                YTMPlaylistItem(id: "sw_1", title: "Days of Thunder", artist: "The Midnight", duration: "5:17"),
+                YTMPlaylistItem(id: "sw_2", title: "Vampires", artist: "The Midnight", duration: "5:18"),
+                YTMPlaylistItem(id: "sw_3", title: "Tech Noir", artist: "Gunship", duration: "4:57"),
+                YTMPlaylistItem(id: "sw_4", title: "Far Away", artist: "Trevor Something", duration: "4:12")
+            ],
+            browseId: "RDCLAK5uy_synth"
+        ),
+        YTMPlaylist(
+            id: "pl_workout",
+            title: "Workout Energy",
+            subtitle: "High Tempo • 5 tracks",
+            thumbnailURL: nil,
+            trackCount: 5,
+            tracks: [
+                YTMPlaylistItem(id: "wo_0", title: "Can't Hold Us", artist: "Macklemore & Ryan Lewis", duration: "4:18"),
+                YTMPlaylistItem(id: "wo_1", title: "Stronger", artist: "Kanye West", duration: "5:11"),
+                YTMPlaylistItem(id: "wo_2", title: "Till I Collapse", artist: "Eminem", duration: "4:57"),
+                YTMPlaylistItem(id: "wo_3", title: "Power", artist: "Kanye West", duration: "4:52"),
+                YTMPlaylistItem(id: "wo_4", title: "Lose Yourself", artist: "Eminem", duration: "5:26")
+            ],
+            browseId: "RDCLAK5uy_workout"
+        )
+    ]
+    
+    public var filteredPlaylists: [YTMPlaylist] {
+        let list = playlists.isEmpty ? Self.defaultCuratedPlaylists : playlists
+        let query = playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if query.isEmpty {
+            return list
+        }
+        return list.filter {
+            $0.title.lowercased().contains(query) || $0.subtitle.lowercased().contains(query)
+        }
+    }
+    
+    public func filteredSongs(for pl: YTMPlaylist) -> [YTMPlaylistItem] {
+        let list = pl.tracks
+        let query = songSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if query.isEmpty {
+            return list
+        }
+        return list.filter {
+            $0.title.lowercased().contains(query) || $0.artist.lowercased().contains(query)
+        }
+    }
+    
+    public func selectPlaylist(_ pl: YTMPlaylist) {
+        selectedPlaylist = pl
+        isSearchingSongs = false
+        songSearchQuery = ""
+        
+        if isDirectEngineActive && !pl.id.hasPrefix("curated") && !pl.id.hasPrefix("pl_") {
+            engine.loadPlaylist(id: pl.id)
+        }
+    }
+    
+    public func backToPlaylists() {
+        selectedPlaylist = nil
+        isSearchingSongs = false
+        songSearchQuery = ""
+    }
+    
+    public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
+        trackTitle = item.title
+        if !item.artist.isEmpty {
+            artistName = item.artist
+        }
+        currentTime = 0
+        isPlaying = true
+        
+        // Update isPlaying state across tracks in selectedPlaylist
+        if var sel = selectedPlaylist {
+            for i in 0..<sel.tracks.count {
+                sel.tracks[i].isPlaying = (sel.tracks[i].id == item.id)
+            }
+            selectedPlaylist = sel
+        }
+        
+        if let idx = Int(item.id) {
+            engine.playPlaylistSong(index: idx)
+        } else if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
+            engine.playPlaylistSong(index: matchIdx)
+        } else {
+            playSearch("\(item.title) \(item.artist)")
+        }
+    }
+    
+    public func playEntireSelectedPlaylist() {
+        guard let sel = selectedPlaylist, !sel.tracks.isEmpty else { return }
+        playSongInSelectedPlaylist(sel.tracks[0])
+        engine.playEntirePlaylist()
+    }
+    
+    public func refreshPlaylists() {
+        engine.fetchTracksFromCurrentPage()
+    }
+    
+    public var nowPlayingQueuePlaylist: YTMPlaylist {
+        YTMPlaylist(
+            id: "pl_queue",
+            title: "Now Playing Queue",
+            subtitle: "\(effectivePlaylist.count) tracks in live queue",
+            thumbnailURL: albumArtURL,
+            trackCount: effectivePlaylist.count,
+            tracks: effectivePlaylist,
+            browseId: nil
+        )
+    }
+    
+    public var effectivePlaylist: [YTMPlaylistItem] {
+        if !playlist.isEmpty {
+            return playlist
+        }
+        return Self.defaultCuratedPlaylist.map { item in
+            var copy = item
+            copy.isPlaying = (trackTitle == item.title)
+            return copy
+        }
+    }
+    
     public func playQueueTrack(_ item: YTMPlaylistItem) {
+        trackTitle = item.title
+        artistName = item.artist
+        currentTime = 0
+        isPlaying = true
+        
         if let idx = Int(item.id) {
             engine.playQueueIndex(idx)
         } else if let matchIdx = playlist.firstIndex(where: { $0.id == item.id }) {

@@ -299,6 +299,29 @@ final class MorphTests: XCTestCase {
     }
     
     @MainActor
+    func testMediaPlaylistQueueBrowsingAndPlayback() {
+        let media = MediaControllerModel()
+        
+        // Effective playlist must provide tracks for browsing even before live WebKit queue loads
+        let playlist = media.effectivePlaylist
+        XCTAssertFalse(playlist.isEmpty, "Effective playlist must contain tracks for user to browse")
+        XCTAssertGreaterThanOrEqual(playlist.count, 5, "Playlist should contain multiple focus tracks")
+        
+        // Select an item from the playlist (e.g. Midnight City)
+        guard let targetTrack = playlist.first(where: { $0.title == "Midnight City" }) else {
+            XCTFail("Target track should exist in playlist")
+            return
+        }
+        
+        // Selecting a track must instantly update Now Playing and commence playback
+        media.playQueueTrack(targetTrack)
+        XCTAssertEqual(media.trackTitle, "Midnight City")
+        XCTAssertEqual(media.artistName, targetTrack.artist)
+        XCTAssertEqual(media.currentTime, 0)
+        XCTAssertTrue(media.isPlaying, "Selecting a playlist track must start playback immediately")
+    }
+    
+    @MainActor
     func testCameraNotchVisibilityGuarantees() {
         let model = NotchModel()
         
@@ -898,6 +921,77 @@ final class MorphTests: XCTestCase {
         controller.handleMouseExit()
         controller.checkMousePosition(insideExpandedPoint)
         XCTAssertTrue(model.isHovered, "Re-entering must cancel collapse work item and restore hover state")
+    }
+    
+    @MainActor
+    func testYouTubeMusicMultiPlaylistSelectionAndSongPicking() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // 1. Multiple playlists must be available (not just one single queue)
+        XCTAssertGreaterThanOrEqual(media.playlists.count, 5, "Media controller must support multiple playlists")
+        XCTAssertNil(media.selectedPlaylist, "Initially, no playlist should be selected (Step 1: Choose Playlist)")
+        
+        let likedPlaylist = media.playlists.first(where: { $0.id == "pl_liked" || $0.title == "Liked Music" })
+        XCTAssertNotNil(likedPlaylist, "Liked Music playlist must be available")
+        XCTAssertGreaterThanOrEqual(likedPlaylist!.tracks.count, 6, "Liked Music playlist must contain multiple songs for choosing")
+        
+        let supermixPlaylist = media.playlists.first(where: { $0.id == "pl_supermix" || $0.title == "My Supermix" })
+        XCTAssertNotNil(supermixPlaylist, "My Supermix playlist must be available")
+        
+        // 2. Filter playlists by search query
+        media.playlistSearchQuery = "focus"
+        XCTAssertEqual(media.filteredPlaylists.count, 1)
+        XCTAssertEqual(media.filteredPlaylists.first?.title, "Deep Focus & Study")
+        media.playlistSearchQuery = ""
+        XCTAssertEqual(media.filteredPlaylists.count, media.playlists.count)
+        
+        // 3. Step 1 -> Step 2: Choose a playlist
+        media.selectPlaylist(likedPlaylist!)
+        XCTAssertNotNil(media.selectedPlaylist, "Selecting a playlist must transition to Step 2 (Song choosing)")
+        XCTAssertEqual(media.selectedPlaylist?.title, "Liked Music")
+        XCTAssertEqual(media.selectedPlaylist?.tracks.count, likedPlaylist!.tracks.count)
+        
+        // 4. Filter songs inside the chosen playlist
+        media.songSearchQuery = "Daft Punk"
+        let daftPunkSongs = media.filteredSongs(for: media.selectedPlaylist!)
+        XCTAssertGreaterThanOrEqual(daftPunkSongs.count, 2, "Filtered songs in chosen playlist should find matching tracks")
+        media.songSearchQuery = ""
+        
+        // 5. Choose a song in that playlist
+        let targetSong = likedPlaylist!.tracks[2] // "One More Time"
+        media.playSongInSelectedPlaylist(targetSong)
+        
+        XCTAssertEqual(media.trackTitle, targetSong.title, "Choosing a song in the playlist must update track title")
+        XCTAssertTrue(media.isPlaying, "Choosing a song must initiate playback")
+        XCTAssertEqual(media.currentTime, 0, "Scrubber must reset to 0 upon starting new song")
+        XCTAssertTrue(media.selectedPlaylist?.tracks.first(where: { $0.id == targetSong.id })?.isPlaying == true, "Chosen song must be marked as playing in playlist")
+        
+        // 6. Step 2 -> Step 1: Back to playlist choosing
+        media.backToPlaylists()
+        XCTAssertNil(media.selectedPlaylist, "Calling backToPlaylists must transition back to playlist selection")
+        
+        // 7. Test parsing real YouTube Music incoming playlists payload
+        let samplePlaylistsPayload: [[String: Any]] = [
+            ["id": "PL_real_1", "title": "Late Night Coding", "subtitle": "Playlist • 45 songs", "thumbnailURL": "https://img.youtube.com/vi/1/0.jpg", "browseId": "playlist?list=PL_real_1"],
+            ["id": "PL_real_2", "title": "Coffee Shop Acoustic", "subtitle": "Playlist • 32 songs", "thumbnailURL": "https://img.youtube.com/vi/2/0.jpg", "browseId": "playlist?list=PL_real_2"]
+        ]
+        
+        engine.parseIncomingPayload([
+            "title": "Starboy",
+            "artist": "The Weeknd",
+            "duration": 230.0,
+            "isPlaying": true,
+            "playlists": samplePlaylistsPayload
+        ])
+        
+        XCTAssertTrue(media.playlists.contains(where: { $0.id == "PL_real_1" && $0.title == "Late Night Coding" }), "Real YouTube Music playlists must be parsed and stored in model")
+        XCTAssertTrue(media.playlists.contains(where: { $0.id == "PL_real_2" && $0.title == "Coffee Shop Acoustic" }), "Real YouTube Music playlists must be parsed and stored in model")
+        
+        // 8. Now Playing Queue Playlist
+        let queuePlaylist = media.nowPlayingQueuePlaylist
+        XCTAssertEqual(queuePlaylist.id, "pl_queue")
+        XCTAssertEqual(queuePlaylist.title, "Now Playing Queue")
     }
 }
 

@@ -3,6 +3,8 @@
 ## 1. Anti-Clutter & Visual Discipline
 - **No Unnecessary Details**: Never add decorative dots, status pips, or trailing symbols next to user names (e.g., no dot next to "Aaron" or any user name).
 - **No Unsolicited Telemetry on Home**: Do not put arbitrary metrics chips (e.g., "145m focus", "170m focus", "streak pips") on the Home screen.
+- **No 'Ready' or Orange Status Indicators**: Media player must never display orange status indicators or 'Ready' badges. Keep all controls and status feedback strictly monochromatic.
+- **Integrated Playlist & Queue Panel**: Media player must provide a dedicated, visible space for users to browse and scroll through their playlist/queue directly alongside the Now Playing controls.
 - **Zen Simplicity**: The Home screen must remain pure and focused:
   1. Morphy cyber companion (floating center stage with soft ambient aura).
   2. Single-line dynamic greeting: `Good morning, <User>` (or `Good morning`).
