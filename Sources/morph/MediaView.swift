@@ -370,32 +370,36 @@ public struct MediaView: View {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 16))
                         .foregroundColor(Color.white.opacity(0.35))
-                    Text("No YouTube Music Playlists Found")
+                    Text(media.isSignedIn ? "No Custom Playlists Found" : "No YouTube Music Playlists Found")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.85))
-                    Text("Sign in to YouTube Music to access your real playlists and library.")
+                    Text(media.isSignedIn
+                         ? "You are signed in! Create playlists on YouTube Music or click Sync to refresh."
+                         : "Sign in once to YouTube Music to access all your playlists and music.")
                         .font(.system(size: 8, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.45))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 8)
                     
                     HStack(spacing: 6) {
-                        Button(action: {
-                            media.openPlayerWindow()
-                        }) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "person.crop.circle.badge.plus")
-                                    .font(.system(size: 8.5))
-                                Text("Sign In")
-                                    .font(.system(size: 8.5, weight: .bold))
+                        if !media.isSignedIn {
+                            Button(action: {
+                                media.openPlayerWindow()
+                            }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "person.crop.circle.badge.plus")
+                                        .font(.system(size: 8.5))
+                                    Text("Sign In")
+                                        .font(.system(size: 8.5, weight: .bold))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3.5)
+                                .background(Color.white.opacity(0.14))
+                                .clipShape(Capsule())
                             }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(Color.white.opacity(0.14))
-                            .clipShape(Capsule())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                         
                         Button(action: {
                             media.refreshPlaylists()
@@ -403,13 +407,13 @@ public struct MediaView: View {
                             HStack(spacing: 3) {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 8))
-                                Text("Sync")
+                                Text("Sync Library")
                                     .font(.system(size: 8.5, weight: .medium))
                             }
-                            .foregroundColor(Color.white.opacity(0.8))
-                            .padding(.horizontal, 7)
+                            .foregroundColor(media.isSignedIn ? .white : Color.white.opacity(0.8))
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 3.5)
-                            .background(Color.white.opacity(0.08))
+                            .background(media.isSignedIn ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)

@@ -84,6 +84,7 @@ public struct YTMTrackData: Codable, Equatable {
     public var repeatMode: YTMRepeatMode
     public var queue: [YTMPlaylistItem]
     public var playlists: [YTMPlaylist]
+    public var isSignedIn: Bool
     
     public init(
         title: String = "",
@@ -99,7 +100,8 @@ public struct YTMTrackData: Codable, Equatable {
         isShuffle: Bool = false,
         repeatMode: YTMRepeatMode = .off,
         queue: [YTMPlaylistItem] = [],
-        playlists: [YTMPlaylist] = []
+        playlists: [YTMPlaylist] = [],
+        isSignedIn: Bool = false
     ) {
         self.title = title
         self.artist = artist
@@ -115,6 +117,7 @@ public struct YTMTrackData: Codable, Equatable {
         self.repeatMode = repeatMode
         self.queue = queue
         self.playlists = playlists
+        self.isSignedIn = isSignedIn
     }
 }
 
@@ -124,6 +127,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     @Published public var trackData: YTMTrackData = YTMTrackData()
     @Published public var userPlaylists: [YTMPlaylist] = []
+    @Published public var isSignedIn: Bool = false
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
     @Published public var currentURLString: String = "https://music.youtube.com"
@@ -258,6 +262,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let shuffle = (body["isShuffle"] as? Bool) ?? false
         let repStr = (body["repeatMode"] as? String) ?? "off"
         let repeatMode = YTMRepeatMode(rawValue: repStr) ?? .off
+        let signedIn = (body["isSignedIn"] as? Bool) ?? false
         
         var parsedQueue: [YTMPlaylistItem] = []
         if let rawQueue = body["queue"] as? [[String: Any]] {
@@ -302,6 +307,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             self.userPlaylists = parsedPlaylists
         }
         
+        let previousSignedIn = self.isSignedIn
+        self.isSignedIn = signedIn
+        
         self.trackData = YTMTrackData(
             title: title.isEmpty ? "YouTube Music" : title,
             artist: artist.isEmpty ? "Ready to play" : artist,
@@ -316,8 +324,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             isShuffle: shuffle,
             repeatMode: repeatMode,
             queue: parsedQueue,
-            playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists
+            playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists,
+            isSignedIn: signedIn
         )
+        
+        // Auto-sync playlists immediately when transitioning from not signed in to signed in
+        if signedIn && !previousSignedIn {
+            fetchRealUserPlaylists()
+        }
         
         if !title.isEmpty && title != "YouTube Music" {
             self.connectionState = "Connected • Direct WebKit"
@@ -334,6 +348,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         updateNavigationState()
         self.connectionState = "YouTube Music Loaded"
         injectPeriodicObserver()
+        
+        // Ensure cookies are synchronized and flushed to persistent store
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { _ in }
+        
+        // Auto-detect if user just returned from Google Sign-In or arrived at YouTube Music
+        if let url = webView.url?.absoluteString {
+            if url.contains("music.youtube.com") {
+                // If returning from Google OAuth redirect, automatically fetch real library playlists
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.fetchRealUserPlaylists()
+                }
+            }
+        }
     }
     
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -730,12 +757,75 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func loadPlaylist(id: String) {
         let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanId.isEmpty else { return }
-        let urlString = "https://music.youtube.com/playlist?list=\(cleanId)"
-        if let url = URL(string: urlString) {
-            self.webView.load(URLRequest(url: url))
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            self?.fetchTracksFromCurrentPage()
+        
+        // InnerTube API Query for playlist tracks using the active session cookies
+        // BrowseId for playlists starts with 'VL' (e.g. VLPL... or VL<id>)
+        let browseId = cleanId.hasPrefix("VL") ? cleanId : "VL\(cleanId)"
+        let script = """
+        (function() {
+            try {
+                if (window.ytcfg && typeof window.ytcfg.get === 'function') {
+                    var context = window.ytcfg.get('INNERTUBE_CONTEXT');
+                    var apiKey = window.ytcfg.get('INNERTUBE_API_KEY');
+                    if (context) {
+                        var body = {
+                            context: context,
+                            browseId: '\(browseId)'
+                        };
+                        var url = '/youtubei/v1/browse' + (apiKey ? ('?key=' + apiKey) : '');
+                        fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            var tracks = [];
+                            try {
+                                var section = data.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.musicPlaylistShelfRenderer?.contents ||
+                                              data.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer?.contents?.[0]?.musicPlaylistShelfRenderer?.contents || [];
+                                for (var i = 0; i < Math.min(section.length, 60); i++) {
+                                    var item = section[i].musicResponsiveListItemRenderer;
+                                    if (item) {
+                                        var title = item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || '';
+                                        var artist = item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map(function(r) { return r.text; }).join('') || '';
+                                        var dur = item.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs?.[0]?.text || '';
+                                        var songId = item.playlistItemData?.videoId || ('' + i);
+                                        if (title) {
+                                            tracks.push({
+                                                id: songId,
+                                                title: title,
+                                                artist: artist,
+                                                duration: dur,
+                                                isPlaying: false
+                                            });
+                                        }
+                                    }
+                                }
+                            } catch(e) {}
+                            if (tracks.length > 0) {
+                                var currentData = (typeof getTrackInfo === 'function') ? getTrackInfo() : {};
+                                currentData.queue = tracks;
+                                window.webkit.messageHandlers.\(kHandlerName).postMessage(currentData);
+                            }
+                        })
+                        .catch(function(err) {});
+                    }
+                }
+            } catch(e) {}
+        })();
+        """
+        evaluate(script)
+        
+        // Also load the playlist page if webView is idle (no active playback), otherwise preserve active music!
+        if !trackData.isPlaying {
+            let urlString = "https://music.youtube.com/playlist?list=\(cleanId)"
+            if let url = URL(string: urlString) {
+                self.webView.load(URLRequest(url: url))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.fetchTracksFromCurrentPage()
+            }
         }
     }
     
@@ -1389,6 +1479,24 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             });
                         }
                     }
+                    
+                    // 4. User Signed-In State Detection
+                    var isSignedIn = false;
+                    try {
+                        if (window.ytcfg && typeof window.ytcfg.get === 'function') {
+                            var yLoggedIn = window.ytcfg.get('LOGGED_IN');
+                            if (typeof yLoggedIn === 'boolean') {
+                                isSignedIn = yLoggedIn;
+                            }
+                        }
+                        if (!isSignedIn) {
+                            var hasAvatar = document.querySelector('button#avatar-btn, img#avatar-btn, ytmusic-settings-button, tp-yt-paper-icon-button#avatar-btn, ytmusic-sign-in-button[hidden]');
+                            var signInBtn = document.querySelector('ytmusic-sign-in-button:not([hidden]), a[href*="accounts.google.com/ServiceLogin"]:not([hidden])');
+                            if (hasAvatar && !signInBtn) {
+                                isSignedIn = true;
+                            }
+                        }
+                    } catch(ie) {}
                 } catch(pe) {}
                 
                 return {
@@ -1405,7 +1513,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     isShuffle: isShuffle,
                     repeatMode: repeatMode,
                     queue: queue,
-                    playlists: playlists
+                    playlists: playlists,
+                    isSignedIn: isSignedIn
                 };
             }
             
@@ -1533,23 +1642,38 @@ public struct PlayerWindowToolbarView: View {
             
             Spacer()
             
-            // Direct Google Sign-In Action Button
-            Button(action: {
-                engine.loadGoogleSignIn()
-            }) {
+            // Direct Google Sign-In Action Button / Signed In Indicator
+            if engine.isSignedIn {
                 HStack(spacing: 5) {
-                    Image(systemName: "person.crop.circle.badge.plus")
+                    Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 10.5, weight: .bold))
-                    Text("Sign In with Google")
+                        .foregroundColor(Color.green)
+                    Text("Signed In")
                         .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
                 }
-                .foregroundColor(.black)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.white)
+                .background(Color.white.opacity(0.12))
                 .clipShape(Capsule())
+            } else {
+                Button(action: {
+                    engine.loadGoogleSignIn()
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 10.5, weight: .bold))
+                        Text("Sign In with Google")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             
             // Clear & Reset Cache Button
             Button(action: {

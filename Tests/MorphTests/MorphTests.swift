@@ -1047,6 +1047,61 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(queuePlaylist.id, "pl_queue")
         XCTAssertEqual(queuePlaylist.title, "Now Playing Queue")
     }
+    
+    @MainActor
+    func testYouTubeMusicSingleSignOnAndUnifiedAccess() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // Initial State: Unauthenticated
+        XCTAssertFalse(engine.isSignedIn, "Engine must start unauthenticated before user logs in")
+        XCTAssertFalse(media.isSignedIn, "Media model must start unauthenticated")
+        XCTAssertTrue(media.playlists.isEmpty, "Playlists must be empty before sign-in")
+        
+        // 1. Simulating OAuth sign-in completion payload from YouTube Music
+        let realSamplePlaylists: [[String: Any]] = [
+            [
+                "id": "LM",
+                "title": "Liked Music",
+                "subtitle": "Auto Playlist",
+                "thumbnailURL": "https://img.youtube.com/vi/lm/0.jpg",
+                "browseId": "playlist?list=LM"
+            ],
+            [
+                "id": "PL_my_vibes",
+                "title": "Summer Vibes 2026",
+                "subtitle": "Playlist • 45 songs",
+                "thumbnailURL": "https://img.youtube.com/vi/vibes/0.jpg",
+                "browseId": "playlist?list=PL_my_vibes"
+            ]
+        ]
+        
+        engine.parseIncomingPayload([
+            "title": "Starboy",
+            "artist": "The Weeknd",
+            "duration": 230.0,
+            "isPlaying": true,
+            "isSignedIn": true,
+            "playlists": realSamplePlaylists
+        ])
+        
+        // 2. Verify Single Sign-On State is unified across Engine and MediaControllerModel
+        XCTAssertTrue(engine.isSignedIn, "Engine must register signedIn = true from session")
+        XCTAssertTrue(media.isSignedIn, "Media controller must immediately sync signedIn = true without secondary login")
+        XCTAssertEqual(media.playlists.count, 2, "Playlists must immediately be accessible using the single signed-in session")
+        
+        // 3. Verify accessing playlists does NOT require re-authenticating
+        let selected = media.playlists[1]
+        media.selectPlaylist(selected)
+        XCTAssertEqual(media.selectedPlaylist?.title, "Summer Vibes 2026", "User must seamlessly browse their playlist")
+        XCTAssertTrue(media.isSignedIn, "Sign-in state must remain true throughout playlist navigation")
+        
+        // 4. Verify returning to playlists maintains session
+        media.backToPlaylists()
+        XCTAssertNil(media.selectedPlaylist)
+        XCTAssertTrue(media.isSignedIn, "Session must persist seamlessly across all media views")
+    }
 }
+
 
 

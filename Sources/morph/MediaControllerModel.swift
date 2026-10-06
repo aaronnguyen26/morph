@@ -20,6 +20,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isBrowserConnected: Bool = false
     @Published public var playlist: [YTMPlaylistItem] = []
     @Published public var playlists: [YTMPlaylist] = []
+    @Published public var isSignedIn: Bool = false
     @Published public var selectedPlaylist: YTMPlaylist? = nil
     @Published public var isSearchingPlaylists: Bool = false
     @Published public var playlistSearchQuery: String = ""
@@ -134,6 +135,14 @@ public final class MediaControllerModel: ObservableObject {
                     self.isDirectEngineConnected = true
                 }
                 
+                let prevSignedIn = self.isSignedIn
+                self.isSignedIn = data.isSignedIn || self.engine.isSignedIn
+                
+                // If user just transitioned to signed in, automatically refresh playlists
+                if self.isSignedIn && !prevSignedIn && self.playlists.isEmpty {
+                    self.refreshPlaylists()
+                }
+                
                 if !data.playlists.isEmpty {
                     var merged = self.playlists
                     for ep in data.playlists {
@@ -151,6 +160,17 @@ public final class MediaControllerModel: ObservableObject {
                     var updated = sel
                     updated.tracks = data.queue
                     self.selectedPlaylist = updated
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$isSignedIn
+            .sink { [weak self] signedIn in
+                guard let self = self else { return }
+                let prev = self.isSignedIn
+                self.isSignedIn = signedIn
+                if signedIn && !prev && self.playlists.isEmpty {
+                    self.refreshPlaylists()
                 }
             }
             .store(in: &cancellables)
