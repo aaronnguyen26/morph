@@ -40,7 +40,10 @@ public final class CalendarModel: ObservableObject {
         engine.$rawEvents
             .sink { [weak self] newEvents in
                 guard let self = self else { return }
-                if !newEvents.isEmpty {
+                if self.configuredUserEmail != nil {
+                    self.events = newEvents
+                    self.evaluateUpcomingAlerts()
+                } else if !newEvents.isEmpty {
                     self.events = newEvents
                     self.evaluateUpcomingAlerts()
                 }
@@ -53,6 +56,8 @@ public final class CalendarModel: ObservableObject {
         guard !clean.isEmpty, clean.contains("@") else { return }
         self.configuredUserEmail = clean
         self.isSignedIn = true
+        // Clear mock events so real user Google Calendar data is exclusively displayed
+        self.events = self.engine.rawEvents
         engine.configureAccount(email: clean)
     }
     

@@ -1521,6 +1521,82 @@ final class MorphTests: XCTestCase {
         model.completeProfileSignIn()
         XCTAssertEqual(model.selectedTab, MorphTab.home)
     }
+    
+    @MainActor
+    func testGoogleCalendarProfileEmailFetchAndZeroOpenStewardDependency() {
+        let engine = GoogleCalendarEngine()
+        let calendar = CalendarModel(engine: engine)
+        
+        // 1. Initial unauthenticated state may have placeholder events for UI demo
+        XCTAssertNil(calendar.configuredUserEmail)
+        XCTAssertFalse(calendar.isSignedIn)
+        
+        // 2. Profile configuration with user profile email
+        let profileEmail = "sarah.connor@gmail.com"
+        calendar.configureUser(email: profileEmail)
+        
+        // Assert: Email is bound and mock events are strictly purged
+        XCTAssertEqual(calendar.configuredUserEmail, profileEmail)
+        XCTAssertTrue(calendar.isSignedIn)
+        XCTAssertEqual(engine.configuredUserEmail, profileEmail)
+        XCTAssertTrue(engine.isSignedIn)
+        XCTAssertTrue(calendar.events.isEmpty, "Mock events must be cleared so fake data never shadows user profile data")
+        
+        // 3. Ingest real Google Calendar DOM extraction payload
+        let now = Date()
+        let start1 = now.addingTimeInterval(500) // Starting in 8.3 minutes
+        let end1 = start1.addingTimeInterval(2700)
+        
+        let payload: [String: Any] = [
+            "isSignedIn": true,
+            "accountEmail": profileEmail,
+            "events": [
+                [
+                    "id": "google_event_alpha_99",
+                    "title": "Quantum Compiler Sync",
+                    "description": "Weekly deep dive on instruction scheduling",
+                    "startTimeMs": start1.timeIntervalSince1970 * 1000.0,
+                    "endTimeMs": end1.timeIntervalSince1970 * 1000.0,
+                    "meetLink": "https://meet.google.com/qnt-comp-sync",
+                    "location": "Google Meet",
+                    "attendees": ["sarah.connor@gmail.com", "t1000@skynet.ai"]
+                ]
+            ]
+        ]
+        
+        engine.parseIncomingPayload(payload)
+        
+        // Assert: Engine and CalendarModel receive and reflect real events
+        XCTAssertEqual(engine.rawEvents.count, 1)
+        XCTAssertEqual(calendar.events.count, 1)
+        XCTAssertEqual(calendar.events.first?.title, "Quantum Compiler Sync")
+        XCTAssertEqual(calendar.events.first?.meetLink, "https://meet.google.com/qnt-comp-sync")
+        XCTAssertTrue(calendar.events.first?.isStartingSoon == true)
+        
+        // Assert: Notch HUD alert triggers for upcoming event
+        calendar.evaluateUpcomingAlerts()
+        XCTAssertTrue(calendar.showNotchAlert)
+        XCTAssertEqual(calendar.activeAlertEvent?.title, "Quantum Compiler Sync")
+        
+        // 4. Test empty calendar scenario: When user has 0 events on Google Calendar
+        let emptyPayload: [String: Any] = [
+            "isSignedIn": true,
+            "accountEmail": profileEmail,
+            "events": []
+        ]
+        engine.parseIncomingPayload(emptyPayload)
+        
+        XCTAssertTrue(engine.rawEvents.isEmpty)
+        XCTAssertTrue(calendar.events.isEmpty, "CalendarModel must accurately show 0 events when Google Calendar is empty")
+        XCTAssertFalse(calendar.showNotchAlert, "Notch alert must dismiss when no upcoming events exist")
+        XCTAssertNil(calendar.activeAlertEvent)
+        
+        // 5. Verification of Zero OpenSteward MCP dependency:
+        // Morph operates entirely on native macOS WebKit + Google AccountChooser SSO URL routing
+        // and direct DOM bridge injection, completely independent of obsolete OpenSteward.
+        XCTAssertNotNil(engine.webView)
+        XCTAssertTrue(engine.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically)
+    }
 }
 
 

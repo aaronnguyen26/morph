@@ -90,6 +90,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         
         self.configuredUserEmail = cleanEmail
         self.isSignedIn = true
+        self.rawEvents = [] // Reset previous events for clean account fetch
         
         let escapedEmail = cleanEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanEmail
         let ssoURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
@@ -268,6 +269,13 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
             self.isSignedIn = signedIn
         }
         
+        if let emailFromPage = dict["accountEmail"] as? String, !emailFromPage.isEmpty {
+            // Verify and track matched account email
+            if self.configuredUserEmail == nil {
+                self.configuredUserEmail = emailFromPage
+            }
+        }
+        
         if let eventsArray = dict["events"] as? [[String: Any]] {
 
             var parsedList: [CalendarEvent] = []
@@ -322,9 +330,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
                 parsedList.append(event)
             }
             
-            if !parsedList.isEmpty {
-                self.rawEvents = parsedList
-            }
+            self.rawEvents = parsedList
         }
         
         self.lastSyncDate = Date()
@@ -360,28 +366,64 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
                     var events = [];
                     var signedIn = !document.querySelector('a[href*="ServiceLogin"], a[href*="accounts.google.com/signin"]');
                     
-                    // 1. Check for modern Google Calendar event elements
-                    var eventElements = document.querySelectorAll('[data-eventid], [data-event-chip], [role="button"][data-date], div[data-key]');
+                    // Detect active Google Account email from DOM
+                    var accountEmail = null;
+                    var accountEl = document.querySelector('a[href*="SignOutOptions"], [data-email], a[aria-label*="@"], div[aria-label*="@"]');
+                    if (accountEl) {
+                        var label = accountEl.getAttribute('aria-label') || accountEl.getAttribute('data-email') || '';
+                        var emailMatch = label.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}/);
+                        if (emailMatch) accountEmail = emailMatch[0];
+                    }
                     
-                    for (var i = 0; i < Math.min(eventElements.length, 50); i++) {
+                    // 1. Check for modern Google Calendar event elements
+                    var eventElements = document.querySelectorAll('[data-eventid], [data-event-chip], [data-eventchip], [role="button"][data-date], div[data-key], .N4D8Eb');
+                    
+                    for (var i = 0; i < Math.min(eventElements.length, 60); i++) {
                         var el = eventElements[i];
                         var text = (el.innerText || el.textContent || '').trim();
-                        if (!text || text.length < 2) continue;
+                        var ariaLabel = (el.getAttribute('aria-label') || '').trim();
+                        
+                        if (!text && !ariaLabel) continue;
                         
                         var eventId = el.getAttribute('data-eventid') || el.getAttribute('data-key') || ('evt_' + i);
-                        var lines = text.split('\\n').map(function(s) { return s.trim(); }).filter(Boolean);
-                        
-                        var title = lines[0];
+                        var title = '';
                         var timeText = '';
-                        if (lines.length > 1) {
-                            // Check if first line is time (e.g., '10am', '9:30 AM')
-                            if (/\\d{1,2}(:\\d{2})?\\s*(am|pm)/i.test(lines[0])) {
-                                timeText = lines[0];
-                                title = lines[1] || lines[0];
-                            } else if (/\\d{1,2}(:\\d{2})?\\s*(am|pm)/i.test(lines[1])) {
-                                timeText = lines[1];
+                        var description = '';
+                        
+                        // Parse from aria-label if available (Google Calendar accessibility standard)
+                        if (ariaLabel && ariaLabel.includes(',')) {
+                            var parts = ariaLabel.split(',').map(function(s) { return s.trim(); });
+                            // Typically: "Title, Time, Status" or "Time, Title"
+                            if (/\\\\d{1,2}(:\\\\d{2})?\\\\s*(am|pm)/i.test(parts[0])) {
+                                timeText = parts[0];
+                                title = parts[1] || parts[0];
+                            } else {
+                                title = parts[0];
+                                for (var p = 1; p < parts.length; p++) {
+                                    if (/\\\\d{1,2}(:\\\\d{2})?\\\\s*(am|pm)/i.test(parts[p])) {
+                                        timeText = parts[p];
+                                        break;
+                                    }
+                                }
                             }
+                            description = parts.slice(2).join(' • ');
                         }
+                        
+                        if (!title && text) {
+                            var lines = text.split('\\\\n').map(function(s) { return s.trim(); }).filter(Boolean);
+                            title = lines[0];
+                            if (lines.length > 1) {
+                                if (/\\\\d{1,2}(:\\\\d{2})?\\\\s*(am|pm)/i.test(lines[0])) {
+                                    timeText = lines[0];
+                                    title = lines[1] || lines[0];
+                                } else if (/\\\\d{1,2}(:\\\\d{2})?\\\\s*(am|pm)/i.test(lines[1])) {
+                                    timeText = lines[1];
+                                }
+                            }
+                            description = lines.slice(2).join(' • ');
+                        }
+                        
+                        if (!title || title.length < 2) continue;
                         
                         // Extract Google Meet link if present
                         var meetLink = null;
@@ -393,7 +435,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
                         events.push({
                             id: eventId,
                             title: title,
-                            description: lines.slice(2).join(' • '),
+                            description: description,
                             timeText: timeText,
                             meetLink: meetLink,
                             location: meetLink ? 'Google Meet' : null,
@@ -408,12 +450,12 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
                             var r = agendaRows[j];
                             var rText = (r.innerText || r.textContent || '').trim();
                             if (rText && rText.length > 3) {
-                                var parts = rText.split('\\n').filter(Boolean);
+                                var rParts = rText.split('\\\\n').filter(Boolean);
                                 events.push({
                                     id: 'agenda_' + j,
-                                    title: parts[parts.length > 1 ? 1 : 0],
-                                    timeText: parts[0],
-                                    description: parts.slice(2).join(' • ')
+                                    title: rParts[rParts.length > 1 ? 1 : 0],
+                                    timeText: rParts[0],
+                                    description: rParts.slice(2).join(' • ')
                                 });
                             }
                         }
@@ -421,6 +463,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
                     
                     window.webkit.messageHandlers.\(kHandlerName).postMessage({
                         isSignedIn: signedIn,
+                        accountEmail: accountEmail,
                         events: events
                     });
                 } catch(e) {}
