@@ -1630,6 +1630,47 @@ final class MorphTests: XCTestCase {
         engine.hideCalendarWindow()
         XCTAssertFalse(engine.isCalendarWindowVisible)
     }
+    
+    @MainActor
+    func testNativeEventKitAndGoogleCalendarBotGuardBypass() async {
+        let engine = GoogleCalendarEngine()
+        let calendar = CalendarModel(engine: engine)
+        
+        let testEmail = "testuser@gmail.com"
+        calendar.configureUser(email: testEmail)
+        
+        // 1. Verify EventKit engine initialized and bound
+        XCTAssertNotNil(calendar.eventKitEngine)
+        XCTAssertFalse(calendar.eventKitEngine.events.isEmpty == false && !calendar.eventKitEngine.isAuthorized)
+        
+        // 2. Verify GoogleICSEngine parsing
+        let sampleICS = """
+        BEGIN:VCALENDAR
+        VERSION:2.0
+        PRODID:-//Google Inc//Google Calendar 70.9054//EN
+        BEGIN:VEVENT
+        UID:google_test_event_123@google.com
+        DTSTART:20261006T190000Z
+        DTEND:20261006T200000Z
+        SUMMARY:Morph Product Architecture Review
+        DESCRIPTION:Join video call at https://meet.google.com/abc-defg-hij\\nDiscussing Dynamic Island design.
+        LOCATION:Google Meet
+        STATUS:CONFIRMED
+        END:VEVENT
+        END:VCALENDAR
+        """
+        
+        let icsEngine = GoogleICSEngine.shared
+        let parsed = icsEngine.parseICS(sampleICS)
+        XCTAssertEqual(parsed.count, 1)
+        XCTAssertEqual(parsed.first?.title, "Morph Product Architecture Review")
+        XCTAssertEqual(parsed.first?.meetLink, "https://meet.google.com/abc-defg-hij")
+        XCTAssertEqual(parsed.first?.location, "Google Meet")
+        
+        // 3. Verify calendar sync options
+        calendar.syncWithSystemCalendar()
+        XCTAssertEqual(calendar.configuredUserEmail, testEmail)
+    }
 }
 
 

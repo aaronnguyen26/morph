@@ -102,55 +102,71 @@ public struct CalendarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             
-            // Google Calendar Sync & Sign In Pill (SSO synced from profile email)
-            HStack(spacing: 4) {
-                Button(action: { calendar.signInWithGoogle() }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(calendar.isSignedIn ? Color.green : Color.orange)
-                            .frame(width: 4.5, height: 4.5)
-                        if let email = calendar.configuredUserEmail, !email.isEmpty {
-                            Text(email)
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.85))
-                                .lineLimit(1)
-                        } else {
-                            Text(calendar.isSignedIn ? "Google Calendar" : "Sign In with Google")
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.75))
+            // Calendar Sync Options (Native macOS EventKit + Google Sync)
+            VStack(spacing: 4) {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(calendar.isSignedIn ? Color.green : Color.orange)
+                        .frame(width: 4.5, height: 4.5)
+                    if let email = calendar.configuredUserEmail, !email.isEmpty {
+                        Text(email)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.85))
+                            .lineLimit(1)
+                    } else {
+                        Text(calendar.isSignedIn ? "Google Calendar" : "Calendar Sync")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.75))
+                    }
+                    
+                    Spacer()
+                    
+                    Button(action: { calendar.syncWithGoogle() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
+                            .animation(calendar.isSyncing ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sync Google Calendar")
+                }
+                
+                HStack(spacing: 4) {
+                    // Native macOS Calendar Sync Button (zero Google blocks, reads synced Google account from Mac)
+                    Button(action: { calendar.syncWithSystemCalendar() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "applelogo")
+                                .font(.system(size: 7))
+                            Text("Sync Mac")
+                                .font(.system(size: 7.5, weight: .semibold))
                         }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
                     }
-                }
-                .buttonStyle(.plain)
-                .help("Open Google Calendar / Sign In")
-                
-                Spacer()
-                
-                Button(action: { calendar.signInWithGoogle() }) {
-                    HStack(spacing: 2.5) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 7, weight: .bold))
-                        Text("Sign In")
-                            .font(.system(size: 7.5, weight: .bold))
+                    .buttonStyle(.plain)
+                    .help("Sync from macOS Calendar (System Settings > Google)")
+                    
+                    // Sign In in Browser Button (Google approved, never blocked by BotGuard)
+                    Button(action: { calendar.signInWithGoogle() }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "safari")
+                                .font(.system(size: 7))
+                            Text("Browser ↗")
+                                .font(.system(size: 7.5, weight: .semibold))
+                        }
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.cyan.opacity(0.15))
+                        .clipShape(Capsule())
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
+                    .help("Sign in via Safari/Chrome (bypasses Google browser check)")
                 }
-                .buttonStyle(.plain)
-                .help("Sign In to Google Calendar")
-                
-                Button(action: { calendar.syncWithGoogle() }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 7.5))
-                        .foregroundColor(Color.white.opacity(0.6))
-                        .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
-                        .animation(calendar.isSyncing ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
-                }
-                .buttonStyle(.plain)
-                .help("Sync Google Calendar")
             }
             .padding(.top, 1)
         }
@@ -301,20 +317,39 @@ public struct CalendarView: View {
                         .font(.system(size: 8.5, weight: .medium))
                         .foregroundColor(Color.white.opacity(0.55))
                     
-                    Button(action: { calendar.signInWithGoogle() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 7.5, weight: .bold))
-                            Text("Sign In / Sync Google")
-                                .font(.system(size: 8, weight: .bold))
+                    HStack(spacing: 6) {
+                        Button(action: { calendar.syncWithSystemCalendar() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "applelogo")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                Text("Sync Mac Calendar")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Color.white)
+                            .clipShape(Capsule())
                         }
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3.5)
-                        .background(Color.white)
-                        .clipShape(Capsule())
+                        .buttonStyle(.plain)
+                        .help("Sync directly from macOS Calendar (supports all Google accounts)")
+                        
+                        Button(action: { calendar.signInWithGoogle() }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "safari")
+                                    .font(.system(size: 7.5))
+                                Text("Browser ↗")
+                                    .font(.system(size: 8, weight: .semibold))
+                            }
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3.5)
+                            .background(Color.cyan.opacity(0.15))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Sign in via Safari or Chrome")
                     }
-                    .buttonStyle(.plain)
                     .padding(.top, 2)
                     
                     Spacer(minLength: 8)

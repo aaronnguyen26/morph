@@ -52,6 +52,10 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Morph accesses your calendar to display upcoming meetings and events directly in the Dynamic Notch.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Morph accesses your calendar to display upcoming meetings and events directly in the Dynamic Notch.</string>
 </dict>
 </plist>
 EOF

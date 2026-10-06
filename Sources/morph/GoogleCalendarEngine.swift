@@ -224,11 +224,12 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
         container.autoresizingMask = [.width, .height]
         
+        let toolbarHeight: CGFloat = 70
         let toolbarView = NSHostingView(rootView: CalendarWindowToolbarView(engine: self))
-        toolbarView.frame = NSRect(x: 0, y: 760 - 42, width: 1100, height: 42)
+        toolbarView.frame = NSRect(x: 0, y: 760 - toolbarHeight, width: 1100, height: toolbarHeight)
         toolbarView.autoresizingMask = [.width, .minYMargin]
         
-        self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - 42)
+        self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - toolbarHeight)
         self.webView.autoresizingMask = [.width, .height]
         
         container.addSubview(self.webView)
@@ -633,6 +634,21 @@ public struct CalendarWindowToolbarView: View {
     }
     
     public var body: some View {
+        VStack(spacing: 0) {
+            toolbarRow
+            securityNoticeRow
+        }
+        .frame(height: 70)
+        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+        .overlay(
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+    
+    private var toolbarRow: some View {
         HStack(spacing: 10) {
             HStack(spacing: 4) {
                 Button(action: { if engine.webView.canGoBack { engine.webView.goBack() } }) {
@@ -790,13 +806,44 @@ public struct CalendarWindowToolbarView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 42)
-        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
-        .overlay(
-            Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(height: 1),
-            alignment: .bottom
-        )
+    }
+    
+    private var securityNoticeRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 9.5))
+                .foregroundColor(.orange)
+            
+            Text("If Google blocks embedded sign-in (\"not secure\"), sign in via your system browser:")
+                .font(.system(size: 10, weight: .regular))
+                .foregroundColor(.white.opacity(0.75))
+            
+            Button(action: {
+                engine.openGoogleCalendarInBrowser()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "safari")
+                        .font(.system(size: 9.5))
+                    Text("Open Safari / Chrome ↗")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(.cyan)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2.5)
+                .background(Color.cyan.opacity(0.15))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
+            
+            Text("Or sync macOS Calendar directly")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundColor(.white.opacity(0.5))
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 28)
+        .background(Color.black.opacity(0.25))
     }
 }
 

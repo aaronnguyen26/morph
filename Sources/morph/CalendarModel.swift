@@ -14,11 +14,19 @@ public final class CalendarModel: ObservableObject {
     @Published public var isSignedIn: Bool = false
     
     public let engine: GoogleCalendarEngine
+    public let eventKitEngine: EventKitCalendarEngine
+    public let icsEngine: GoogleICSEngine
     private var cancellables = Set<AnyCancellable>()
     private var alertTimer: AnyCancellable?
     
-    public init(engine: GoogleCalendarEngine = GoogleCalendarEngine.shared) {
+    public init(
+        engine: GoogleCalendarEngine = GoogleCalendarEngine.shared,
+        eventKitEngine: EventKitCalendarEngine = EventKitCalendarEngine.shared,
+        icsEngine: GoogleICSEngine = GoogleICSEngine.shared
+    ) {
         self.engine = engine
+        self.eventKitEngine = eventKitEngine
+        self.icsEngine = icsEngine
         loadInitialMockEvents()
         setupEngineObservers()
         startAlertWatcher()
@@ -45,6 +53,26 @@ public final class CalendarModel: ObservableObject {
                     self.evaluateUpcomingAlerts()
                 } else if !newEvents.isEmpty {
                     self.events = newEvents
+                    self.evaluateUpcomingAlerts()
+                }
+            }
+            .store(in: &cancellables)
+            
+        eventKitEngine.$events
+            .sink { [weak self] ekEvents in
+                guard let self = self else { return }
+                if !ekEvents.isEmpty && (self.events.isEmpty || self.configuredUserEmail != nil) {
+                    self.events = ekEvents
+                    self.evaluateUpcomingAlerts()
+                }
+            }
+            .store(in: &cancellables)
+            
+        icsEngine.$events
+            .sink { [weak self] icsEvents in
+                guard let self = self else { return }
+                if !icsEvents.isEmpty && self.events.isEmpty {
+                    self.events = icsEvents
                     self.evaluateUpcomingAlerts()
                 }
             }
@@ -140,10 +168,45 @@ public final class CalendarModel: ObservableObject {
     
     public func syncWithGoogle() {
         engine.refresh()
+        if eventKitEngine.isAuthorized {
+            let ek = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+            if !ek.isEmpty {
+                self.events = ek
+                self.evaluateUpcomingAlerts()
+            }
+        }
+        if let feed = icsEngine.feedURL {
+            Task { await icsEngine.sync(feedURL: feed) }
+        }
     }
     
     public func signInWithGoogle() {
-        engine.loadGoogleSignIn()
+        // 1. Open the user's default system browser (Safari / Chrome) for reliable login without embedded WebKit block
+        engine.openGoogleCalendarInBrowser()
+        // 2. Also prompt native macOS Calendar authorization to sync seamlessly
+        Task {
+            await syncWithSystemCalendarAsync()
+        }
+        // 3. Bring up calendar window for viewing
+        engine.showCalendarWindow()
+    }
+    
+    public func syncWithSystemCalendar() {
+        Task {
+            await syncWithSystemCalendarAsync()
+        }
+    }
+    
+    public func syncWithSystemCalendarAsync() async {
+        let granted = await eventKitEngine.requestAccess()
+        if granted {
+            let ek = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+            if !ek.isEmpty {
+                self.events = ek
+                self.isSignedIn = true
+                self.evaluateUpcomingAlerts()
+            }
+        }
     }
     
     public func openGoogleCalendar() {
