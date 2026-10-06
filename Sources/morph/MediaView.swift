@@ -352,19 +352,90 @@ public struct MediaView: View {
                 playlistsSearchBar
             }
             
-            ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(spacing: 4) {
-                    // Quick Entry: Now Playing Live Queue
-                    nowPlayingQueueCardRow
-                    
-                    // List of Available Playlists
-                    ForEach(media.filteredPlaylists) { playlist in
-                        playlistCardRow(playlist: playlist)
-                    }
+            if media.isLoadingPlaylists {
+                VStack(spacing: 8) {
+                    Spacer(minLength: 12)
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .colorScheme(.dark)
+                    Text("Syncing your YouTube Music playlists...")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.6))
+                    Spacer(minLength: 12)
                 }
-                .padding(.trailing, 2)
+                .frame(maxWidth: .infinity, maxHeight: media.isSearchingPlaylists ? 116 : 138)
+            } else if media.playlists.isEmpty {
+                VStack(spacing: 6) {
+                    Spacer(minLength: 10)
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color.white.opacity(0.35))
+                    Text("No YouTube Music Playlists Found")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.85))
+                    Text("Sign in to YouTube Music to access your real playlists and library.")
+                        .font(.system(size: 8, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                    
+                    HStack(spacing: 6) {
+                        Button(action: {
+                            media.openPlayerWindow()
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "person.crop.circle.badge.plus")
+                                    .font(.system(size: 8.5))
+                                Text("Sign In")
+                                    .font(.system(size: 8.5, weight: .bold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Color.white.opacity(0.14))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            media.refreshPlaylists()
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 8))
+                                Text("Sync")
+                                    .font(.system(size: 8.5, weight: .medium))
+                            }
+                            .foregroundColor(Color.white.opacity(0.8))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3.5)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.top, 2)
+                    
+                    Spacer(minLength: 8)
+                }
+                .frame(maxWidth: .infinity, maxHeight: media.isSearchingPlaylists ? 116 : 138)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 4) {
+                        // Quick Entry: Now Playing Live Queue (only if queue has real items)
+                        if !media.effectivePlaylist.isEmpty {
+                            nowPlayingQueueCardRow
+                        }
+                        
+                        // List of Real Available Playlists
+                        ForEach(media.filteredPlaylists) { playlist in
+                            playlistCardRow(playlist: playlist)
+                        }
+                    }
+                    .padding(.trailing, 2)
+                }
+                .frame(maxHeight: media.isSearchingPlaylists ? 116 : 138)
             }
-            .frame(maxHeight: media.isSearchingPlaylists ? 116 : 138)
         }
     }
     

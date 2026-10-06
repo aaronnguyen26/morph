@@ -739,6 +739,75 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
+    public func fetchRealUserPlaylists() {
+        let script = """
+        (function() {
+            // InnerTube API Query for User Library Playlists
+            try {
+                if (window.ytcfg && typeof window.ytcfg.get === 'function') {
+                    var context = window.ytcfg.get('INNERTUBE_CONTEXT');
+                    var apiKey = window.ytcfg.get('INNERTUBE_API_KEY');
+                    if (context) {
+                        var body = {
+                            context: context,
+                            browseId: 'FEmusic_library_playlists'
+                        };
+                        var url = '/youtubei/v1/browse' + (apiKey ? ('?key=' + apiKey) : '');
+                        fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        })
+                        .then(function(res) { return res.json(); })
+                        .then(function(data) {
+                            var extracted = [];
+                            try {
+                                var section = data.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.gridRenderer?.items ||
+                                              data.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer?.contents?.[0]?.gridRenderer?.items || [];
+                                for (var i = 0; i < section.length; i++) {
+                                    var card = section[i].musicTwoRowItemRenderer;
+                                    if (card) {
+                                        var title = card.title?.runs?.[0]?.text || '';
+                                        var sub = card.subtitle?.runs?.map(function(r) { return r.text; }).join('') || '';
+                                        var browseId = card.navigationEndpoint?.browseEndpoint?.browseId || '';
+                                        var listId = card.navigationEndpoint?.watchEndpoint?.playlistId || '';
+                                        if (!listId && browseId.indexOf('VL') === 0) {
+                                            listId = browseId.substring(2);
+                                        }
+                                        var thumbs = card.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails;
+                                        var thumb = (thumbs && thumbs.length > 0) ? thumbs[thumbs.length - 1].url : null;
+                                        if (title && (listId || browseId)) {
+                                            extracted.push({
+                                                id: listId || browseId,
+                                                title: title,
+                                                subtitle: sub,
+                                                thumbnailURL: thumb,
+                                                browseId: browseId
+                                            });
+                                        }
+                                    }
+                                }
+                            } catch(e) {}
+                            if (extracted.length > 0) {
+                                var currentData = (typeof getTrackInfo === 'function') ? getTrackInfo() : {};
+                                currentData.playlists = extracted;
+                                window.webkit.messageHandlers.\(kHandlerName).postMessage(currentData);
+                            }
+                        })
+                        .catch(function(err) {});
+                    }
+                }
+            } catch(e) {}
+            
+            // Also trigger immediate DOM scraping update
+            if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate();
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
     public func fetchTracksFromCurrentPage() {
         let script = """
         (function() {
