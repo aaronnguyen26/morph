@@ -126,6 +126,14 @@ public struct MorphIslandView: View {
                 )
             )
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    onMouseEnter()
+                } else {
+                    onMouseExit()
+                }
+            }
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isCompactActive)
             .animation(.spring(response: 0.3, dampingFraction: 0.78), value: model.selectedTab)
@@ -133,13 +141,6 @@ public struct MorphIslandView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onHover { hovering in
-            if hovering {
-                onMouseEnter()
-            } else {
-                onMouseExit()
-            }
-        }
     }
     
     // MARK: - 1. Idle Flush Notch View (Smooth border radius, no sharp corners)

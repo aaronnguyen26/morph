@@ -833,6 +833,72 @@ final class MorphTests: XCTestCase {
         let notchModel = NotchModel(media: media)
         XCTAssertNotNil(notchModel)
     }
+    
+    @MainActor
+    func testHoverExpansionAndCollapseSensitivity() {
+        let model = NotchModel()
+        let controller = MorphController(model: model)
+        
+        let screen = NSScreen.screens.first(where: { $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens[0]
+        let midX = screen.frame.midX
+        let maxY = screen.frame.maxY
+        
+        // 1. Collapsed State Geometry Verification
+        model.isExpanded = false
+        XCTAssertFalse(model.isExpanded)
+        let collapsedRect = controller.activeUIRect()
+        XCTAssertEqual(collapsedRect.width, model.currentWidth)
+        XCTAssertEqual(collapsedRect.height, model.currentHeight)
+        XCTAssertEqual(collapsedRect.midX, midX, accuracy: 1.0)
+        XCTAssertEqual(collapsedRect.maxY, maxY, accuracy: 1.0)
+        
+        // 2. Sensitive Hit Testing When Collapsed
+        // Direct center inside notch
+        let insideNotchPoint = NSPoint(x: midX, y: maxY - (model.currentHeight / 2))
+        XCTAssertTrue(controller.isMouseInsideMorphUI(insideNotchPoint), "Cursor directly inside notch must be recognized")
+        
+        // Ergonomic margin just 2pt below the notch
+        let nearNotchPoint = NSPoint(x: midX, y: maxY - model.currentHeight - 2)
+        XCTAssertTrue(controller.isMouseInsideMorphUI(nearNotchPoint), "Cursor grazing bottom of notch must be recognized")
+        
+        // Clearly outside and far below notch
+        let farBelowPoint = NSPoint(x: midX, y: maxY - 150)
+        XCTAssertFalse(controller.isMouseInsideMorphUI(farBelowPoint), "Cursor far below notch must NOT be in notch UI space")
+        
+        // Far to the left/right of notch
+        let farLeftPoint = NSPoint(x: midX - 300, y: maxY - 10)
+        XCTAssertFalse(controller.isMouseInsideMorphUI(farLeftPoint), "Cursor far left of notch must NOT be in notch UI space")
+        
+        // 3. Hover Enter Triggers Expansion
+        controller.checkMousePosition(insideNotchPoint)
+        XCTAssertTrue(model.isExpanded, "Hovering over notch must trigger expansion")
+        XCTAssertTrue(model.isHovered, "Model isHovered flag must be true")
+        
+        // 4. Expanded State Geometry & Boundary Hit Testing
+        let expandedRect = controller.activeUIRect()
+        XCTAssertEqual(expandedRect.width, model.expandedWidth)
+        XCTAssertEqual(expandedRect.height, model.expandedHeight)
+        
+        let insideExpandedPoint = NSPoint(x: midX, y: maxY - (model.expandedHeight / 2))
+        XCTAssertTrue(controller.isMouseInsideMorphUI(insideExpandedPoint), "Cursor inside expanded island must be recognized")
+        
+        // Cursor moved outside expanded island
+        let outsideExpandedPoint = NSPoint(x: midX, y: maxY - model.expandedHeight - 50)
+        XCTAssertFalse(controller.isMouseInsideMorphUI(outsideExpandedPoint), "Cursor below expanded island must be outside")
+        
+        // 5. Hover Exit Initiates Collapse
+        controller.checkMousePosition(outsideExpandedPoint)
+        // If pinned, cursor exit must NOT collapse
+        model.isPinned = true
+        controller.handleMouseExit()
+        XCTAssertTrue(model.isExpanded, "Pinned island must not collapse on mouse exit")
+        
+        model.isPinned = false
+        // Re-entering UI space during debounce cancels collapse
+        controller.handleMouseExit()
+        controller.checkMousePosition(insideExpandedPoint)
+        XCTAssertTrue(model.isHovered, "Re-entering must cancel collapse work item and restore hover state")
+    }
 }
 
 
