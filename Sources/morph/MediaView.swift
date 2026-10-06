@@ -34,12 +34,72 @@ public struct MediaView: View {
     
     // MARK: - Left Deck (Now Playing Engine)
     private var nowPlayingDeck: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             albumArtAndMetadataRow
+            
+            if isSearching {
+                songSearchBar
+            }
+            
             timelineScrubberRow
             transportControlsRow
             volumeControlRow
         }
+    }
+    
+    // Song Search Bar
+    private var songSearchBar: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 8.5))
+                .foregroundColor(Color.white.opacity(0.6))
+            
+            TextField("Search song or artist...", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                .foregroundColor(.white)
+                .onSubmit {
+                    let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        media.playSearch(trimmed)
+                    }
+                }
+            
+            if !searchQuery.isEmpty {
+                Button(action: {
+                    searchQuery = ""
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(Color.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+            
+            Button(action: {
+                let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    media.playSearch(trimmed)
+                }
+            }) {
+                Text("Search")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3.5)
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
     }
     
     // 1. Album Art & Metadata
@@ -95,7 +155,22 @@ public struct MediaView: View {
     }
     
     private var trackActionPills: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    isSearching.toggle()
+                }
+            }) {
+                Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
+                    .font(.system(size: 9))
+                    .foregroundColor(isSearching ? Color.white : Color.white.opacity(0.7))
+                    .frame(width: 20, height: 20)
+                    .background(isSearching ? Color.white.opacity(0.25) : Color.white.opacity(0.08))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(isSearching ? "Close Search" : "Search YouTube Music Songs")
+            
             Button(action: {
                 media.toggleLike()
             }) {

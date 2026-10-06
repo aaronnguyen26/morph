@@ -75,6 +75,11 @@ public final class MediaControllerModel: ObservableObject {
                         } else {
                             self.nextTrack()
                         }
+                    } else if self.isDirectEngineConnected {
+                        // Watchdog auto-advance: if playback finishes and engine is at duration end
+                        if self.duration > 0 && self.currentTime >= (self.duration - 0.5) {
+                            self.nextTrack()
+                        }
                     }
                 }
             }

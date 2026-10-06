@@ -1525,6 +1525,27 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 } catch(e) {}
             };
             
+            function triggerNextVideo() {
+                try {
+                    var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                    if (p && typeof p.nextVideo === 'function') {
+                        p.nextVideo();
+                    } else {
+                        var btn = document.querySelector('.next-button') || 
+                                  document.querySelector('#right-controls .next-button') || 
+                                  document.querySelector('ytmusic-player-bar .next-button') ||
+                                  document.querySelector('tp-yt-paper-icon-button.next-button') ||
+                                  document.querySelector('[aria-label*="Next" i]') ||
+                                  document.querySelector('[aria-label*="tiếp" i]');
+                        if (btn) {
+                            btn.click();
+                            var inner = btn.querySelector('button, #button, yt-icon');
+                            if (inner) inner.click();
+                        }
+                    }
+                } catch(e) {}
+            }
+            
             function attachVideoListeners() {
                 var v = document.querySelector('video');
                 if (v && !v._morphListeners) {
@@ -1533,6 +1554,27 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         v.addEventListener(evt, function() {
                             window.morphSendUpdate();
                         });
+                    });
+                    
+                    // Auto-advance to next song immediately when current track ends
+                    v.addEventListener('ended', function() {
+                        window.morphSendUpdate();
+                        setTimeout(function() {
+                            triggerNextVideo();
+                        }, 250);
+                    });
+                    
+                    // Safety check: if playback reaches the very end (< 0.5s remaining) and is not advancing
+                    v.addEventListener('timeupdate', function() {
+                        if (v.duration > 3 && v.currentTime >= (v.duration - 0.4) && !v._morphAutoAdvancing) {
+                            v._morphAutoAdvancing = true;
+                            setTimeout(function() {
+                                if (v.ended || v.currentTime >= (v.duration - 0.5)) {
+                                    triggerNextVideo();
+                                }
+                                setTimeout(function() { v._morphAutoAdvancing = false; }, 3000);
+                            }, 500);
+                        }
                     });
                 }
             }

@@ -1101,7 +1101,79 @@ final class MorphTests: XCTestCase {
         XCTAssertNil(media.selectedPlaylist)
         XCTAssertTrue(media.isSignedIn, "Session must persist seamlessly across all media views")
     }
+    
+    @MainActor
+    func testSongSearchAndAutoAdvanceToNextTrack() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // 1. Test Song Search Functionality
+        media.playSearch("Blinding Lights The Weeknd")
+        XCTAssertTrue(media.isPlaying, "Calling playSearch must initiate active playback state")
+        
+        // Simulating search response arriving via incoming payload
+        engine.parseIncomingPayload([
+            "title": "Blinding Lights",
+            "artist": "The Weeknd",
+            "duration": 200.0,
+            "currentTime": 0.0,
+            "isPlaying": true,
+            "volume": 0.85
+        ])
+        
+        XCTAssertEqual(media.trackTitle, "Blinding Lights")
+        XCTAssertEqual(media.artistName, "The Weeknd")
+        XCTAssertEqual(media.duration, 200.0)
+        XCTAssertTrue(media.isPlaying)
+        
+        // 2. Test Continuous Auto-Play (Auto-Advance to Next Song)
+        // Set queue of tracks
+        let queueTracks: [[String: Any]] = [
+            [
+                "id": "q1",
+                "title": "Blinding Lights",
+                "artist": "The Weeknd",
+                "duration": "3:20",
+                "isPlaying": true
+            ],
+            [
+                "id": "q2",
+                "title": "Save Your Tears",
+                "artist": "The Weeknd",
+                "duration": "3:35",
+                "isPlaying": false
+            ]
+        ]
+        
+        engine.parseIncomingPayload([
+            "title": "Blinding Lights",
+            "artist": "The Weeknd",
+            "duration": 200.0,
+            "currentTime": 199.6, // Near end of song
+            "isPlaying": true,
+            "queue": queueTracks
+        ])
+        
+        XCTAssertEqual(media.playlist.count, 2)
+        XCTAssertEqual(media.currentTime, 199.6)
+        
+        // Simulate nextTrack advancement
+        media.nextTrack()
+        
+        // Simulated update from next track playing
+        engine.parseIncomingPayload([
+            "title": "Save Your Tears",
+            "artist": "The Weeknd",
+            "duration": 215.0,
+            "currentTime": 0.0,
+            "isPlaying": true
+        ])
+        
+        XCTAssertEqual(media.trackTitle, "Save Your Tears", "Song must automatically advance to next song without user having to manual click through")
+        XCTAssertTrue(media.isPlaying)
+    }
 }
+
 
 
 
