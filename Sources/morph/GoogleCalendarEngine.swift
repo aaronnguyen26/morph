@@ -243,6 +243,11 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
     
     public func showCalendarWindow() {
         let win = ensureCalendarWindow()
+        if let email = configuredUserEmail, !email.isEmpty {
+            win.title = "Google Calendar — Morph (\(email))"
+        } else {
+            win.title = "Google Calendar — Morph Engine"
+        }
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.isCalendarWindowVisible = true

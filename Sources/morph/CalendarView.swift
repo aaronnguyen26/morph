@@ -129,7 +129,7 @@ public struct CalendarView: View {
                             .animation(calendar.isSyncing ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
                     }
                     .buttonStyle(.plain)
-                    .help("Sync Google Calendar")
+                    .help("Sync Google & Mac Calendar")
                 }
                 
                 HStack(spacing: 4) {
@@ -138,17 +138,34 @@ public struct CalendarView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "applelogo")
                                 .font(.system(size: 7))
-                            Text("Sync Mac")
+                            Text(calendar.eventKitEngine.isAuthorized ? "Mac Synced" : "Sync Mac")
                                 .font(.system(size: 7.5, weight: .semibold))
                         }
                         .foregroundColor(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.12))
+                        .background(calendar.eventKitEngine.isAuthorized ? Color.green.opacity(0.18) : Color.white.opacity(0.12))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help("Sync from macOS Calendar (System Settings > Google)")
+                    .help("Sync from macOS Calendar app")
+                    
+                    // Add Google to Mac helper
+                    Button(action: { calendar.openInternetAccountsSettings() }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "gear")
+                                .font(.system(size: 7))
+                            Text("Mac Setup")
+                                .font(.system(size: 7.5, weight: .semibold))
+                        }
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open Mac System Settings to add Google Account to Calendar")
                     
                     // Sign In in Browser Button (Google approved, never blocked by BotGuard)
                     Button(action: { calendar.signInWithGoogle() }) {
@@ -242,21 +259,40 @@ public struct CalendarView: View {
                 
                 Spacer()
                 
-                Button(action: { calendar.signInWithGoogle() }) {
+                if calendar.isSignedIn {
                     HStack(spacing: 3) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 7.5, weight: .bold))
-                        Text("Sign In")
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 4, height: 4)
+                        Text("Active")
                             .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
                     }
-                    .foregroundColor(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2.5)
-                    .background(Color.blue.opacity(0.35))
+                    .background(Color.green.opacity(0.18))
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.green.opacity(0.3), lineWidth: 0.5)
+                    )
+                } else {
+                    Button(action: { calendar.signInWithGoogle() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .font(.system(size: 7.5, weight: .bold))
+                            Text("Sign In")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.blue.opacity(0.35))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sign In to Google Calendar")
                 }
-                .buttonStyle(.plain)
-                .help("Sign In to Google Calendar")
                 
                 Button(action: { isAddingEvent.toggle() }) {
                     HStack(spacing: 3) {
@@ -313,9 +349,16 @@ public struct CalendarView: View {
                     Image(systemName: "calendar.badge.clock")
                         .font(.system(size: 16))
                         .foregroundColor(Color.white.opacity(0.3))
-                    Text(calendar.events.isEmpty ? "No Google Calendar events loaded" : "No events scheduled for this day")
-                        .font(.system(size: 8.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.55))
+                    
+                    if let email = calendar.configuredUserEmail, !email.isEmpty {
+                        Text(calendar.events.isEmpty ? "No events found for \(email)" : "No events scheduled for this day")
+                            .font(.system(size: 8.5, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.55))
+                    } else {
+                        Text(calendar.events.isEmpty ? "No Google Calendar events loaded" : "No events scheduled for this day")
+                            .font(.system(size: 8.5, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.55))
+                    }
                     
                     HStack(spacing: 6) {
                         Button(action: { calendar.syncWithSystemCalendar() }) {
@@ -332,7 +375,23 @@ public struct CalendarView: View {
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .help("Sync directly from macOS Calendar (supports all Google accounts)")
+                        .help("Sync directly from macOS Calendar (reads Google accounts connected in Mac)")
+                        
+                        Button(action: { calendar.openInternetAccountsSettings() }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "gearshape.fill")
+                                    .font(.system(size: 7))
+                                Text("Mac Settings")
+                                    .font(.system(size: 8, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3.5)
+                            .background(Color.white.opacity(0.12))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open System Settings > Internet Accounts to link Google account")
                         
                         Button(action: { calendar.signInWithGoogle() }) {
                             HStack(spacing: 3) {
@@ -348,7 +407,7 @@ public struct CalendarView: View {
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .help("Sign in via Safari or Chrome")
+                        .help("Open Google Calendar in Safari or Chrome")
                     }
                     .padding(.top, 2)
                     

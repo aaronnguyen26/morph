@@ -4,7 +4,14 @@ import SwiftUI
 
 @MainActor
 public final class CalendarModel: ObservableObject {
-    @Published public var selectedDate: Date = Date()
+    @Published public var selectedDate: Date = Date() {
+        didSet {
+            if eventKitEngine.isAuthorized {
+                _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+                mergeAllEvents()
+            }
+        }
+    }
     @Published public var displayedMonth: Date = Date()
     @Published public var events: [CalendarEvent] = []
     @Published public var isSyncing: Bool = false
@@ -19,17 +26,51 @@ public final class CalendarModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var alertTimer: AnyCancellable?
     
+    private static var isTestingEnvironment: Bool {
+        return ProcessInfo.processInfo.processName.contains("xctest") ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
+            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
+            NSClassFromString("XCTestCase") != nil
+    }
+    
     public init(
-        engine: GoogleCalendarEngine = GoogleCalendarEngine.shared,
-        eventKitEngine: EventKitCalendarEngine = EventKitCalendarEngine.shared,
-        icsEngine: GoogleICSEngine = GoogleICSEngine.shared
+        engine: GoogleCalendarEngine? = nil,
+        eventKitEngine: EventKitCalendarEngine? = nil,
+        icsEngine: GoogleICSEngine? = nil
     ) {
-        self.engine = engine
-        self.eventKitEngine = eventKitEngine
-        self.icsEngine = icsEngine
+        if let engine = engine {
+            self.engine = engine
+        } else if Self.isTestingEnvironment {
+            self.engine = GoogleCalendarEngine()
+        } else {
+            self.engine = GoogleCalendarEngine.shared
+        }
+        
+        if let ek = eventKitEngine {
+            self.eventKitEngine = ek
+        } else if Self.isTestingEnvironment {
+            self.eventKitEngine = EventKitCalendarEngine()
+        } else {
+            self.eventKitEngine = EventKitCalendarEngine.shared
+        }
+        
+        if let ics = icsEngine {
+            self.icsEngine = ics
+        } else if Self.isTestingEnvironment {
+            self.icsEngine = GoogleICSEngine()
+        } else {
+            self.icsEngine = GoogleICSEngine.shared
+        }
+        
         loadInitialMockEvents()
         setupEngineObservers()
         startAlertWatcher()
+        
+        if self.eventKitEngine.isAuthorized && !Self.isTestingEnvironment {
+            _ = self.eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+            mergeAllEvents()
+        }
     }
     
     private func setupEngineObservers() {
@@ -38,7 +79,12 @@ public final class CalendarModel: ObservableObject {
             .store(in: &cancellables)
             
         engine.$isSignedIn
-            .assign(to: \.isSignedIn, on: self)
+            .sink { [weak self] signedIn in
+                guard let self = self else { return }
+                if signedIn || self.configuredUserEmail != nil {
+                    self.isSignedIn = true
+                }
+            }
             .store(in: &cancellables)
             
         engine.$configuredUserEmail
@@ -49,34 +95,93 @@ public final class CalendarModel: ObservableObject {
             .sink { [weak self] newEvents in
                 guard let self = self else { return }
                 if self.configuredUserEmail != nil {
-                    self.events = newEvents
-                    self.evaluateUpcomingAlerts()
+                    self.mergeAllEvents(overrideGoogleEvents: newEvents)
                 } else if !newEvents.isEmpty {
-                    self.events = newEvents
+                    self.mergeAllEvents(overrideGoogleEvents: newEvents)
+                } else {
+                    self.events = []
                     self.evaluateUpcomingAlerts()
                 }
             }
             .store(in: &cancellables)
             
         eventKitEngine.$events
-            .sink { [weak self] ekEvents in
+            .sink { [weak self] newEvents in
                 guard let self = self else { return }
-                if !ekEvents.isEmpty && (self.events.isEmpty || self.configuredUserEmail != nil) {
-                    self.events = ekEvents
-                    self.evaluateUpcomingAlerts()
+                if self.configuredUserEmail != nil {
+                    self.mergeAllEvents(overrideEventKitEvents: newEvents)
+                } else if !newEvents.isEmpty {
+                    self.mergeAllEvents(overrideEventKitEvents: newEvents)
                 }
             }
             .store(in: &cancellables)
             
         icsEngine.$events
-            .sink { [weak self] icsEvents in
+            .sink { [weak self] newEvents in
                 guard let self = self else { return }
-                if !icsEvents.isEmpty && self.events.isEmpty {
-                    self.events = icsEvents
-                    self.evaluateUpcomingAlerts()
+                if self.configuredUserEmail != nil {
+                    self.mergeAllEvents(overrideICSEvents: newEvents)
+                } else if !newEvents.isEmpty {
+                    self.mergeAllEvents(overrideICSEvents: newEvents)
                 }
             }
             .store(in: &cancellables)
+    }
+    
+    public func mergeAllEvents(
+        overrideGoogleEvents: [CalendarEvent]? = nil,
+        overrideEventKitEvents: [CalendarEvent]? = nil,
+        overrideICSEvents: [CalendarEvent]? = nil
+    ) {
+        var combined: [CalendarEvent] = []
+        var seenIDs = Set<String>()
+        
+        func isAlreadyIncluded(_ evt: CalendarEvent) -> Bool {
+            if seenIDs.contains(evt.id) { return true }
+            return combined.contains { existing in
+                existing.title.lowercased() == evt.title.lowercased() &&
+                abs(existing.startTime.timeIntervalSince(evt.startTime)) < 90
+            }
+        }
+        
+        let googleEvents = overrideGoogleEvents ?? engine.rawEvents
+        let ekEvents = overrideEventKitEvents ?? eventKitEngine.events
+        let ics = overrideICSEvents ?? icsEngine.events
+        
+        // 1. Ingest Google Calendar Engine events
+        for evt in googleEvents {
+            if !isAlreadyIncluded(evt) {
+                seenIDs.insert(evt.id)
+                combined.append(evt)
+            }
+        }
+        
+        // 2. Ingest native macOS EventKit events (includes Google Calendar if connected in macOS)
+        for evt in ekEvents {
+            if !isAlreadyIncluded(evt) {
+                seenIDs.insert(evt.id)
+                combined.append(evt)
+            }
+        }
+        
+        // 3. Ingest Google private ICS Feed events
+        for evt in ics {
+            if !isAlreadyIncluded(evt) {
+                seenIDs.insert(evt.id)
+                combined.append(evt)
+            }
+        }
+        
+        if configuredUserEmail != nil {
+            // Real profile user signed in: strictly show merged real events
+            self.events = combined.sorted(by: { $0.startTime < $1.startTime })
+        } else if !combined.isEmpty {
+            self.events = combined.sorted(by: { $0.startTime < $1.startTime })
+        } else {
+            self.events = []
+        }
+        
+        evaluateUpcomingAlerts()
     }
     
     public func configureUser(email: String) {
@@ -84,9 +189,15 @@ public final class CalendarModel: ObservableObject {
         guard !clean.isEmpty, clean.contains("@") else { return }
         self.configuredUserEmail = clean
         self.isSignedIn = true
-        // Clear mock events so real user Google Calendar data is exclusively displayed
-        self.events = self.engine.rawEvents
         engine.configureAccount(email: clean)
+        mergeAllEvents()
+        
+        // Seamlessly sync with native macOS Calendar (which connects to the user's Google Calendar)
+        if !Self.isTestingEnvironment {
+            Task {
+                await syncWithSystemCalendarAsync()
+            }
+        }
     }
     
     public func clearUser() {
@@ -96,6 +207,8 @@ public final class CalendarModel: ObservableObject {
         self.activeAlertEvent = nil
         self.showNotchAlert = false
         engine.clearAccount()
+        eventKitEngine.events = []
+        icsEngine.events = []
     }
 
     
@@ -109,6 +222,12 @@ public final class CalendarModel: ObservableObject {
     }
     
     public func evaluateUpcomingAlerts() {
+        if events.isEmpty {
+            self.showNotchAlert = false
+            self.activeAlertEvent = nil
+            return
+        }
+        
         let now = Date()
         let upcoming = events.filter { evt in
             let diff = evt.startTime.timeIntervalSince(now)
@@ -169,14 +288,16 @@ public final class CalendarModel: ObservableObject {
     public func syncWithGoogle() {
         engine.refresh()
         if eventKitEngine.isAuthorized {
-            let ek = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
-            if !ek.isEmpty {
-                self.events = ek
-                self.evaluateUpcomingAlerts()
-            }
+            _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+            mergeAllEvents()
         }
         if let feed = icsEngine.feedURL {
-            Task { await icsEngine.sync(feedURL: feed) }
+            Task {
+                _ = await icsEngine.sync(feedURL: feed)
+                await MainActor.run {
+                    self.mergeAllEvents()
+                }
+            }
         }
     }
     
@@ -200,12 +321,9 @@ public final class CalendarModel: ObservableObject {
     public func syncWithSystemCalendarAsync() async {
         let granted = await eventKitEngine.requestAccess()
         if granted {
-            let ek = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
-            if !ek.isEmpty {
-                self.events = ek
-                self.isSignedIn = true
-                self.evaluateUpcomingAlerts()
-            }
+            _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+            self.isSignedIn = true
+            mergeAllEvents()
         }
     }
     
@@ -213,16 +331,40 @@ public final class CalendarModel: ObservableObject {
         engine.openGoogleCalendarInBrowser()
     }
     
+    public func openMacCalendarApp() {
+        eventKitEngine.openMacCalendarApp()
+    }
+    
+    public func openInternetAccountsSettings() {
+        eventKitEngine.openInternetAccountsSettings()
+    }
+    
     public func addQuickEvent(title: String, durationMinutes: Int = 30) {
         let start = Date().addingTimeInterval(3600) // 1 hour from now
         let end = start.addingTimeInterval(Double(durationMinutes * 60))
-        let newEvent = CalendarEvent(
+        
+        if eventKitEngine.isAuthorized,
+           let created = eventKitEngine.createEvent(
             title: title,
-            startTime: start,
-            endTime: end,
-            meetLink: "https://meet.google.com/new"
-        )
-        events.append(newEvent)
+            startDate: start,
+            endDate: end,
+            description: "Created via Morph Dynamic Notch",
+            location: "Morph Workspace",
+            url: URL(string: "https://meet.google.com/new"),
+            matchingEmail: configuredUserEmail
+           ) {
+            if !events.contains(where: { $0.id == created.id }) {
+                events.append(created)
+            }
+        } else {
+            let newEvent = CalendarEvent(
+                title: title,
+                startTime: start,
+                endTime: end,
+                meetLink: "https://meet.google.com/new"
+            )
+            events.append(newEvent)
+        }
         evaluateUpcomingAlerts()
     }
     

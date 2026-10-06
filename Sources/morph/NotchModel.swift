@@ -148,7 +148,7 @@ public final class NotchModel: ObservableObject {
         role: String? = nil,
         avatarImageBase64: String? = nil
     ) async -> Bool {
-        let (_, isFirstTime) = await supabase.signIn(
+        let (profile, isFirstTime) = await supabase.signIn(
             username: username,
             password: password,
             firstName: firstName,
@@ -156,6 +156,9 @@ public final class NotchModel: ObservableObject {
             role: role,
             avatarImageBase64: avatarImageBase64
         )
+        if profile.isAuthenticated {
+            calendar.configureUser(email: profile.email)
+        }
         return isFirstTime
     }
     

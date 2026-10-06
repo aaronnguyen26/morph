@@ -37,6 +37,27 @@ public final class EventKitCalendarEngine: ObservableObject {
         isSyncing = true
         defer { isSyncing = false }
         
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if #available(macOS 14.0, *) {
+            if status == .fullAccess {
+                updateAuthStatus()
+                _ = fetchEvents()
+                return true
+            } else if status == .denied || status == .restricted {
+                updateAuthStatus()
+                return false
+            }
+        } else {
+            if status == .authorized {
+                updateAuthStatus()
+                _ = fetchEvents()
+                return true
+            } else if status == .denied || status == .restricted {
+                updateAuthStatus()
+                return false
+            }
+        }
+        
         do {
             var granted = false
             if #available(macOS 14.0, *) {
@@ -74,16 +95,20 @@ public final class EventKitCalendarEngine: ObservableObject {
         defer { isSyncing = false }
         
         let cal = Calendar.current
-        let startOfDay = cal.startOfDay(for: date).addingTimeInterval(-86400 * 7) // past 7 days
-        let endOfDay = cal.date(byAdding: .day, value: 30, to: startOfDay) ?? date.addingTimeInterval(86400 * 30) // next 30 days
+        let startOfDay = min(cal.startOfDay(for: date).addingTimeInterval(-86400 * 7), cal.startOfDay(for: Date()).addingTimeInterval(-86400 * 7))
+        let endOfDay = max(cal.date(byAdding: .day, value: 35, to: startOfDay) ?? date.addingTimeInterval(86400 * 35), cal.date(byAdding: .day, value: 7, to: date) ?? date.addingTimeInterval(86400 * 7))
         
         let allCalendars = eventStore.calendars(for: .event)
         self.availableCalendars = allCalendars.map { "\($0.title) (\($0.source.title))" }
         
         var targetCalendars = allCalendars
         if let email = matchingEmail?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            let isGoogleEmail = email.contains("@gmail.com") || email.contains("@google.com")
             let matched = allCalendars.filter { c in
-                c.title.lowercased().contains(email) || c.source.title.lowercased().contains(email)
+                let titleMatch = c.title.lowercased().contains(email)
+                let sourceMatch = c.source.title.lowercased().contains(email)
+                let googleMatch = isGoogleEmail && (c.source.title.lowercased().contains("google") || c.source.title.lowercased().contains("gmail"))
+                return titleMatch || sourceMatch || googleMatch
             }
             if !matched.isEmpty {
                 targetCalendars = matched
@@ -138,6 +163,77 @@ public final class EventKitCalendarEngine: ObservableObject {
         self.events = parsed
         self.lastSyncDate = Date()
         return parsed
+    }
+    
+    @discardableResult
+    public func createEvent(
+        title: String,
+        startDate: Date,
+        endDate: Date,
+        description: String? = nil,
+        location: String? = nil,
+        url: URL? = nil,
+        matchingEmail: String? = nil
+    ) -> CalendarEvent? {
+        updateAuthStatus()
+        guard isAuthorized else { return nil }
+        
+        let ek = EKEvent(eventStore: eventStore)
+        ek.title = title
+        ek.startDate = startDate
+        ek.endDate = endDate
+        ek.notes = description
+        ek.location = location
+        ek.url = url
+        
+        let allCalendars = eventStore.calendars(for: .event)
+        var targetCalendar = eventStore.defaultCalendarForNewEvents
+        if let email = matchingEmail?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
+            let isGoogleEmail = email.contains("@gmail.com") || email.contains("@google.com")
+            if let matched = allCalendars.first(where: { c in
+                c.title.lowercased().contains(email) ||
+                c.source.title.lowercased().contains(email) ||
+                (isGoogleEmail && (c.source.title.lowercased().contains("google") || c.source.title.lowercased().contains("gmail")))
+            }) {
+                targetCalendar = matched
+            }
+        }
+        ek.calendar = targetCalendar
+        
+        do {
+            try eventStore.save(ek, span: .thisEvent)
+            let created = CalendarEvent(
+                id: ek.eventIdentifier ?? UUID().uuidString,
+                title: title,
+                description: description ?? "",
+                startTime: startDate,
+                endTime: endDate,
+                isAllDay: ek.isAllDay,
+                meetLink: url?.absoluteString.contains("meet.google.com") == true ? url?.absoluteString : nil,
+                location: location,
+                attendees: []
+            )
+            _ = fetchEvents(for: startDate, matchingEmail: matchingEmail)
+            return created
+        } catch {
+            return nil
+        }
+    }
+    
+    public func openMacCalendarApp() {
+        if let appUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
+            NSWorkspace.shared.openApplication(at: appUrl, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calendar.app"))
+        }
+    }
+    
+    public func openInternetAccountsSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        } else if let fallback = URL(string: "x-apple.systempreferences:") {
+            NSWorkspace.shared.open(fallback)
+        }
     }
     
     private func extractMeetLink(from text: String) -> String? {

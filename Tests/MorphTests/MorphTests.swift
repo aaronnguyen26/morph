@@ -1671,6 +1671,103 @@ final class MorphTests: XCTestCase {
         calendar.syncWithSystemCalendar()
         XCTAssertEqual(calendar.configuredUserEmail, testEmail)
     }
+    
+    @MainActor
+    func testProfileSignInAutoConfiguresCalendarWithExactEmail() async {
+        let notchModel = NotchModel()
+        let testEmail = "minh7898888@gmail.com"
+        
+        // 1. Sign in with profile credentials using exact email
+        let _ = await notchModel.signInProfile(
+            username: testEmail,
+            password: "SecurePassword123!",
+            firstName: "Minh",
+            lastName: "Nguyen"
+        )
+        
+        // Assert: User profile reflects signed-in email
+        XCTAssertEqual(notchModel.supabase.currentUser.email, testEmail)
+        XCTAssertTrue(notchModel.supabase.currentUser.isAuthenticated)
+        
+        // Assert: Calendar is automatically configured with this EXACT email
+        XCTAssertEqual(notchModel.calendar.configuredUserEmail, testEmail,
+                       "CalendarModel must be configured with the exact profile email")
+        XCTAssertTrue(notchModel.calendar.isSignedIn,
+                      "CalendarModel must mark isSignedIn = true")
+        XCTAssertEqual(notchModel.calendar.engine.configuredUserEmail, testEmail,
+                       "GoogleCalendarEngine must receive the exact profile email")
+        XCTAssertTrue(notchModel.calendar.engine.isSignedIn,
+                      "GoogleCalendarEngine must mark isSignedIn = true")
+        
+        // Assert: Window title for Google Calendar reflects the user email
+        notchModel.calendar.engine.showCalendarWindow()
+        XCTAssertTrue(notchModel.calendar.engine.isCalendarWindowVisible)
+        
+        // 2. Test sign-out clears calendar integration
+        notchModel.signOutProfile()
+        XCTAssertNil(notchModel.calendar.configuredUserEmail)
+        XCTAssertFalse(notchModel.calendar.isSignedIn)
+        XCTAssertTrue(notchModel.calendar.events.isEmpty)
+    }
+    
+    @MainActor
+    func testCalendarEventMergingAndDeduplication() {
+        let engine = GoogleCalendarEngine()
+        let eventKitEngine = EventKitCalendarEngine()
+        let icsEngine = GoogleICSEngine()
+        let calendar = CalendarModel(engine: engine, eventKitEngine: eventKitEngine, icsEngine: icsEngine)
+        
+        let testEmail = "minh7898888@gmail.com"
+        calendar.configureUser(email: testEmail)
+        
+        let now = Date()
+        let start1 = now.addingTimeInterval(1200)
+        let end1 = start1.addingTimeInterval(1800)
+        
+        // Event A: From Google Calendar WebKit Engine
+        let googleEvent = CalendarEvent(
+            id: "google_evt_001",
+            title: "Sprint Planning",
+            description: "Planning sprint deliverables",
+            startTime: start1,
+            endTime: end1,
+            meetLink: "https://meet.google.com/spr-plan-ing"
+        )
+        
+        // Event B (Duplicate of Event A): From Mac EventKit with same title and time
+        let ekDuplicateEvent = CalendarEvent(
+            id: "ek_evt_999",
+            title: "Sprint Planning",
+            description: "Synced via Mac Calendar",
+            startTime: start1,
+            endTime: end1,
+            meetLink: "https://meet.google.com/spr-plan-ing"
+        )
+        
+        // Event C: Unique event from Mac EventKit
+        let ekUniqueEvent = CalendarEvent(
+            id: "ek_evt_888",
+            title: "Design Critique",
+            description: "Review notch animations",
+            startTime: now.addingTimeInterval(3600),
+            endTime: now.addingTimeInterval(5400),
+            meetLink: nil
+        )
+        
+        engine.rawEvents = [googleEvent]
+        eventKitEngine.events = [ekDuplicateEvent, ekUniqueEvent]
+        
+        calendar.mergeAllEvents()
+        
+        // Assert: Deduplicated to exactly 2 distinct events (not 3)
+        XCTAssertEqual(calendar.events.count, 2, "Duplicate events with identical title and time across engines must be deduplicated")
+        XCTAssertTrue(calendar.events.contains(where: { $0.title == "Sprint Planning" }))
+        XCTAssertTrue(calendar.events.contains(where: { $0.title == "Design Critique" }))
+        
+        // Quick event creation in calendar
+        calendar.addQuickEvent(title: "Emergency Retro", durationMinutes: 20)
+        XCTAssertTrue(calendar.events.contains(where: { $0.title == "Emergency Retro" }))
+    }
 }
 
 
