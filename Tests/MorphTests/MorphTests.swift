@@ -1172,7 +1172,86 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(media.trackTitle, "Save Your Tears", "Song must automatically advance to next song without user having to manual click through")
         XCTAssertTrue(media.isPlaying)
     }
+    
+    @MainActor
+    func testGoogleCalendarIntegrationAndNotchAlertNotification() {
+        let notchModel = NotchModel()
+        let calendar = notchModel.calendar
+        
+        // 1. Verify Calendar Tab and Navigation
+        XCTAssertEqual(MorphTab.calendar.rawValue, "Calendar")
+        XCTAssertEqual(MorphTab.calendar.shortcutLabel, "⌘6")
+        XCTAssertEqual(MorphTab.calendar.iconName, "calendar")
+        
+        notchModel.openFeature(.calendar)
+        XCTAssertTrue(notchModel.isExpanded)
+        XCTAssertEqual(notchModel.selectedTab, .calendar)
+        
+        // 2. Verify Event Model & Time Range Formatter
+        let now = Date()
+        let start = now.addingTimeInterval(600) // 10 minutes from now
+        let end = start.addingTimeInterval(1800) // 30 minutes duration
+        let event = CalendarEvent(
+            id: "test_evt_1",
+            title: "Executive Strategy Sync",
+            description: "Quarterly objectives alignment",
+            startTime: start,
+            endTime: end,
+            meetLink: "https://meet.google.com/test-meet-link",
+            location: "Room 101"
+        )
+        
+        XCTAssertTrue(event.isStartingSoon, "Event starting in 10 minutes must register isStartingSoon = true")
+        XCTAssertTrue(event.minutesUntilStart >= 9 && event.minutesUntilStart <= 10)
+        XCTAssertFalse(event.formattedTimeRange.isEmpty)
+        
+        // 3. Verify Calendar Model Operations: Month Swapping & Agenda Filtering
+        calendar.goToToday()
+        XCTAssertTrue(Calendar.current.isDateInToday(calendar.selectedDate))
+        
+        let initialMonth = calendar.displayedMonth
+        calendar.nextMonth()
+        XCTAssertNotEqual(calendar.displayedMonth, initialMonth)
+        calendar.previousMonth()
+        XCTAssertEqual(Calendar.current.component(.month, from: calendar.displayedMonth),
+                       Calendar.current.component(.month, from: initialMonth))
+        
+        // 4. Verify Quick Event Creation
+        let initialEventCount = calendar.events.count
+        calendar.addQuickEvent(title: "Emergency Standup", durationMinutes: 15)
+        XCTAssertEqual(calendar.events.count, initialEventCount + 1)
+        XCTAssertTrue(calendar.events.contains(where: { $0.title == "Emergency Standup" }))
+        
+        // 5. Verify Notch Notification & Compact HUD Alert Trigger
+        calendar.events = [event]
+        calendar.evaluateUpcomingAlerts()
+        XCTAssertTrue(calendar.showNotchAlert, "Calendar must trigger showNotchAlert when event is within 15 minutes")
+        XCTAssertEqual(calendar.activeAlertEvent?.title, "Executive Strategy Sync")
+        
+        // When collapsed, compactHUDMode must evaluate to .calendarAlert
+        XCTAssertEqual(notchModel.compactHUDMode, .calendarAlert)
+        XCTAssertEqual(notchModel.compactWidth, max(notchModel.idleWidth + 280, 480))
+        
+        // Dismiss alert
+        calendar.dismissNotchAlert()
+        XCTAssertFalse(calendar.showNotchAlert)
+        XCTAssertNotEqual(notchModel.compactHUDMode, .calendarAlert)
+        
+        // 6. Verify Shortcut Manager ⌘6 Navigation
+        let sm = ShortcutManager.shared
+        let controller = MorphController(model: notchModel)
+        sm.configure(model: notchModel, controller: controller)
+        
+        notchModel.returnToHome()
+        XCTAssertEqual(notchModel.selectedTab, .home)
+        
+        let event6 = makeKeyEvent(chars: "6", flags: .command, keyCode: 22)
+        XCTAssertTrue(sm.handleKeyEvent(event6))
+        XCTAssertEqual(notchModel.selectedTab, .calendar)
+        XCTAssertTrue(notchModel.isExpanded)
+    }
 }
+
 
 
 

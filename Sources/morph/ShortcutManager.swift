@@ -124,6 +124,10 @@ public final class ShortcutManager: NSObject {
         navProfileItem.target = self
         navMenu.addItem(navProfileItem)
         
+        let navCalendarItem = NSMenuItem(title: "Calendar", action: #selector(navCalendar), keyEquivalent: "6")
+        navCalendarItem.target = self
+        navMenu.addItem(navCalendarItem)
+        
         navMenu.addItem(NSMenuItem.separator())
         let navBackItem = NSMenuItem(title: "Back to Home", action: #selector(navBack), keyEquivalent: "[")
         navBackItem.target = self
@@ -327,6 +331,9 @@ public final class ShortcutManager: NSObject {
             case "5":
                 navProfile()
                 return true
+            case "6":
+                navCalendar()
+                return true
             case ",":
                 openPreferences()
                 return true
@@ -496,6 +503,13 @@ public final class ShortcutManager: NSObject {
         model.openFeature(.profile)
         ensurePanelKey()
         lastTriggeredShortcut = "⌘5 Profile"
+    }
+    
+    @objc public func navCalendar() {
+        guard let model = model else { return }
+        model.openFeature(.calendar)
+        ensurePanelKey()
+        lastTriggeredShortcut = "⌘6 Calendar"
     }
     
     @objc public func navBack() {

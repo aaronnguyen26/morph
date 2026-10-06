@@ -121,6 +121,40 @@ public struct HomeView: View {
                 .buttonStyle(.plain)
                 .help("Open Notes (⌘4)")
                 
+                // Calendar Feature Pill
+                Button(action: {
+                    model.openFeature(.calendar)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 8.5))
+                            .foregroundColor(.white)
+                        if let next = model.calendar.nextUpcomingEvent, next.isStartingSoon {
+                            Text("In \(next.minutesUntilStart)m")
+                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                .foregroundColor(.cyan)
+                        } else {
+                            Text("Calendar")
+                                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        model.calendar.showNotchAlert
+                            ? Color.cyan.opacity(0.18)
+                            : Color.white.opacity(0.08)
+                    )
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(model.calendar.showNotchAlert ? Color.cyan.opacity(0.3) : Color.white.opacity(0.14), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Open Calendar (⌘6)")
+                
                 // Profile Feature Pill
                 Button(action: {
                     model.openFeature(.profile)

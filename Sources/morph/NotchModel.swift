@@ -6,6 +6,7 @@ public enum MorphTab: String, CaseIterable, Identifiable {
     case timer = "Focus"
     case music = "Music"
     case notes = "Notes"
+    case calendar = "Calendar"
     case profile = "Profile"
     
     public var id: String { rawValue }
@@ -16,6 +17,7 @@ public enum MorphTab: String, CaseIterable, Identifiable {
         case .timer: return "timer"
         case .music: return "play.circle.fill"
         case .notes: return "note.text"
+        case .calendar: return "calendar"
         case .profile: return "person.crop.circle"
         }
     }
@@ -26,6 +28,7 @@ public enum MorphTab: String, CaseIterable, Identifiable {
         case .timer: return "⌘2"
         case .music: return "⌘3"
         case .notes: return "⌘4"
+        case .calendar: return "⌘6"
         case .profile: return "⌘5"
         }
     }
@@ -37,6 +40,7 @@ public enum CompactHUDMode: String, Equatable {
     case mediaOnly
     case dualActive
     case notesPinned
+    case calendarAlert
 }
 
 @MainActor
@@ -58,6 +62,7 @@ public final class NotchModel: ObservableObject {
     public let pomodoro: PomodoroModel
     public let media: MediaControllerModel
     public let scratchpad: ScratchpadModel
+    public let calendar: CalendarModel
     public let supabase: SupabaseService
     
     @Published public var hasPhysicalNotch: Bool = false
@@ -69,11 +74,13 @@ public final class NotchModel: ObservableObject {
         pomodoro: PomodoroModel = PomodoroModel(),
         media: MediaControllerModel = MediaControllerModel(),
         scratchpad: ScratchpadModel = ScratchpadModel(),
+        calendar: CalendarModel = CalendarModel(),
         supabase: SupabaseService = .shared
     ) {
         self.pomodoro = pomodoro
         self.media = media
         self.scratchpad = scratchpad
+        self.calendar = calendar
         self.supabase = supabase
         
         detectScreenNotch()
@@ -89,15 +96,18 @@ public final class NotchModel: ObservableObject {
     public var compactHUDMode: CompactHUDMode {
         let timerRunning = pomodoro.isRunning
         let musicPlaying = media.isPlaying
+        let calendarAlert = calendar.showNotchAlert
         
-        if timerRunning && musicPlaying {
+        if isNotePinnedToNotch {
+            return .notesPinned
+        } else if timerRunning && musicPlaying {
             return .dualActive
         } else if timerRunning {
             return .pomodoroOnly
         } else if musicPlaying {
             return .mediaOnly
-        } else if isNotePinnedToNotch {
-            return .notesPinned
+        } else if calendarAlert {
+            return .calendarAlert
         } else {
             return .none
         }
@@ -121,6 +131,8 @@ public final class NotchModel: ObservableObject {
             return max(idleWidth + 320, 520)
         case .notesPinned:
             return max(idleWidth + 200, 400)
+        case .calendarAlert:
+            return max(idleWidth + 280, 480)
         }
     }
     
@@ -129,7 +141,7 @@ public final class NotchModel: ObservableObject {
         switch compactHUDMode {
         case .notesPinned:
             return max(idleHeight + 24, 56)
-        case .none, .pomodoroOnly, .mediaOnly, .dualActive:
+        case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAlert:
             return idleHeight
         }
     }
@@ -186,6 +198,8 @@ public final class NotchModel: ObservableObject {
             media.$trackTitle.map { _ in () }.eraseToAnyPublisher(),
             $isNotePinnedToNotch.map { _ in () }.eraseToAnyPublisher(),
             scratchpad.$text.map { _ in () }.eraseToAnyPublisher(),
+            calendar.$showNotchAlert.map { _ in () }.eraseToAnyPublisher(),
+            calendar.$events.map { _ in () }.eraseToAnyPublisher(),
             supabase.$currentUser.map { _ in () }.eraseToAnyPublisher()
         )
         .sink { [weak self] _ in

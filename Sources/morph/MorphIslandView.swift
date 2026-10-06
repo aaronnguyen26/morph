@@ -201,6 +201,8 @@ public struct MorphIslandView: View {
             CompactDualWingLeft(pomodoro: model.pomodoro, model: model)
         case .notesPinned:
             CompactNotesWingLeft(model: model)
+        case .calendarAlert:
+            CompactCalendarWingLeft(calendar: model.calendar, model: model)
         case .none:
             EmptyView()
         }
@@ -219,6 +221,8 @@ public struct MorphIslandView: View {
         case .notesPinned:
             expandChevron
                 .padding(.trailing, 10)
+        case .calendarAlert:
+            CompactCalendarWingRight(calendar: model.calendar, model: model)
         case .none:
             EmptyView()
         }
@@ -311,6 +315,9 @@ public struct MorphIslandView: View {
                 case .notes:
                     ScratchpadView(scratchpad: model.scratchpad)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                case .calendar:
+                    CalendarView(calendar: model.calendar)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                 case .profile:
                     ProfileView(model: model)
                         .transition(.asymmetric(insertion: .opacity, removal: .opacity))
@@ -396,7 +403,7 @@ public struct MorphIslandView: View {
                 
                 // Segmented Tabs
                 HStack(spacing: 3.5) {
-                    ForEach([MorphTab.home, .timer, .music, .notes]) { tab in
+                    ForEach([MorphTab.home, .timer, .music, .notes, .calendar]) { tab in
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 model.selectedTab = tab
@@ -882,3 +889,94 @@ private struct CompactNotesWingLeft: View {
         .help("Open Scratchpad (⌘4)")
     }
 }
+
+private struct CompactCalendarWingLeft: View {
+    @ObservedObject var calendar: CalendarModel
+    let model: NotchModel
+    
+    var body: some View {
+        Button(action: {
+            model.openFeature(.calendar)
+        }) {
+            HStack(spacing: 5) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundColor(.cyan)
+                
+                if let next = calendar.activeAlertEvent ?? calendar.nextUpcomingEvent {
+                    Text("In \(next.minutesUntilStart)m: \(next.title)")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: 140, alignment: .leading)
+                } else {
+                    Text("Calendar")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 12)
+        .help("Open Calendar (⌘6)")
+    }
+}
+
+private struct CompactCalendarWingRight: View {
+    @ObservedObject var calendar: CalendarModel
+    let model: NotchModel
+    
+    var body: some View {
+        HStack(spacing: 5) {
+            if let next = calendar.activeAlertEvent ?? calendar.nextUpcomingEvent, let meet = next.meetLink {
+                Button(action: {
+                    calendar.engine.openMeet(link: meet)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 7))
+                        Text("Meet ↗")
+                            .font(.system(size: 7.5, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.cyan)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Join Google Meet")
+            }
+            
+            Button(action: {
+                calendar.dismissNotchAlert()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.5))
+                    .frame(width: 16, height: 16)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss Alert")
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                    model.isExpanded = true
+                }
+            }) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .frame(width: 16, height: 16)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Expand Island")
+        }
+        .padding(.trailing, 12)
+    }
+}
+
