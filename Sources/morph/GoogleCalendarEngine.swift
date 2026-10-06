@@ -101,6 +101,13 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         }
     }
     
+    public func clearAccount() {
+        self.configuredUserEmail = nil
+        self.isSignedIn = false
+        self.rawEvents = []
+        self.isSyncing = false
+    }
+    
     public func refresh() {
         isSyncing = true
         

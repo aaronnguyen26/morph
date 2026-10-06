@@ -129,6 +129,23 @@ public final class NotchModel: ObservableObject {
             self.selectedTab = .home
         }
     }
+    
+    public func signOutProfile() {
+        UserDefaults.standard.set(false, forKey: "com.morph.has_completed_profile_onboarding")
+        supabase.signOut()
+        calendar.clearUser()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            self.selectedTab = .profile
+            self.isExpanded = true
+        }
+    }
+    
+    public func signInProfile(email: String, firstName: String? = nil, lastName: String? = nil, role: String? = nil) async {
+        await supabase.signIn(email: email, firstName: firstName, lastName: lastName, role: role)
+        await MainActor.run {
+            self.completeProfileSignIn()
+        }
+    }
 
     
     @Published public var isNotePinnedToNotch: Bool = false

@@ -173,9 +173,45 @@ public final class SupabaseService: ObservableObject {
         await updateProfile(totalFocusMinutes: newTotal)
     }
     
+    public func signOut() {
+        self.currentUser = UserProfile.guest
+        UserDefaults.standard.removeObject(forKey: userDefaultsKey)
+        self.connectionState = .offline
+        self.lastSyncTime = nil
+    }
+    
+    public func signIn(email: String, firstName: String? = nil, lastName: String? = nil, role: String? = nil) async {
+        let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanEmail.isEmpty, cleanEmail.contains("@") else { return }
+        
+        var profile = UserProfile(
+            id: UUID().uuidString,
+            firstName: firstName ?? cleanEmail.components(separatedBy: "@").first?.capitalized ?? "User",
+            lastName: lastName ?? "",
+            email: cleanEmail,
+            targetRole: role ?? "Productive Pro",
+            streakDays: 1,
+            totalFocusMinutes: 0,
+            currentStatus: "Ready",
+            avatarInitials: (firstName?.prefix(1).uppercased() ?? "") + (lastName?.prefix(1).uppercased() ?? "")
+        )
+        if profile.avatarInitials.isEmpty {
+            profile.avatarInitials = String(cleanEmail.prefix(2)).uppercased()
+        }
+        
+        self.currentUser = profile
+        self.saveToLocalCache(profile)
+        self.connectionState = .connected
+        self.lastSyncTime = Date()
+        
+        // Attempt cloud profile fetch/sync for this email
+        await fetchProfile()
+    }
+    
     private func saveToLocalCache(_ profile: UserProfile) {
         if let data = try? JSONEncoder().encode(profile) {
             UserDefaults.standard.set(data, forKey: userDefaultsKey)
         }
     }
 }
+

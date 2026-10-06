@@ -1381,6 +1381,79 @@ final class MorphTests: XCTestCase {
         engine.hideCalendarWindow()
         XCTAssertFalse(engine.isCalendarWindowVisible)
     }
+    
+    @MainActor
+    func testProfileSignOutAndSignInFlow() async {
+        let model = NotchModel()
+        
+        // Setup initial signed-in profile with configured calendar
+        await model.supabase.signIn(
+            email: "alice@acme.corp",
+            firstName: "Alice",
+            lastName: "Smith",
+            role: "Principal Architect"
+        )
+        model.calendar.configureUser(email: "alice@acme.corp")
+        model.completeProfileSignIn()
+        
+        // Assert initial signed in state
+        XCTAssertTrue(model.supabase.currentUser.isAuthenticated)
+        XCTAssertEqual(model.supabase.currentUser.email, "alice@acme.corp")
+        XCTAssertEqual(model.supabase.currentUser.displayName, "Alice Smith")
+        XCTAssertEqual(model.calendar.configuredUserEmail, "alice@acme.corp")
+        XCTAssertTrue(model.calendar.isSignedIn)
+        XCTAssertEqual(model.selectedTab, MorphTab.home)
+        
+        // 1. SIGN OUT
+        model.signOutProfile()
+        
+        // Assert signed-out state:
+        // - Profile is guest with empty email and unauthenticated
+        XCTAssertFalse(model.supabase.currentUser.isAuthenticated)
+        XCTAssertEqual(model.supabase.currentUser.email, "")
+        XCTAssertEqual(model.supabase.currentUser.displayName, "Guest User")
+        XCTAssertEqual(model.supabase.currentUser.displayInitials, "GU")
+        
+        // - Calendar account connection is cleared
+        XCTAssertNil(model.calendar.configuredUserEmail)
+        XCTAssertFalse(model.calendar.isSignedIn)
+        XCTAssertTrue(model.calendar.events.isEmpty)
+        XCTAssertNil(model.calendar.activeAlertEvent)
+        XCTAssertFalse(model.calendar.showNotchAlert)
+        
+        // - UI transitions to profile sign-in screen and expands
+        XCTAssertEqual(model.selectedTab, MorphTab.profile)
+        XCTAssertTrue(model.isExpanded)
+        
+        // - Profile onboarding flag is reset
+        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "com.morph.has_completed_profile_onboarding")
+        XCTAssertFalse(hasCompletedOnboarding)
+        
+        // 2. SIGN IN WITH A NEW ACCOUNT
+        await model.signInProfile(
+            email: "bob.dev@gmail.com",
+            firstName: "Bob",
+            lastName: "Builder",
+            role: "Senior iOS Developer"
+        )
+        
+        // Assert new authenticated state:
+        // - Profile is authenticated with new credentials
+        XCTAssertTrue(model.supabase.currentUser.isAuthenticated)
+        XCTAssertEqual(model.supabase.currentUser.email, "bob.dev@gmail.com")
+        XCTAssertEqual(model.supabase.currentUser.displayName, "Bob Builder")
+        XCTAssertEqual(model.supabase.currentUser.targetRole, "Senior iOS Developer")
+        
+        // - Calendar is automatically configured with new email SSO (no double sign-in)
+        XCTAssertEqual(model.calendar.configuredUserEmail, "bob.dev@gmail.com")
+        XCTAssertTrue(model.calendar.isSignedIn)
+        
+        // - Navigation returns to home
+        XCTAssertEqual(model.selectedTab, MorphTab.home)
+        
+        // - Onboarding flag is restored
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "com.morph.has_completed_profile_onboarding"))
+    }
 }
 
 

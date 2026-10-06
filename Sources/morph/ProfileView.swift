@@ -15,6 +15,14 @@ public struct ProfileView: View {
     @State private var draftEmail = ""
     @State private var isShowingShortcuts = false
     
+    // Sign In draft state
+    @State private var signInEmail = ""
+    @State private var signInFirstName = ""
+    @State private var signInLastName = ""
+    @State private var signInRole = ""
+    @State private var isSigningIn = false
+    @State private var signInErrorMessage: String? = nil
+    
     public init(model: NotchModel) {
         self.model = model
         self.supabase = model.supabase
@@ -58,7 +66,9 @@ public struct ProfileView: View {
         VStack(spacing: 8) {
             Spacer(minLength: 2)
             
-            if isEditingProfile {
+            if !supabase.currentUser.isAuthenticated {
+                signInView
+            } else if isEditingProfile {
                 editProfileView
             } else {
                 viewProfileView
@@ -74,7 +84,7 @@ public struct ProfileView: View {
     private var viewProfileView: some View {
         VStack(spacing: 9) {
             // Header Row
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 // Avatar Circle
                 ZStack {
                     Circle()
@@ -143,6 +153,29 @@ public struct ProfileView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                
+                // Sign Out Button
+                Button(action: {
+                    model.signOutProfile()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Sign Out")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundColor(.red.opacity(0.9))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.red.opacity(0.12))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.red.opacity(0.24), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Sign out of Morph profile and clear connected accounts")
                 
                 // Manual Sync Button
                 Button(action: {
@@ -436,6 +469,177 @@ public struct ProfileView: View {
                     .padding(.vertical, 4)
                     .background(Color.white.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+        }
+    }
+    
+    // MARK: - Sign In Mode (Unauthenticated State)
+    private var signInView: some View {
+        VStack(spacing: 9) {
+            // Header Row
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                        )
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sign In to Morph")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    
+                    Text("Enter your account email to link your profile & auto-configure Google Calendar")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // Sign In Action Button
+                Button(action: {
+                    executeSignIn()
+                }) {
+                    HStack(spacing: 4) {
+                        if isSigningIn {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .frame(width: 12, height: 12)
+                        } else {
+                            Image(systemName: "arrow.right.circle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        Text("Sign In")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isSigningIn || signInEmail.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("Sign in to your Morph profile")
+            }
+            
+            // Error Message (if any)
+            if let error = signInErrorMessage {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 9))
+                    Text(error)
+                        .font(.system(size: 9.5, weight: .medium))
+                    Spacer()
+                }
+                .foregroundColor(.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(Color.orange.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            
+            // Input Fields Form
+            VStack(spacing: 6) {
+                // Email Field (Primary SSO)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("ACCOUNT EMAIL (PRIMARY SSO)")
+                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        Spacer()
+                        Text("Auto-configures Google Calendar")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundColor(.cyan.opacity(0.8))
+                    }
+                    TextField("youremail@gmail.com", text: $signInEmail)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .onSubmit {
+                            executeSignIn()
+                        }
+                }
+                
+                // Name Inputs (Optional details)
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("FIRST NAME")
+                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        TextField("First Name", text: $signInFirstName)
+                            .font(.system(size: 11, weight: .medium))
+                            .textFieldStyle(.plain)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("LAST NAME")
+                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        TextField("Last Name", text: $signInLastName)
+                            .font(.system(size: 11, weight: .medium))
+                            .textFieldStyle(.plain)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ROLE / OCCUPATION")
+                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.5))
+                        TextField("e.g. AI Engineer", text: $signInRole)
+                            .font(.system(size: 11, weight: .medium))
+                            .textFieldStyle(.plain)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                }
+            }
+        }
+    }
+    
+    private func executeSignIn() {
+        let cleanEmail = signInEmail.trimmingCharacters(in: .whitespaces)
+        guard !cleanEmail.isEmpty && cleanEmail.contains("@") else {
+            signInErrorMessage = "Please enter a valid email address (e.g. user@gmail.com)"
+            return
+        }
+        
+        signInErrorMessage = nil
+        isSigningIn = true
+        
+        Task {
+            await model.signInProfile(
+                email: cleanEmail,
+                firstName: signInFirstName.isEmpty ? nil : signInFirstName.trimmingCharacters(in: .whitespaces),
+                lastName: signInLastName.isEmpty ? nil : signInLastName.trimmingCharacters(in: .whitespaces),
+                role: signInRole.isEmpty ? nil : signInRole.trimmingCharacters(in: .whitespaces)
+            )
+            await MainActor.run {
+                isSigningIn = false
             }
         }
     }

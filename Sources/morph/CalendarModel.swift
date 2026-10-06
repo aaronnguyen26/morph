@@ -55,6 +55,15 @@ public final class CalendarModel: ObservableObject {
         self.isSignedIn = true
         engine.configureAccount(email: clean)
     }
+    
+    public func clearUser() {
+        self.configuredUserEmail = nil
+        self.isSignedIn = false
+        self.events = []
+        self.activeAlertEvent = nil
+        self.showNotchAlert = false
+        engine.clearAccount()
+    }
 
     
     private func startAlertWatcher() {

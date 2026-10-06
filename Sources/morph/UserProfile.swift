@@ -37,6 +37,20 @@ public struct UserProfile: Codable, Equatable, Sendable {
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         return !cleanEmail.isEmpty && cleanEmail.contains("@")
     }
+    
+    public static var guest: UserProfile {
+        UserProfile(
+            id: "guest_user",
+            firstName: "Guest",
+            lastName: "User",
+            email: "",
+            targetRole: "Explorer",
+            streakDays: 0,
+            totalFocusMinutes: 0,
+            currentStatus: "Signed Out",
+            avatarInitials: "GU"
+        )
+    }
 
     
     public init(
