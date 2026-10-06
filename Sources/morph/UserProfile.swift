@@ -10,6 +10,8 @@ public struct UserProfile: Codable, Equatable, Sendable {
     public var totalFocusMinutes: Int
     public var currentStatus: String
     public var avatarInitials: String
+    public var avatarImageBase64: String?
+    public var avatarURL: String?
     
     public var displayName: String {
         let fullName = "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
@@ -62,7 +64,9 @@ public struct UserProfile: Codable, Equatable, Sendable {
         streakDays: Int = 5,
         totalFocusMinutes: Int = 120,
         currentStatus: String = "In the Zone",
-        avatarInitials: String = "AN"
+        avatarInitials: String = "AN",
+        avatarImageBase64: String? = nil,
+        avatarURL: String? = nil
     ) {
         self.id = id
         self.firstName = firstName
@@ -73,6 +77,8 @@ public struct UserProfile: Codable, Equatable, Sendable {
         self.totalFocusMinutes = totalFocusMinutes
         self.currentStatus = currentStatus
         self.avatarInitials = avatarInitials
+        self.avatarImageBase64 = avatarImageBase64
+        self.avatarURL = avatarURL
     }
     
     enum CodingKeys: String, CodingKey {
@@ -85,5 +91,7 @@ public struct UserProfile: Codable, Equatable, Sendable {
         case totalFocusMinutes = "total_focus_minutes"
         case currentStatus = "current_status"
         case avatarInitials = "avatar_initials"
+        case avatarImageBase64 = "avatar_image_base64"
+        case avatarURL = "avatar_url"
     }
 }

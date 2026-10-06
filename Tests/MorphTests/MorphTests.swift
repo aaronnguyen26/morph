@@ -1454,6 +1454,73 @@ final class MorphTests: XCTestCase {
         // - Onboarding flag is restored
         XCTAssertTrue(UserDefaults.standard.bool(forKey: "com.morph.has_completed_profile_onboarding"))
     }
+    
+    @MainActor
+    func testUsernamePasswordSignInAndFirstTimeOnboardingFlow() async {
+        let model = NotchModel()
+        
+        // Ensure clean slate
+        model.signOutProfile()
+        model.supabase.clearUserRegistry()
+        XCTAssertFalse(model.supabase.currentUser.isAuthenticated)
+        
+        // 1. FIRST-TIME USER SIGNS IN WITH USERNAME AND PASSWORD
+        let username = "alex.rivera.\(UUID().uuidString.prefix(6).lowercased())"
+        let password = "SuperSecretPassword456"
+        
+        let isFirstTime = await model.signInProfile(
+            username: username,
+            password: password
+        )
+        
+        // Must be flagged as first time user!
+        XCTAssertTrue(isFirstTime, "A user signing in for the first time must be flagged for onboarding")
+        XCTAssertTrue(model.supabase.currentUser.isAuthenticated)
+        XCTAssertTrue(model.supabase.currentUser.email.contains(username))
+        
+        // 2. FIRST-TIME ONBOARDING CONFIGURATION
+        // User customizes their name, profile picture (avatar base64), and occupation
+        let fakeAvatarBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        await model.supabase.updateProfile(
+            firstName: "Alex",
+            lastName: "Rivera",
+            avatarInitials: "AR",
+            targetRole: "Staff AI Architect",
+            avatarImageBase64: fakeAvatarBase64
+        )
+        
+        // Complete onboarding flow
+        model.completeProfileSignIn()
+        
+        // Assert updated profile after onboarding
+        XCTAssertEqual(model.supabase.currentUser.displayName, "Alex Rivera")
+        XCTAssertEqual(model.supabase.currentUser.targetRole, "Staff AI Architect")
+        XCTAssertEqual(model.supabase.currentUser.avatarInitials, "AR")
+        XCTAssertEqual(model.supabase.currentUser.avatarImageBase64, fakeAvatarBase64)
+        XCTAssertTrue(model.calendar.configuredUserEmail?.contains(username) == true)
+        XCTAssertTrue(model.calendar.isSignedIn)
+        XCTAssertEqual(model.selectedTab, MorphTab.home)
+        
+        // 3. SUBSEQUENT (RETURNING) SIGN-IN WITH THE SAME CREDENTIALS
+        // When user signs out and signs in again, they must NOT be prompted for onboarding again!
+        model.signOutProfile()
+        XCTAssertFalse(model.supabase.currentUser.isAuthenticated)
+        
+        let isSecondTime = await model.signInProfile(
+            username: username,
+            password: password
+        )
+        
+        XCTAssertFalse(isSecondTime, "A returning user signing in must NOT be flagged for first-time onboarding")
+        XCTAssertTrue(model.supabase.currentUser.isAuthenticated)
+        // Profile details and avatar persisted
+        XCTAssertEqual(model.supabase.currentUser.displayName, "Alex Rivera")
+        XCTAssertEqual(model.supabase.currentUser.targetRole, "Staff AI Architect")
+        XCTAssertEqual(model.supabase.currentUser.avatarImageBase64, fakeAvatarBase64)
+        
+        model.completeProfileSignIn()
+        XCTAssertEqual(model.selectedTab, MorphTab.home)
+    }
 }
 
 

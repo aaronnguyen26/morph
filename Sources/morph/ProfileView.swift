@@ -13,15 +13,22 @@ public struct ProfileView: View {
     @State private var draftRole = ""
     @State private var draftStatus = ""
     @State private var draftEmail = ""
+    @State private var draftAvatarBase64: String? = nil
     @State private var isShowingShortcuts = false
     
-    // Sign In draft state
-    @State private var signInEmail = ""
-    @State private var signInFirstName = ""
-    @State private var signInLastName = ""
-    @State private var signInRole = ""
+    // Sign In credentials state
+    @State private var signInUsername = ""
+    @State private var signInPassword = ""
     @State private var isSigningIn = false
     @State private var signInErrorMessage: String? = nil
+    
+    // First-time Onboarding state
+    @State private var isOnboardingActive = false
+    @State private var onboardingFirstName = ""
+    @State private var onboardingLastName = ""
+    @State private var onboardingRole = ""
+    @State private var onboardingAvatarBase64: String? = nil
+    @State private var onboardingAvatarInitials = ""
     
     public init(model: NotchModel) {
         self.model = model
@@ -35,6 +42,7 @@ public struct ProfileView: View {
         draftRole = supabase.currentUser.targetRole
         draftStatus = supabase.currentUser.currentStatus
         draftEmail = supabase.currentUser.email
+        draftAvatarBase64 = supabase.currentUser.avatarImageBase64
         withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
             isEditingProfile = true
         }
@@ -49,7 +57,8 @@ public struct ProfileView: View {
                 email: cleanEmail,
                 avatarInitials: draftInitials.trimmingCharacters(in: .whitespaces),
                 targetRole: draftRole.trimmingCharacters(in: .whitespaces),
-                currentStatus: draftStatus.trimmingCharacters(in: .whitespaces)
+                currentStatus: draftStatus.trimmingCharacters(in: .whitespaces),
+                avatarImageBase64: draftAvatarBase64
             )
             // Propagate profile email to Google Calendar SSO immediately
             if !cleanEmail.isEmpty && cleanEmail.contains("@") {
@@ -68,6 +77,8 @@ public struct ProfileView: View {
             
             if !supabase.currentUser.isAuthenticated {
                 signInView
+            } else if isOnboardingActive {
+                onboardingView
             } else if isEditingProfile {
                 editProfileView
             } else {
@@ -85,7 +96,7 @@ public struct ProfileView: View {
         VStack(spacing: 9) {
             // Header Row
             HStack(spacing: 10) {
-                // Avatar Circle
+                // Avatar Circle / Picture
                 ZStack {
                     Circle()
                         .fill(Color.white.opacity(0.12))
@@ -94,9 +105,19 @@ public struct ProfileView: View {
                             Circle()
                                 .stroke(Color.white.opacity(0.24), lineWidth: 1)
                         )
-                    Text(supabase.currentUser.displayInitials)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                    if let base64 = supabase.currentUser.avatarImageBase64,
+                       let data = Data(base64Encoded: base64),
+                       let nsImage = NSImage(data: data) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 42, height: 42)
+                            .clipShape(Circle())
+                    } else {
+                        Text(supabase.currentUser.displayInitials)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
                 }
                 
                 // Name & Role
@@ -486,7 +507,7 @@ public struct ProfileView: View {
                             Circle()
                                 .stroke(Color.white.opacity(0.24), lineWidth: 1)
                         )
-                    Image(systemName: "person.crop.circle.badge.plus")
+                    Image(systemName: "lock.shield.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
                 }
@@ -496,7 +517,7 @@ public struct ProfileView: View {
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     
-                    Text("Enter your account email to link your profile & auto-configure Google Calendar")
+                    Text("Enter your username and password to access your profile & calendar")
                         .font(.system(size: 9.5, weight: .medium))
                         .foregroundColor(.white.opacity(0.6))
                         .lineLimit(1)
@@ -527,8 +548,8 @@ public struct ProfileView: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(isSigningIn || signInEmail.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Sign in to your Morph profile")
+                .disabled(isSigningIn || signInUsername.trimmingCharacters(in: .whitespaces).isEmpty || signInPassword.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("Sign in with your username and password")
             }
             
             // Error Message (if any)
@@ -547,67 +568,261 @@ public struct ProfileView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             
-            // Input Fields Form
+            // Credentials Form: Username & Password
             VStack(spacing: 6) {
-                // Email Field (Primary SSO)
+                // Username Field
                 VStack(alignment: .leading, spacing: 2) {
                     HStack {
-                        Text("ACCOUNT EMAIL (PRIMARY SSO)")
+                        Text("USERNAME OR EMAIL")
                             .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.5))
                         Spacer()
-                        Text("Auto-configures Google Calendar")
+                        Text("Auto-configures Google Calendar SSO")
                             .font(.system(size: 7, weight: .medium))
                             .foregroundColor(.cyan.opacity(0.8))
                     }
-                    TextField("youremail@gmail.com", text: $signInEmail)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .textFieldStyle(.plain)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .onSubmit {
-                            executeSignIn()
-                        }
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.4))
+                        TextField("Username or email (e.g. aaron / user@gmail.com)", text: $signInUsername)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .textFieldStyle(.plain)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .onSubmit {
+                        executeSignIn()
+                    }
                 }
                 
-                // Name Inputs (Optional details)
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("FIRST NAME")
+                // Password Field
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("PASSWORD")
                             .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.5))
-                        TextField("First Name", text: $signInFirstName)
+                        Spacer()
+                        Text("Secure Account Access")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundColor(.white.opacity(0.4))
+                    }
+                    HStack(spacing: 6) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.4))
+                        SecureField("••••••••••••", text: $signInPassword)
                             .font(.system(size: 11, weight: .medium))
                             .textFieldStyle(.plain)
                             .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.06))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("LAST NAME")
-                            .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.5))
-                        TextField("Last Name", text: $signInLastName)
-                            .font(.system(size: 11, weight: .medium))
-                            .textFieldStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .onSubmit {
+                        executeSignIn()
+                    }
+                }
+            }
+        }
+    }
+    
+    private func executeSignIn() {
+        let cleanUser = signInUsername.trimmingCharacters(in: .whitespaces)
+        let cleanPass = signInPassword.trimmingCharacters(in: .whitespaces)
+        
+        guard !cleanUser.isEmpty else {
+            signInErrorMessage = "Please enter your username or email"
+            return
+        }
+        guard !cleanPass.isEmpty else {
+            signInErrorMessage = "Please enter your password"
+            return
+        }
+        
+        signInErrorMessage = nil
+        isSigningIn = true
+        
+        Task {
+            let isFirstTime = await model.signInProfile(
+                username: cleanUser,
+                password: cleanPass
+            )
+            
+            await MainActor.run {
+                isSigningIn = false
+                if isFirstTime {
+                    // Pre-fill onboarding fields from new profile
+                    onboardingFirstName = supabase.currentUser.firstName
+                    onboardingLastName = supabase.currentUser.lastName
+                    onboardingRole = supabase.currentUser.targetRole
+                    onboardingAvatarBase64 = supabase.currentUser.avatarImageBase64
+                    onboardingAvatarInitials = supabase.currentUser.displayInitials
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isOnboardingActive = true
+                    }
+                } else {
+                    // Existing user -> Proceed directly to Morph home
+                    model.completeProfileSignIn()
+                }
+            }
+        }
+    }
+    
+    // MARK: - First-Time Onboarding Mode
+    private var onboardingView: some View {
+        VStack(spacing: 8) {
+            // Header Row
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 36, height: 36)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                        )
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.yellow)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text("Welcome to Morph!")
+                            .font(.system(size: 13.5, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.06))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        Text("FIRST TIME SETUP")
+                            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(.yellow)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.yellow.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                    Text("Set up your name, profile picture, and occupation")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // Complete Onboarding Button
+                Button(action: {
+                    completeOnboarding()
+                }) {
+                    HStack(spacing: 4) {
+                        Text("Complete Setup")
+                            .font(.system(size: 10.5, weight: .bold))
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 5)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Save profile & launch Morph")
+            }
+            
+            // Onboarding Setup Row: Profile Picture Picker + Name & Occupation Fields
+            HStack(alignment: .top, spacing: 12) {
+                // Profile Picture Picker Column
+                VStack(spacing: 4) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(width: 48, height: 48)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                            )
+                        
+                        if let base64 = onboardingAvatarBase64,
+                           let data = Data(base64Encoded: base64),
+                           let nsImage = NSImage(data: data) {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 48, height: 48)
+                                .clipShape(Circle())
+                        } else {
+                            VStack(spacing: 2) {
+                                Image(systemName: "person.crop.circle.badge.plus")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.white.opacity(0.8))
+                                Text(onboardingInitials.isEmpty ? "PHOTO" : onboardingInitials)
+                                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.9))
+                            }
+                        }
+                    }
+                    
+                    // Upload / Choose photo button
+                    Button(action: {
+                        chooseProfilePicture()
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "photo")
+                                .font(.system(size: 8))
+                            Text(onboardingAvatarBase64 == nil ? "Choose Photo" : "Change")
+                                .font(.system(size: 8.5, weight: .semibold))
+                        }
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Select an image from your Mac")
+                }
+                .frame(width: 80)
+                
+                // Name & Occupation Form
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("FIRST NAME")
+                                .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                            TextField("First Name", text: $onboardingFirstName)
+                                .font(.system(size: 11, weight: .medium))
+                                .textFieldStyle(.plain)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.06))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("LAST NAME")
+                                .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.5))
+                            TextField("Last Name", text: $onboardingLastName)
+                                .font(.system(size: 11, weight: .medium))
+                                .textFieldStyle(.plain)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.06))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
                     }
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("ROLE / OCCUPATION")
+                        Text("OCCUPATION / TARGET ROLE")
                             .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
                             .foregroundColor(.white.opacity(0.5))
-                        TextField("e.g. AI Engineer", text: $signInRole)
+                        TextField("e.g. Senior Software Engineer", text: $onboardingRole)
                             .font(.system(size: 11, weight: .medium))
                             .textFieldStyle(.plain)
                             .foregroundColor(.white)
@@ -621,27 +836,54 @@ public struct ProfileView: View {
         }
     }
     
-    private func executeSignIn() {
-        let cleanEmail = signInEmail.trimmingCharacters(in: .whitespaces)
-        guard !cleanEmail.isEmpty && cleanEmail.contains("@") else {
-            signInErrorMessage = "Please enter a valid email address (e.g. user@gmail.com)"
-            return
-        }
+    private var onboardingInitials: String {
+        let f = onboardingFirstName.prefix(1).uppercased()
+        let l = onboardingLastName.prefix(1).uppercased()
+        let combined = "\(f)\(l)".trimmingCharacters(in: .whitespaces)
+        return combined.isEmpty ? supabase.currentUser.displayInitials : combined
+    }
+    
+    private func chooseProfilePicture() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.image, .png, .jpeg]
+        panel.prompt = "Select Avatar"
         
-        signInErrorMessage = nil
-        isSigningIn = true
-        
-        Task {
-            await model.signInProfile(
-                email: cleanEmail,
-                firstName: signInFirstName.isEmpty ? nil : signInFirstName.trimmingCharacters(in: .whitespaces),
-                lastName: signInLastName.isEmpty ? nil : signInLastName.trimmingCharacters(in: .whitespaces),
-                role: signInRole.isEmpty ? nil : signInRole.trimmingCharacters(in: .whitespaces)
-            )
-            await MainActor.run {
-                isSigningIn = false
+        if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
+            // Resize and convert to base64 JPEG
+            if let tiffData = image.tiffRepresentation,
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+                onboardingAvatarBase64 = jpegData.base64EncodedString()
             }
         }
+    }
+    
+    private func completeOnboarding() {
+        let cleanFirst = onboardingFirstName.trimmingCharacters(in: .whitespaces)
+        let cleanLast = onboardingLastName.trimmingCharacters(in: .whitespaces)
+        let cleanRole = onboardingRole.trimmingCharacters(in: .whitespaces)
+        
+        Task {
+            await supabase.updateProfile(
+                firstName: cleanFirst.isEmpty ? nil : cleanFirst,
+                lastName: cleanLast.isEmpty ? nil : cleanLast,
+                avatarInitials: onboardingInitials,
+                targetRole: cleanRole.isEmpty ? nil : cleanRole,
+                avatarImageBase64: onboardingAvatarBase64
+            )
+            // Ensure calendar is auto-configured with profile email
+            if !supabase.currentUser.email.isEmpty {
+                model.calendar.configureUser(email: supabase.currentUser.email)
+            }
+        }
+        
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+            isOnboardingActive = false
+        }
+        model.completeProfileSignIn()
     }
     
     // MARK: - Mac Keyboard Shortcuts Reference Sheet

@@ -140,8 +140,35 @@ public final class NotchModel: ObservableObject {
         }
     }
     
+    public func signInProfile(
+        username: String,
+        password: String,
+        firstName: String? = nil,
+        lastName: String? = nil,
+        role: String? = nil,
+        avatarImageBase64: String? = nil
+    ) async -> Bool {
+        let (_, isFirstTime) = await supabase.signIn(
+            username: username,
+            password: password,
+            firstName: firstName,
+            lastName: lastName,
+            role: role,
+            avatarImageBase64: avatarImageBase64
+        )
+        return isFirstTime
+    }
+    
+    // Convenience overload
     public func signInProfile(email: String, firstName: String? = nil, lastName: String? = nil, role: String? = nil) async {
-        await supabase.signIn(email: email, firstName: firstName, lastName: lastName, role: role)
+        _ = await signInProfile(
+            username: email,
+            password: "password123",
+            firstName: firstName,
+            lastName: lastName,
+            role: role,
+            avatarImageBase64: nil
+        )
         await MainActor.run {
             self.completeProfileSignIn()
         }
