@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import morph
 
 final class MorphTests: XCTestCase {
@@ -1596,6 +1597,38 @@ final class MorphTests: XCTestCase {
         // and direct DOM bridge injection, completely independent of obsolete OpenSteward.
         XCTAssertNotNil(engine.webView)
         XCTAssertTrue(engine.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically)
+    }
+    
+    @MainActor
+    func testCalendarDirectGoogleSignInAndCacheResetFlow() {
+        let engine = GoogleCalendarEngine()
+        let calendar = CalendarModel(engine: engine)
+        
+        let testEmail = "developer@gmail.com"
+        calendar.configureUser(email: testEmail)
+        
+        // 1. Direct sign-in from Calendar view trigger
+        calendar.signInWithGoogle()
+        
+        XCTAssertTrue(engine.isCalendarWindowVisible, "Calendar window must become visible upon triggering sign in")
+        XCTAssertTrue(engine.currentURLString.contains("accounts.google.com"), "Google sign-in URL must target accounts.google.com")
+        XCTAssertTrue(engine.currentURLString.contains("developer%40gmail.com") || engine.currentURLString.contains("developer@gmail.com"), "AccountChooser must include user profile email")
+        
+        // 2. Navigation controls and cache reset
+        engine.goBack()
+        engine.goForward()
+        engine.reload()
+        
+        // 3. Clear cookies and cache
+        engine.clearCookiesAndCache()
+        
+        // 4. Verify popup navigation handling for Google OAuth
+        XCTAssertNotNil(engine.webView.uiDelegate, "GoogleCalendarEngine must be assigned as uiDelegate to handle OAuth popups")
+        engine.webViewDidClose(engine.webView)
+        
+        // 5. Dismiss calendar window
+        engine.hideCalendarWindow()
+        XCTAssertFalse(engine.isCalendarWindowVisible)
     }
 }
 

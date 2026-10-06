@@ -142,6 +142,10 @@ public final class CalendarModel: ObservableObject {
         engine.refresh()
     }
     
+    public func signInWithGoogle() {
+        engine.loadGoogleSignIn()
+    }
+    
     public func openGoogleCalendar() {
         engine.openGoogleCalendarInBrowser()
     }

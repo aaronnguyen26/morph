@@ -102,23 +102,45 @@ public struct CalendarView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             
-            // Google Calendar Sync Pill (SSO synced from profile email)
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(calendar.isSignedIn ? Color.green : Color.orange)
-                    .frame(width: 4.5, height: 4.5)
-                if let email = calendar.configuredUserEmail, !email.isEmpty {
-                    Text(email)
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.65))
-                        .lineLimit(1)
-                } else {
-                    Text(calendar.isSignedIn ? "Google Calendar Connected" : "Connecting Account...")
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.55))
+            // Google Calendar Sync & Sign In Pill (SSO synced from profile email)
+            HStack(spacing: 4) {
+                Button(action: { calendar.signInWithGoogle() }) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(calendar.isSignedIn ? Color.green : Color.orange)
+                            .frame(width: 4.5, height: 4.5)
+                        if let email = calendar.configuredUserEmail, !email.isEmpty {
+                            Text(email)
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.85))
+                                .lineLimit(1)
+                        } else {
+                            Text(calendar.isSignedIn ? "Google Calendar" : "Sign In with Google")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.75))
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
+                .help("Open Google Calendar / Sign In")
                 
                 Spacer()
+                
+                Button(action: { calendar.signInWithGoogle() }) {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 7, weight: .bold))
+                        Text("Sign In")
+                            .font(.system(size: 7.5, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Sign In to Google Calendar")
                 
                 Button(action: { calendar.syncWithGoogle() }) {
                     Image(systemName: "arrow.clockwise")
@@ -204,6 +226,22 @@ public struct CalendarView: View {
                 
                 Spacer()
                 
+                Button(action: { calendar.signInWithGoogle() }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 7.5, weight: .bold))
+                        Text("Sign In")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.blue.opacity(0.35))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Sign In to Google Calendar")
+                
                 Button(action: { isAddingEvent.toggle() }) {
                     HStack(spacing: 3) {
                         Image(systemName: "plus")
@@ -255,14 +293,31 @@ public struct CalendarView: View {
             let dayEvents = calendar.eventsForSelectedDate
             if dayEvents.isEmpty {
                 VStack(spacing: 4) {
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 8)
                     Image(systemName: "calendar.badge.clock")
                         .font(.system(size: 16))
                         .foregroundColor(Color.white.opacity(0.3))
-                    Text("No events scheduled for this day")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.5))
-                    Spacer(minLength: 12)
+                    Text(calendar.events.isEmpty ? "No Google Calendar events loaded" : "No events scheduled for this day")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.55))
+                    
+                    Button(action: { calendar.signInWithGoogle() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .font(.system(size: 7.5, weight: .bold))
+                            Text("Sign In / Sync Google")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                    
+                    Spacer(minLength: 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

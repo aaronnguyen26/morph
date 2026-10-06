@@ -139,7 +139,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
     }
     
     public func loadGoogleSignIn() {
-        var signInURL = "https://accounts.google.com/ServiceLogin?service=cl&passive=1209600&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
+        var signInURL = "https://accounts.google.com/ServiceLogin?service=cl&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
         if let email = configuredUserEmail, !email.isEmpty {
             let escaped = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
             signInURL = "https://accounts.google.com/AccountChooser?Email=\(escaped)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
@@ -149,6 +149,33 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
             webView.load(URLRequest(url: url))
         }
         showCalendarWindow()
+    }
+    
+    public func goBack() {
+        if webView.canGoBack {
+            webView.goBack()
+        }
+    }
+    
+    public func goForward() {
+        if webView.canGoForward {
+            webView.goForward()
+        }
+    }
+    
+    public func reload() {
+        webView.reload()
+    }
+    
+    public func clearCookiesAndCache() {
+        let dataStore = WKWebsiteDataStore.default()
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        let dateFrom = Date(timeIntervalSince1970: 0)
+        dataStore.removeData(ofTypes: types, modifiedSince: dateFrom) { [weak self] in
+            DispatchQueue.main.async {
+                self?.loadGoogleSignIn()
+            }
+        }
     }
     
     public func openGoogleCalendarInBrowser() {
@@ -337,21 +364,125 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         self.isSyncing = false
     }
     
-    // MARK: - Chrome Stealth JS
+    // MARK: - Chrome Stealth Fingerprint Script (Injected at .atDocumentStart)
+    // Satisfies Google Botguard checks on accounts.google.com before any scripts run
     private var chromeStealthJavaScript: String {
         return """
         (function() {
+            // 1. Emulate standard window.chrome namespace
             if (!window.chrome) {
                 window.chrome = {
-                    app: { isInstalled: false },
-                    runtime: { OnInstalledReason: {}, PlatformArch: { ARM: 'arm' } },
-                    loadTimes: function() { return {}; },
-                    csi: function() { return {}; }
+                    app: {
+                        isInstalled: false,
+                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+                    },
+                    runtime: {
+                        OnInstalledReason: {},
+                        OnRestartRequiredReason: {},
+                        PlatformArch: { ARM: 'arm', X86_64: 'x86_64' },
+                        PlatformNaclArch: {},
+                        PlatformOs: { MAC: 'mac' },
+                        RequestUpdateCheckStatus: {}
+                    },
+                    loadTimes: function() {
+                        return {
+                            requestTime: performance.now() / 1000,
+                            startLoadTime: performance.now() / 1000,
+                            commitLoadTime: performance.now() / 1000,
+                            finishDocumentLoadTime: performance.now() / 1000,
+                            firstPaintTime: performance.now() / 1000,
+                            finishLoadTime: performance.now() / 1000,
+                            wasFetchedViaSpdy: true,
+                            wasNpnNegotiated: true,
+                            npnNegotiatedProtocol: 'h2',
+                            wasAlternateProtocolAvailable: false,
+                            connectionInfo: 'h2'
+                        };
+                    },
+                    csi: function() {
+                        return {
+                            startE: Date.now(),
+                            onloadT: Date.now(),
+                            pageT: performance.now(),
+                            tran: 15
+                        };
+                    }
                 };
             }
+            
+            // 2. Set vendor to 'Google Inc.'
             try {
-                Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
-                Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+                Object.defineProperty(navigator, 'vendor', {
+                    get: function() { return 'Google Inc.'; },
+                    configurable: true
+                });
+            } catch(e) {}
+            
+            // 3. Ensure webdriver is false (not automated)
+            try {
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: function() { return false; },
+                    configurable: true
+                });
+            } catch(e) {}
+            
+            // 4. Emulate navigator.userAgentData client hints
+            try {
+                if (!navigator.userAgentData) {
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: function() {
+                            return {
+                                brands: [
+                                    { brand: 'Chromium', version: '131' },
+                                    { brand: 'Google Chrome', version: '131' },
+                                    { brand: 'Not_A Brand', version: '24' }
+                                ],
+                                mobile: false,
+                                platform: 'macOS',
+                                getHighEntropyValues: function(hints) {
+                                    return Promise.resolve({
+                                        architecture: 'arm',
+                                        bitness: '64',
+                                        brands: [
+                                            { brand: 'Chromium', version: '131' },
+                                            { brand: 'Google Chrome', version: '131' },
+                                            { brand: 'Not_A Brand', version: '24' }
+                                        ],
+                                        mobile: false,
+                                        model: '',
+                                        platform: 'macOS',
+                                        platformVersion: '15.0.0',
+                                        uaFullVersion: '131.0.6778.86'
+                                    });
+                                }
+                            };
+                        },
+                        configurable: true
+                    });
+                }
+            } catch(e) {}
+            
+            // 5. Emulate standard Chrome plugins
+            try {
+                if (!navigator.plugins || navigator.plugins.length === 0) {
+                    var fakePlugins = [
+                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' }
+                    ];
+                    fakePlugins.item = function(i) { return this[i]; };
+                    fakePlugins.namedItem = function(name) {
+                        for (var i = 0; i < this.length; i++) {
+                            if (this[i].name === name) return this[i];
+                        }
+                        return null;
+                    };
+                    fakePlugins.refresh = function() {};
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: function() { return fakePlugins; },
+                        configurable: true
+                    });
+                }
             } catch(e) {}
         })();
         """
@@ -575,37 +706,86 @@ public struct CalendarWindowToolbarView: View {
             
             Spacer()
             
-            // Direct Sign-In with Google Button
-            if engine.isSignedIn {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundColor(Color.green)
-                    Text("Account Connected")
+            // Action Buttons
+            HStack(spacing: 6) {
+                // Direct Sign-In with Google Button
+                if engine.isSignedIn {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundColor(Color.green)
+                        Text("Connected")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4.5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                    
+                    Button(action: {
+                        engine.loadGoogleSignIn()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 9.5))
+                            Text("Switch Account")
+                                .font(.system(size: 10, weight: .medium))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4.5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sign in with another Google Account")
+                } else {
+                    Button(action: {
+                        engine.loadGoogleSignIn()
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .font(.system(size: 10.5, weight: .bold))
+                            Text("Sign In with Google")
+                                .font(.system(size: 10.5, weight: .bold))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                // Open in System Browser
+                Button(action: {
+                    engine.openGoogleCalendarInBrowser()
+                }) {
+                    Image(systemName: "safari")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.white.opacity(0.12))
-                .clipShape(Capsule())
-            } else {
-                Button(action: {
-                    engine.loadGoogleSignIn()
-                }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 10.5, weight: .bold))
-                        Text("Connect Google Account")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.white)
-                    .clipShape(Capsule())
+                        .frame(width: 26, height: 26)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .help("Open in System Browser (Safari / Chrome)")
+                
+                // Clear & Reset Cache Button
+                Button(action: {
+                    engine.clearCookiesAndCache()
+                }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Color.red.opacity(0.85))
+                        .frame(width: 26, height: 26)
+                        .background(Color.red.opacity(0.12))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Clear Cookies & Cache")
             }
         }
         .padding(.horizontal, 14)
