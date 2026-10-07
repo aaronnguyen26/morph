@@ -7,7 +7,7 @@ public final class MorphController: NSObject {
     public let model: NotchModel
     public private(set) var panel: NotchPanel!
     private var hostingView: PassthroughHostingView<MorphIslandView>!
-    private var collapseWorkItem: DispatchWorkItem?
+    public private(set) var collapseWorkItem: DispatchWorkItem?
     private var shrinkWorkItem: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
     private var globalMonitor: Any?
@@ -266,7 +266,7 @@ public final class MorphController: NSObject {
                 model.isHovered = true
             }
         } else {
-            if model.isExpanded && !model.isPinned {
+            if model.isExpanded && !model.isPinned && !model.calendar.isAddingEvent {
                 if collapseWorkItem == nil {
                     handleMouseExit()
                 }
@@ -295,12 +295,12 @@ public final class MorphController: NSObject {
     }
     
     public func handleMouseExit() {
-        guard !model.isPinned else { return }
+        guard !model.isPinned && !model.calendar.isAddingEvent else { return }
         
         collapseWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            guard !self.model.isPinned else { return }
+            guard !self.model.isPinned && !self.model.calendar.isAddingEvent else { return }
             
             // Sensitive verification: Is cursor still outside Morph's UI space?
             let currentMouse = NSEvent.mouseLocation

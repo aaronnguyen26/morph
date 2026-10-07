@@ -20,6 +20,7 @@ public final class CalendarModel: ObservableObject {
     @Published public var showNotchAlert: Bool = false
     @Published public var configuredUserEmail: String?
     @Published public var isSignedIn: Bool = false
+    @Published public var isAddingEvent: Bool = false
     @Published public var notificationsEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(notificationsEnabled, forKey: "com.morph.calendar.notifications_enabled")
@@ -247,8 +248,8 @@ public final class CalendarModel: ObservableObject {
             }
         }
         
-        // 5. Ingest optimistic local events currently in self.events
-        for evt in self.events where evt.id.hasPrefix("local_") {
+        // 5. Ingest optimistic local and currently tracked events in self.events
+        for evt in self.events {
             if !isAlreadyIncluded(evt) {
                 seenIDs.insert(evt.id)
                 combined.append(evt)

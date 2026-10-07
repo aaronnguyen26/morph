@@ -10,7 +10,6 @@ public struct CalendarView: View {
     @State private var newEventLocation: String = ""
     @State private var selectedCalendarId: String = "primary"
     @State private var isSubmittingEvent: Bool = false
-    @State private var isAddingEvent: Bool = false
     @State private var showNotificationSettings: Bool = false
     @State private var deletingEventID: String? = nil
     
@@ -295,14 +294,14 @@ public struct CalendarView: View {
         VStack(alignment: .leading, spacing: 5) {
             // Header - Perfectly leveled with Month Header
             HStack(spacing: 5) {
-                Text(isAddingEvent ? "NEW EVENT" : "AGENDA")
+                Text(calendar.isAddingEvent ? "NEW EVENT" : "AGENDA")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
                     .fixedSize()
                 
                 if calendar.isSignedIn {
-                    if !isAddingEvent {
+                    if !calendar.isAddingEvent {
                         Text("\(calendar.eventsForSelectedDate.count)")
                             .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                             .foregroundColor(Color.white.opacity(0.6))
@@ -317,29 +316,29 @@ public struct CalendarView: View {
                     // Quick-Add / Cancel Button
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.18)) {
-                            isAddingEvent.toggle()
-                            if isAddingEvent && selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                            calendar.isAddingEvent.toggle()
+                            if calendar.isAddingEvent && selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
                                 selectedCalendarId = first.id
                             }
                         }
                     }) {
                         HStack(spacing: 3) {
-                            Image(systemName: isAddingEvent ? "xmark" : "plus")
+                            Image(systemName: calendar.isAddingEvent ? "xmark" : "plus")
                                 .font(.system(size: 7.5, weight: .bold))
-                            if isAddingEvent {
+                            if calendar.isAddingEvent {
                                 Text("Cancel")
                                     .font(.system(size: 7.5, weight: .semibold))
                             }
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, isAddingEvent ? 7 : 0)
+                        .padding(.horizontal, calendar.isAddingEvent ? 7 : 0)
                         .frame(height: 20)
                         .frame(minWidth: 20)
-                        .background(Color.white.opacity(isAddingEvent ? 0.14 : 0.12))
+                        .background(Color.white.opacity(calendar.isAddingEvent ? 0.14 : 0.12))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help(isAddingEvent ? "Cancel adding event" : "Create New Event in Google Calendar")
+                    .help(calendar.isAddingEvent ? "Cancel adding event" : "Create New Event in Google Calendar")
                     
                     // Open Google Calendar in Browser (Tab-reusing)
                     Button(action: { calendar.openGoogleCalendarInBrowser() }) {
@@ -411,7 +410,7 @@ public struct CalendarView: View {
                     Spacer(minLength: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if isAddingEvent {
+            } else if calendar.isAddingEvent {
                 // Dedicated Full Add Event Canvas
                 fullAddEventView
                     .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -438,7 +437,7 @@ public struct CalendarView: View {
                         HStack(spacing: 6) {
                             Button(action: {
                                 withAnimation(.easeInOut(duration: 0.18)) {
-                                    isAddingEvent = true
+                                    calendar.isAddingEvent = true
                                     if selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
                                         selectedCalendarId = first.id
                                     }
@@ -508,265 +507,266 @@ public struct CalendarView: View {
     // MARK: - Dedicated Full Add Event Canvas
     private var fullAddEventView: some View {
         VStack(alignment: .leading, spacing: 5) {
-            // Selected Target Date Indicator Banner
-            HStack(spacing: 4) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 7))
-                    .foregroundColor(Color.white.opacity(0.7))
-                
-                let df: DateFormatter = {
-                    let f = DateFormatter()
-                    f.dateFormat = "EEEE, MMM d, yyyy"
-                    return f
-                }()
-                Text(df.string(from: calendar.selectedDate))
-                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+            addEventHeaderRow
+            addEventTitleRow
+            addEventTimeDurationRow
+            addEventLocationRow
+            Spacer(minLength: 2)
+            addEventActionRow
+        }
+        .padding(6)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+        )
+    }
+    
+    // MARK: - Add Event Form Subcomponents
+    private var addEventHeaderRow: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "calendar")
+                .font(.system(size: 7))
+                .foregroundColor(Color.white.opacity(0.7))
+            
+            let df: DateFormatter = {
+                let f = DateFormatter()
+                f.dateFormat = "EEE, MMM d, yyyy"
+                return f
+            }()
+            Text(df.string(from: calendar.selectedDate))
+                .font(.system(size: 7.5, weight: .semibold, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.85))
+            
+            Spacer()
+            
+            let writableCals = calendar.apiBridge.availableCalendars.filter { $0.accessRole == "owner" || $0.accessRole == "writer" }
+            if writableCals.count > 1 {
+                let currentSummary = writableCals.first(where: { $0.id == selectedCalendarId })?.summary ?? "Primary"
+                Button(action: {
+                    if let currentIndex = writableCals.firstIndex(where: { $0.id == selectedCalendarId }) {
+                        let nextIndex = (currentIndex + 1) % writableCals.count
+                        selectedCalendarId = writableCals[nextIndex].id
+                    } else if let first = writableCals.first {
+                        selectedCalendarId = first.id
+                    }
+                }) {
+                    HStack(spacing: 2.5) {
+                        Circle()
+                            .fill(Color.blue.opacity(0.8))
+                            .frame(width: 4, height: 4)
+                        Text(currentSummary)
+                            .font(.system(size: 6.8, weight: .medium))
+                            .lineLimit(1)
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 5))
+                            .foregroundColor(Color.white.opacity(0.5))
+                    }
                     .foregroundColor(Color.white.opacity(0.85))
-                
-                Spacer()
-                
-                Text(formatHourDisplay(newEventHour))
-                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
                     .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Click to cycle target Google Calendar")
+            } else {
+                Text(formatHourDisplay(newEventHour))
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 4.5)
                     .padding(.vertical, 1.5)
                     .background(Color.white.opacity(0.12))
                     .clipShape(Capsule())
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2.5)
-            .background(Color.white.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2.5)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+    
+    private var addEventTitleRow: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "pencil.line")
+                .font(.system(size: 7.5))
+                .foregroundColor(Color.white.opacity(0.6))
             
-            // 1. Event Title Input Field
-            VStack(alignment: .leading, spacing: 2) {
-                Text("EVENT TITLE")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.45))
-                
-                HStack(spacing: 5) {
-                    Image(systemName: "pencil.line")
-                        .font(.system(size: 8))
+            TextField("Event title", text: $newEventTitle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundColor(.white)
+            
+            if !newEventTitle.isEmpty {
+                Button(action: { newEventTitle = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 6.5))
+                        .foregroundColor(Color.white.opacity(0.45))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3.5)
+        .background(Color.white.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
+        )
+    }
+    
+    private var addEventTimeDurationRow: some View {
+        HStack(spacing: 4) {
+            // Stepper Hour Control
+            HStack(spacing: 2) {
+                Button(action: {
+                    newEventHour = newEventHour > 0 ? newEventHour - 1 : 23
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 6, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.7))
-                    
-                    TextField("What are you scheduling?", text: $newEventTitle)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.white)
-                    
-                    if !newEventTitle.isEmpty {
-                        Button(action: { newEventTitle = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 7))
-                                .foregroundColor(Color.white.opacity(0.45))
-                        }
-                        .buttonStyle(.plain)
-                    }
+                        .frame(width: 14, height: 14)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
-                )
-            }
-            
-            // 2. Start Time & Duration Controls
-            VStack(alignment: .leading, spacing: 2) {
-                Text("START TIME & DURATION")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.45))
+                .buttonStyle(.plain)
+                .help("Previous hour")
                 
-                HStack(spacing: 5) {
-                    // Start Hour Menu
-                    Menu {
-                        ForEach(7..<24) { h in
-                            Button(action: { newEventHour = h }) {
-                                Text(formatHourDisplay(h))
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "clock.fill")
-                                .font(.system(size: 6.5))
-                            Text(formatHourDisplay(newEventHour))
-                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 5.5))
-                                .foregroundColor(Color.white.opacity(0.5))
-                        }
+                HStack(spacing: 2) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 6))
+                        .foregroundColor(Color.white.opacity(0.7))
+                    Text(formatHourDisplay(newEventHour))
+                        .font(.system(size: 7.2, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(Capsule())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    
-                    Spacer()
-                    
-                    // Duration Chips
-                    HStack(spacing: 3) {
-                        ForEach([15, 30, 45, 60], id: \.self) { duration in
-                            Button(action: { newEventDurationMinutes = duration }) {
-                                Text("\(duration)m")
-                                    .font(.system(size: 7, weight: newEventDurationMinutes == duration ? .bold : .medium))
-                                    .foregroundColor(newEventDurationMinutes == duration ? .black : Color.white.opacity(0.7))
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2.5)
-                                    .background(newEventDurationMinutes == duration ? Color.white : Color.white.opacity(0.08))
-                                    .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
                 }
-            }
-            
-            // 3. Location, Conferencing & Target Calendar
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LOCATION & CONFERENCING")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.45))
+                .padding(.horizontal, 3)
                 
-                HStack(spacing: 5) {
-                    HStack(spacing: 3.5) {
-                        Image(systemName: "mappin.and.ellipse")
-                            .font(.system(size: 7))
-                            .foregroundColor(Color.white.opacity(0.55))
-                        
-                        TextField("Location or room (optional)", text: $newEventLocation)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 7.5, weight: .medium))
-                            .foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    
-                    // Google Meet Toggle
-                    Button(action: {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            newEventHasMeet.toggle()
-                        }
-                    }) {
-                        HStack(spacing: 2.5) {
-                            Image(systemName: newEventHasMeet ? "video.fill" : "video")
-                                .font(.system(size: 6.5))
-                            Text("Meet")
-                                .font(.system(size: 7, weight: .bold))
-                        }
-                        .foregroundColor(newEventHasMeet ? .black : Color.white.opacity(0.7))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(newEventHasMeet ? Color.white : Color.white.opacity(0.10))
-                        .clipShape(Capsule())
+                Button(action: {
+                    newEventHour = newEventHour < 23 ? newEventHour + 1 : 0
+                }) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 6, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .frame(width: 14, height: 14)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Next hour")
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(Color.white.opacity(0.09))
+            .clipShape(Capsule())
+            
+            Spacer()
+            
+            // Duration Chips
+            HStack(spacing: 2.5) {
+                ForEach([15, 30, 45, 60], id: \.self) { duration in
+                    Button(action: { newEventDurationMinutes = duration }) {
+                        Text("\(duration)m")
+                            .font(.system(size: 6.8, weight: newEventDurationMinutes == duration ? .bold : .medium))
+                            .foregroundColor(newEventDurationMinutes == duration ? .black : Color.white.opacity(0.7))
+                            .padding(.horizontal, 4.5)
+                            .padding(.vertical, 2)
+                            .background(newEventDurationMinutes == duration ? Color.white : Color.white.opacity(0.08))
+                            .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help(newEventHasMeet ? "Google Meet conference attached" : "Attach Google Meet")
-                }
-                
-                // Target Google Calendar Selector (if multiple calendars exist)
-                let writableCals = calendar.apiBridge.availableCalendars.filter { $0.accessRole == "owner" || $0.accessRole == "writer" }
-                if writableCals.count > 1 {
-                    HStack(spacing: 4) {
-                        Text("CALENDAR:")
-                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.45))
-                        
-                        Menu {
-                            ForEach(writableCals) { cal in
-                                Button(action: { selectedCalendarId = cal.id }) {
-                                    HStack {
-                                        Text(cal.summary)
-                                        if cal.isPrimary {
-                                            Text("(Primary)")
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                let currentSummary = writableCals.first(where: { $0.id == selectedCalendarId })?.summary ?? "Primary"
-                                Text(currentSummary)
-                                    .font(.system(size: 7.5, weight: .semibold))
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 5.5))
-                                    .foregroundColor(Color.white.opacity(0.5))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.white.opacity(0.08))
-                            .clipShape(Capsule())
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        
-                        Spacer()
-                    }
-                    .padding(.top, 1)
                 }
             }
-            
-            // 4. Action Buttons (Cancel / Create Event)
-            HStack(spacing: 6) {
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        isAddingEvent = false
-                    }
-                }) {
-                    Text("Discard")
-                        .font(.system(size: 7.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.6))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3.5)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                
-                Spacer()
-                
-                Button(action: submitNewEvent) {
-                    HStack(spacing: 3) {
-                        if isSubmittingEvent {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                                .scaleEffect(0.5)
-                                .frame(width: 8, height: 8)
-                        } else {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.system(size: 7.5, weight: .bold))
-                        }
-                        
-                        Text(isSubmittingEvent ? "Saving..." : "Add to Calendar")
-                            .font(.system(size: 7.5, weight: .bold))
-                    }
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3.5)
-                    .background(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.25) : Color.white)
-                    .clipShape(Capsule())
-                    .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
-                }
-                .buttonStyle(.plain)
-                .disabled(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingEvent)
-                .help("Save event to Google Calendar")
-            }
-            .padding(.top, 1)
         }
-        .padding(7)
-        .background(Color.white.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
-        )
+    }
+    
+    private var addEventLocationRow: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 3) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 6.5))
+                    .foregroundColor(Color.white.opacity(0.55))
+                
+                TextField("Location (optional)", text: $newEventLocation)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 7.2, weight: .medium))
+                    .foregroundColor(.white)
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            
+            // Google Meet Toggle
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    newEventHasMeet.toggle()
+                }
+            }) {
+                HStack(spacing: 2.5) {
+                    Image(systemName: newEventHasMeet ? "video.fill" : "video")
+                        .font(.system(size: 6))
+                    Text("Meet")
+                        .font(.system(size: 6.8, weight: .bold))
+                }
+                .foregroundColor(newEventHasMeet ? .black : Color.white.opacity(0.7))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(newEventHasMeet ? Color.white : Color.white.opacity(0.10))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help(newEventHasMeet ? "Google Meet conference attached" : "Attach Google Meet")
+        }
+    }
+    
+    private var addEventActionRow: some View {
+        HStack(spacing: 6) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    calendar.isAddingEvent = false
+                }
+            }) {
+                Text("Discard")
+                    .font(.system(size: 7.2, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.6))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
+            
+            Button(action: submitNewEvent) {
+                HStack(spacing: 3) {
+                    if isSubmittingEvent {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                            .scaleEffect(0.5)
+                            .frame(width: 7, height: 7)
+                    } else {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 7, weight: .bold))
+                    }
+                    
+                    Text(isSubmittingEvent ? "Saving..." : "Add to Calendar")
+                        .font(.system(size: 7.2, weight: .bold))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.25) : Color.white)
+                .clipShape(Capsule())
+                .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
+            }
+            .buttonStyle(.plain)
+            .disabled(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingEvent)
+            .help("Save event to Google Calendar")
+        }
     }
     
     private func formatHourDisplay(_ hour: Int) -> String {
@@ -804,7 +804,7 @@ public struct CalendarView: View {
             newEventTitle = ""
             newEventLocation = ""
             withAnimation(.easeInOut(duration: 0.18)) {
-                isAddingEvent = false
+                calendar.isAddingEvent = false
             }
         }
     }

@@ -2082,6 +2082,31 @@ final class MorphTests: XCTestCase {
         calendar.mergeAllEvents()
         XCTAssertTrue(calendar.events.contains(where: { $0.title == "testing" }))
     }
+    
+    @MainActor
+    func testCalendarAddingEventPreventsMorphAutoCollapse() throws {
+        let model = NotchModel()
+        let controller = MorphController(model: model)
+        
+        // Expand Morph island
+        model.isExpanded = true
+        model.isPinned = false
+        model.calendar.isAddingEvent = true
+        
+        // Cursor moves completely outside Morph UI bounds (e.g. into menu or external screen region)
+        let outsidePoint = NSPoint(x: -500, y: -500)
+        XCTAssertFalse(controller.isMouseInsideMorphUI(outsidePoint))
+        
+        // Check mouse position - should NOT trigger collapse because user is adding event
+        controller.checkMousePosition(outsidePoint)
+        XCTAssertNil(controller.collapseWorkItem, "Collapse work item must not be scheduled when isAddingEvent is true")
+        XCTAssertTrue(model.isExpanded, "Morph must stay expanded while adding event")
+        
+        // Once event adding is completed or cancelled
+        model.calendar.isAddingEvent = false
+        controller.checkMousePosition(outsidePoint)
+        XCTAssertNotNil(controller.collapseWorkItem, "Collapse work item should be scheduled once event adding finishes")
+    }
 }
 
 
