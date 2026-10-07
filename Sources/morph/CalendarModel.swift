@@ -649,5 +649,30 @@ public final class CalendarModel: ObservableObject {
             self.evaluateUpcomingAlerts()
         }
     }
+    
+    public func deleteEvent(id: String) {
+        // 1. Optimistically remove from local array
+        self.events.removeAll(where: { $0.id == id })
+        if activeAlertEvent?.id == id {
+            dismissNotchAlert(for: id)
+        }
+        evaluateUpcomingAlerts()
+        
+        // 2. Dispatch deletion to Google Calendar API Bridge if event originated from Google or has gcal_ prefix
+        if !Self.isTestingEnvironment {
+            Task {
+                await apiBridge.deleteGoogleCalendarEvent(id: id)
+            }
+        }
+        
+        // 3. Dispatch deletion to EventKit if authorized
+        if eventKitEngine.isAuthorized {
+            eventKitEngine.deleteEvent(id: id, matchingEmail: configuredUserEmail)
+        }
+    }
+    
+    public func deleteEvent(_ event: CalendarEvent) {
+        deleteEvent(id: event.id)
+    }
 }
 

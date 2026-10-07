@@ -220,6 +220,23 @@ public final class EventKitCalendarEngine: ObservableObject {
         }
     }
     
+    @discardableResult
+    public func deleteEvent(id: String, matchingEmail: String? = nil) -> Bool {
+        updateAuthStatus()
+        guard isAuthorized else { return false }
+        
+        if let ek = eventStore.event(withIdentifier: id) {
+            do {
+                try eventStore.remove(ek, span: .thisEvent)
+                self.events.removeAll(where: { $0.id == id })
+                return true
+            } catch {
+                return false
+            }
+        }
+        return false
+    }
+    
     public func openMacCalendarApp() {
         if let appUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iCal") {
             NSWorkspace.shared.openApplication(at: appUrl, configuration: NSWorkspace.OpenConfiguration())

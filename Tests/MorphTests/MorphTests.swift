@@ -1991,6 +1991,49 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(reviewEvent.location, "Room 101")
         XCTAssertNotNil(reviewEvent.meetLink)
     }
+    
+    @MainActor
+    func testCalendarEventDeletionFeature() {
+        let calendar = CalendarModel()
+        calendar.configuredUserEmail = "minh7898888@gmail.com"
+        calendar.isSignedIn = true
+        
+        let now = Date()
+        let eventA = CalendarEvent(
+            id: "evt_delete_test_1",
+            title: "Sprint Planning Session",
+            description: "Planning Q4 objectives",
+            startTime: now.addingTimeInterval(3600),
+            endTime: now.addingTimeInterval(5400)
+        )
+        let eventB = CalendarEvent(
+            id: "evt_delete_test_2",
+            title: "Team Sync",
+            description: "Daily status sync",
+            startTime: now.addingTimeInterval(7200),
+            endTime: now.addingTimeInterval(9000)
+        )
+        
+        calendar.events = [eventA, eventB]
+        XCTAssertEqual(calendar.events.count, 2)
+        
+        // Active alert setup
+        calendar.activeAlertEvent = eventA
+        calendar.showNotchAlert = true
+        
+        // 1. Delete eventA
+        calendar.deleteEvent(id: eventA.id)
+        XCTAssertEqual(calendar.events.count, 1)
+        XCTAssertFalse(calendar.events.contains(where: { $0.id == eventA.id }))
+        XCTAssertTrue(calendar.events.contains(where: { $0.id == eventB.id }))
+        // Active alert should be dismissed since its target event was deleted
+        XCTAssertNil(calendar.activeAlertEvent)
+        XCTAssertFalse(calendar.showNotchAlert)
+        
+        // 2. Delete eventB by model object
+        calendar.deleteEvent(eventB)
+        XCTAssertTrue(calendar.events.isEmpty)
+    }
 }
 
 

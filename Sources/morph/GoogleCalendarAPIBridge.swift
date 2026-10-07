@@ -11,6 +11,9 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
     @Published public var primaryEmail: String?
     @Published public var lastSyncDate: Date?
     
+    // Map event ID -> Google Calendar ID (e.g. primary or secondary group calendar)
+    private var eventCalendarMap: [String: String] = [:]
+    
     private let clientInfoPath = ("~/.config/google-mcp/oauth_client.json" as NSString).expandingTildeInPath
     private let tokensPath = ("~/.mcp-auth/mcp-remote-v1/f257e7d5e7cfcb809c421abe8c7962ae_tokens.json" as NSString).expandingTildeInPath
     
@@ -197,6 +200,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
                     location: loc ?? (meet != nil ? "Google Meet" : nil),
                     attendees: []
                 )
+                self.eventCalendarMap[id] = calId
+                self.eventCalendarMap[event.id] = calId
                 combinedEvents.append(event)
             }
         }
@@ -311,6 +316,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
             )
             
             // Ingest into local event cache
+            self.eventCalendarMap[eventId] = targetCalId
+            self.eventCalendarMap[newEvent.id] = targetCalId
             if !self.events.contains(where: { $0.id == newEvent.id }) {
                 self.events.append(newEvent)
                 self.events.sort(by: { $0.startTime < $1.startTime })
@@ -319,6 +326,41 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
             return newEvent
         } catch {
             return nil
+        }
+    }
+    
+    @discardableResult
+    public func deleteGoogleCalendarEvent(id: String) async -> Bool {
+        guard let token = await ensureValidAccessToken() else {
+            return false
+        }
+        
+        // Strip any "gcal_" prefix if present to obtain the raw Google Calendar event ID
+        let rawEventId = id.hasPrefix("gcal_") ? String(id.dropFirst(5)) : id
+        let calId = eventCalendarMap[id] ?? eventCalendarMap[rawEventId] ?? primaryEmail ?? "primary"
+        
+        guard let encodedCalId = calId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let encodedEventId = rawEventId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://www.googleapis.com/calendar/v3/calendars/\(encodedCalId)/events/\(encodedEventId)") else {
+            return false
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) || http.statusCode == 404 || http.statusCode == 410 {
+                // Remove from in-memory cache
+                self.events.removeAll(where: { $0.id == id || $0.id == "gcal_\(rawEventId)" || $0.id == rawEventId })
+                self.eventCalendarMap.removeValue(forKey: id)
+                self.eventCalendarMap.removeValue(forKey: rawEventId)
+                return true
+            }
+            return false
+        } catch {
+            return false
         }
     }
 }

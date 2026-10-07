@@ -11,6 +11,7 @@ public struct CalendarView: View {
     @State private var isSubmittingEvent: Bool = false
     @State private var isAddingEvent: Bool = false
     @State private var showNotificationSettings: Bool = false
+    @State private var deletingEventID: String? = nil
     
     public init(calendar: CalendarModel) {
         self.calendar = calendar
@@ -800,6 +801,58 @@ public struct CalendarView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Join Google Meet")
+                }
+                
+                // Delete event button / confirmation
+                if deletingEventID == event.id {
+                    HStack(spacing: 3) {
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                calendar.deleteEvent(id: event.id)
+                                deletingEventID = nil
+                            }
+                        }) {
+                            Text("Delete")
+                                .font(.system(size: 7.5, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.25))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Confirm delete from calendar")
+                        
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                deletingEventID = nil
+                            }
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 6.5, weight: .bold))
+                                .foregroundColor(Color.white.opacity(0.6))
+                                .frame(width: 16, height: 16)
+                                .background(Color.white.opacity(0.08))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cancel")
+                    }
+                } else {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            deletingEventID = event.id
+                        }
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 7, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.4))
+                            .frame(width: 16, height: 16)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete event from calendar")
                 }
             }
             
