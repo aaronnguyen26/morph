@@ -178,18 +178,96 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         }
     }
     
+    public func openGoogleSignInInBrowser() {
+        let emailToUse = configuredUserEmail ?? "minh7898888@gmail.com"
+        let escaped = emailToUse.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? emailToUse
+        let signInURL = "https://accounts.google.com/AccountChooser?Email=\(escaped)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
+        guard let url = URL(string: signInURL) else { return }
+        openInSystemBrowser(url: url)
+    }
+    
     public func openGoogleCalendarInBrowser() {
-        if let email = configuredUserEmail, !email.isEmpty {
-            let escapedEmail = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
-            let ssoURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
-            if let url = URL(string: ssoURLString) {
-                NSWorkspace.shared.open(url)
-                return
-            }
+        let emailToUse = configuredUserEmail ?? "minh7898888@gmail.com"
+        let escapedEmail = emailToUse.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? emailToUse
+        let targetURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
+        guard let url = URL(string: targetURLString) else { return }
+        openInSystemBrowser(url: url)
+    }
+    
+    private func openInSystemBrowser(url: URL) {
+        // Reuse existing browser tab if one is already open to decrease tab clutter
+        if reuseExistingBrowserTabIfPossible(targetURL: url) {
+            return
         }
-        if let url = URL(string: kCalendarURL) {
+        
+        if let defaultBrowserAppURL = NSWorkspace.shared.urlForApplication(toOpen: url) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.open([url], withApplicationAt: defaultBrowserAppURL, configuration: config, completionHandler: nil)
+        } else {
             NSWorkspace.shared.open(url)
         }
+    }
+    
+    @discardableResult
+    private func reuseExistingBrowserTabIfPossible(targetURL: URL) -> Bool {
+        // Check Google Chrome for existing Google Calendar / Accounts tabs and activate/reuse
+        let chromeScript = """
+        tell application "Google Chrome"
+            repeat with w in windows
+                set tabIndex to 1
+                repeat with t in tabs of w
+                    set theURL to (URL of t as text)
+                    if theURL contains "calendar.google.com" or theURL contains "accounts.google.com" then
+                        set URL of t to "\(targetURL.absoluteString)"
+                        set active tab index of w to tabIndex
+                        set index of w to 1
+                        activate
+                        return true
+                    end if
+                    set tabIndex to tabIndex + 1
+                end repeat
+            end repeat
+            return false
+        end tell
+        """
+        
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: chromeScript) {
+            let output = scriptObject.executeAndReturnError(&error)
+            if error == nil && output.booleanValue {
+                return true
+            }
+        }
+        
+        // Check Safari for existing Google Calendar / Accounts tabs and activate/reuse
+        let safariScript = """
+        tell application "Safari"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    set theURL to (URL of t as text)
+                    if theURL contains "calendar.google.com" or theURL contains "accounts.google.com" then
+                        set URL of t to "\(targetURL.absoluteString)"
+                        set current tab of w to t
+                        set index of w to 1
+                        activate
+                        return true
+                    end if
+                end repeat
+            end repeat
+            return false
+        end tell
+        """
+        
+        var safariError: NSDictionary?
+        if let safariScriptObject = NSAppleScript(source: safariScript) {
+            let output = safariScriptObject.executeAndReturnError(&safariError)
+            if safariError == nil && output.booleanValue {
+                return true
+            }
+        }
+        
+        return false
     }
     
     public func openMeet(link: String) {
@@ -224,7 +302,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
         container.autoresizingMask = [.width, .height]
         
-        let toolbarHeight: CGFloat = 70
+        let toolbarHeight: CGFloat = 42
         let toolbarView = NSHostingView(rootView: CalendarWindowToolbarView(engine: self))
         toolbarView.frame = NSRect(x: 0, y: 760 - toolbarHeight, width: 1100, height: toolbarHeight)
         toolbarView.autoresizingMask = [.width, .minYMargin]
@@ -232,7 +310,6 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - toolbarHeight)
         self.webView.autoresizingMask = [.width, .height]
         
-        container.addSubview(self.webView)
         container.addSubview(toolbarView)
         
         win.contentView = container
@@ -248,6 +325,16 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         } else {
             win.title = "Google Calendar — Morph Engine"
         }
+        
+        // Re-attach webView to popout window container if needed
+        if let container = win.contentView, webView.superview != container {
+            let toolbarHeight: CGFloat = 42
+            webView.removeFromSuperview()
+            webView.frame = NSRect(x: 0, y: 0, width: container.bounds.width, height: container.bounds.height - toolbarHeight)
+            webView.autoresizingMask = [.width, .height]
+            container.addSubview(webView, positioned: .below, relativeTo: nil)
+        }
+        
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.isCalendarWindowVisible = true
@@ -630,7 +717,7 @@ private final class CalendarWindowDelegate: NSObject, NSWindowDelegate {
     }
 }
 
-// Dedicated Toolbar View for Google Calendar Web View Window
+// Dedicated Toolbar View for Google Calendar Web View Window (Matching YouTube Music Engine Window)
 public struct CalendarWindowToolbarView: View {
     @ObservedObject var engine: GoogleCalendarEngine
     
@@ -639,24 +726,12 @@ public struct CalendarWindowToolbarView: View {
     }
     
     public var body: some View {
-        VStack(spacing: 0) {
-            toolbarRow
-            securityNoticeRow
-        }
-        .frame(height: 70)
-        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
-        .overlay(
-            Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(height: 1),
-            alignment: .bottom
-        )
-    }
-    
-    private var toolbarRow: some View {
         HStack(spacing: 10) {
+            // Navigation History
             HStack(spacing: 4) {
-                Button(action: { if engine.webView.canGoBack { engine.webView.goBack() } }) {
+                Button(action: {
+                    engine.goBack()
+                }) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(engine.webView?.canGoBack == true ? .white : Color.white.opacity(0.3))
@@ -667,7 +742,9 @@ public struct CalendarWindowToolbarView: View {
                 .buttonStyle(.plain)
                 .disabled(engine.webView?.canGoBack != true)
                 
-                Button(action: { if engine.webView.canGoForward { engine.webView.goForward() } }) {
+                Button(action: {
+                    engine.goForward()
+                }) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(engine.webView?.canGoForward == true ? .white : Color.white.opacity(0.3))
@@ -678,7 +755,9 @@ public struct CalendarWindowToolbarView: View {
                 .buttonStyle(.plain)
                 .disabled(engine.webView?.canGoForward != true)
                 
-                Button(action: { engine.refresh() }) {
+                Button(action: {
+                    engine.refresh()
+                }) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.white)
@@ -691,8 +770,10 @@ public struct CalendarWindowToolbarView: View {
                 .buttonStyle(.plain)
             }
             
-            // Home / Today Button
-            Button(action: { engine.refresh() }) {
+            // Home Button
+            Button(action: {
+                engine.refresh()
+            }) {
                 HStack(spacing: 4) {
                     Image(systemName: "calendar")
                         .font(.system(size: 10))
@@ -709,146 +790,103 @@ public struct CalendarWindowToolbarView: View {
             
             Spacer()
             
-            // SSO Email Pill
-            if let email = engine.configuredUserEmail, !email.isEmpty {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(engine.isSignedIn ? Color.green : Color.orange)
-                        .frame(width: 5, height: 5)
-                    Text(email)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.85))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.white.opacity(0.08))
-                .clipShape(Capsule())
-            }
+            // URL Status Pill
+            Text(engine.currentURLString.replacingOccurrences(of: "https://", with: ""))
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundColor(Color.white.opacity(0.45))
+                .lineLimit(1)
+                .frame(maxWidth: 300)
             
             Spacer()
             
-            // Action Buttons
-            HStack(spacing: 6) {
-                // Direct Sign-In with Google Button
-                if engine.isSignedIn {
-                    HStack(spacing: 5) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundColor(Color.green)
-                        Text("Connected")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundColor(.white)
+            // Direct Google Sign-In Action Button / Signed In Indicator
+            if engine.isSignedIn {
+                HStack(spacing: 5) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(Color.green)
+                    Text("Signed In")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+                
+                Button(action: {
+                    engine.loadGoogleSignIn()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 9.5))
+                        Text("Switch Account")
+                            .font(.system(size: 10, weight: .medium))
                     }
+                    .foregroundColor(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4.5)
                     .background(Color.white.opacity(0.12))
                     .clipShape(Capsule())
-                    
-                    Button(action: {
-                        engine.loadGoogleSignIn()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 9.5))
-                            Text("Switch Account")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4.5)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Sign in with another Google Account")
-                } else {
-                    Button(action: {
-                        engine.loadGoogleSignIn()
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 10.5, weight: .bold))
-                            Text("Sign In with Google")
-                                .font(.system(size: 10.5, weight: .bold))
-                        }
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.white)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-                
-                // Open in System Browser
-                Button(action: {
-                    engine.openGoogleCalendarInBrowser()
-                }) {
-                    Image(systemName: "safari")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 26, height: 26)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Open in System Browser (Safari / Chrome)")
-                
-                // Clear & Reset Cache Button
+                .help("Sign in with another Google Account")
+            } else {
                 Button(action: {
-                    engine.clearCookiesAndCache()
+                    engine.loadGoogleSignIn()
                 }) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color.red.opacity(0.85))
-                        .frame(width: 26, height: 26)
-                        .background(Color.red.opacity(0.12))
-                        .clipShape(Circle())
+                    HStack(spacing: 5) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 10.5, weight: .bold))
+                        Text("Sign In with Google")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white)
+                    .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("Clear Cookies & Cache")
             }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 42)
-    }
-    
-    private var securityNoticeRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "lock.shield")
-                .font(.system(size: 9.5))
-                .foregroundColor(.orange)
             
-            Text("If Google blocks embedded sign-in (\"not secure\"), sign in via your system browser:")
-                .font(.system(size: 10, weight: .regular))
-                .foregroundColor(.white.opacity(0.75))
-            
+            // Open in System Browser Button (Safari / Chrome fallback)
             Button(action: {
                 engine.openGoogleCalendarInBrowser()
             }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "safari")
-                        .font(.system(size: 9.5))
-                    Text("Open Safari / Chrome ↗")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .foregroundColor(.cyan)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2.5)
-                .background(Color.cyan.opacity(0.15))
-                .clipShape(Capsule())
+                Image(systemName: "safari")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 26, height: 26)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Circle())
             }
             .buttonStyle(.plain)
+            .help("Open in System Browser (Safari / Chrome)")
             
-            Spacer()
-            
-            Text("Or sync macOS Calendar directly")
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundColor(.white.opacity(0.5))
+            // Clear & Reset Cache Button
+            Button(action: {
+                engine.clearCookiesAndCache()
+            }) {
+                Image(systemName: "trash")
+                    .font(.system(size: 10))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .frame(width: 24, height: 24)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear Cookies & Reset Google Calendar Session")
         }
         .padding(.horizontal, 14)
-        .frame(height: 28)
-        .background(Color.black.opacity(0.25))
+        .frame(height: 42)
+        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
+        .overlay(
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1),
+            alignment: .bottom
+        )
     }
 }
 

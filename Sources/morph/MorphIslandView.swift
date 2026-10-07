@@ -901,7 +901,7 @@ private struct CompactCalendarWingLeft: View {
             HStack(spacing: 5) {
                 Image(systemName: "calendar")
                     .font(.system(size: 9.5, weight: .bold))
-                    .foregroundColor(.cyan)
+                    .foregroundColor(.white.opacity(0.85))
                 
                 if let next = calendar.activeAlertEvent ?? calendar.nextUpcomingEvent {
                     Text("In \(next.minutesUntilStart)m: \(next.title)")
@@ -941,7 +941,7 @@ private struct CompactCalendarWingRight: View {
                     .foregroundColor(.black)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2.5)
-                    .background(Color.cyan)
+                    .background(Color.white)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)

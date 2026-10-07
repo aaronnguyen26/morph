@@ -87,6 +87,16 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
         
+        // Auto-sync calendar whenever the user returns to Morph from an external app (e.g. Chrome Google sign-in)
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    self.model.calendar.syncWithSystemCalendar()
+                }
+            }
+            .store(in: &cancellables)
+        
         // Listen to programmatic expand/collapse changes from model
         model.$isExpanded
             .dropFirst()
@@ -167,6 +177,7 @@ public final class MorphController: NSObject {
             case "timer", "focus": self.model.openFeature(.timer)
             case "music": self.model.openFeature(.music)
             case "notes": self.model.openFeature(.notes)
+            case "calendar": self.model.openFeature(.calendar)
             default: break
             }
         }

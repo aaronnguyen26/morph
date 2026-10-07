@@ -1,5 +1,6 @@
 import XCTest
 import WebKit
+import SwiftUI
 @testable import morph
 
 final class MorphTests: XCTestCase {
@@ -1350,7 +1351,8 @@ final class MorphTests: XCTestCase {
                     "id": "real_google_evt_102",
                     "title": "Product Growth Sync",
                     "description": "Weekly metrics overview",
-                    "timeText": "4:00 PM",
+                    "startTimeMs": fakeNow.addingTimeInterval(7200).timeIntervalSince1970 * 1000.0,
+                    "endTimeMs": fakeNow.addingTimeInterval(9000).timeIntervalSince1970 * 1000.0,
                     "location": "Room 402"
                 ]
             ]
@@ -1607,12 +1609,8 @@ final class MorphTests: XCTestCase {
         let testEmail = "developer@gmail.com"
         calendar.configureUser(email: testEmail)
         
-        // 1. Direct sign-in from Calendar view trigger
+        // 1. Direct sign-in opens Chrome / browser with user profile email
         calendar.signInWithGoogle()
-        
-        XCTAssertTrue(engine.isCalendarWindowVisible, "Calendar window must become visible upon triggering sign in")
-        XCTAssertTrue(engine.currentURLString.contains("accounts.google.com"), "Google sign-in URL must target accounts.google.com")
-        XCTAssertTrue(engine.currentURLString.contains("developer%40gmail.com") || engine.currentURLString.contains("developer@gmail.com"), "AccountChooser must include user profile email")
         
         // 2. Navigation controls and cache reset
         engine.goBack()
@@ -1768,7 +1766,233 @@ final class MorphTests: XCTestCase {
         calendar.addQuickEvent(title: "Emergency Retro", durationMinutes: 20)
         XCTAssertTrue(calendar.events.contains(where: { $0.title == "Emergency Retro" }))
     }
+    
+    @MainActor
+    func testBrowserGoogleCalendarSignInAndMorphIntegrationFlow() {
+        let engine = GoogleCalendarEngine()
+        let eventKit = EventKitCalendarEngine()
+        let apiBridge = GoogleCalendarAPIBridge()
+        let calendar = CalendarModel(engine: engine, eventKitEngine: eventKit, apiBridge: apiBridge)
+        
+        calendar.configureUser(email: "minh7898888@gmail.com")
+        XCTAssertEqual(calendar.configuredUserEmail, "minh7898888@gmail.com")
+        XCTAssertTrue(calendar.isSignedIn)
+        
+        // Calling signInWithGoogle() triggers external browser sign-in (supporting any user browser)
+        calendar.signInWithGoogle()
+        
+        // Calling openGoogleCalendar() opens Google Calendar in user browser
+        calendar.openGoogleCalendar()
+        
+        // Ingest simulated API events into apiBridge
+        let fakeNow = Date()
+        let apiEvent = CalendarEvent(
+            id: "gcal_test_event_1",
+            title: "Economics Lecture",
+            description: "econ • Microeconomics midterm review",
+            startTime: fakeNow.addingTimeInterval(3600),
+            endTime: fakeNow.addingTimeInterval(5400)
+        )
+        apiBridge.events = [apiEvent]
+        calendar.mergeAllEvents()
+        
+        // Verify calendar has events merged seamlessly
+        XCTAssertEqual(calendar.configuredUserEmail, "minh7898888@gmail.com")
+        XCTAssertTrue(calendar.events.contains(where: { $0.title == "Economics Lecture" }))
+    }
+    
+    @MainActor
+    func testCalendarNotificationPreferencesAndLeadTimes() {
+        let calendar = CalendarModel()
+        
+        // 1. Initial notification state
+        calendar.notificationsEnabled = true
+        XCTAssertTrue(calendar.notificationsEnabled)
+        
+        // Toggle notification off and on
+        calendar.toggleNotifications()
+        XCTAssertFalse(calendar.notificationsEnabled)
+        calendar.toggleNotifications()
+        XCTAssertTrue(calendar.notificationsEnabled)
+        
+        // 2. Cycle lead times
+        calendar.notificationLeadMinutes = 10
+        calendar.cycleNotificationLeadMinutes() // 10 -> 15
+        XCTAssertEqual(calendar.notificationLeadMinutes, 15)
+        calendar.cycleNotificationLeadMinutes() // 15 -> 30
+        XCTAssertEqual(calendar.notificationLeadMinutes, 30)
+        calendar.cycleNotificationLeadMinutes() // 30 -> 5
+        XCTAssertEqual(calendar.notificationLeadMinutes, 5)
+        calendar.cycleNotificationLeadMinutes() // 5 -> 10
+        XCTAssertEqual(calendar.notificationLeadMinutes, 10)
+        
+        // 3. Evaluate alerts based on customized lead time
+        let now = Date()
+        let upcomingEvent = CalendarEvent(
+            id: "notif_lead_test_event",
+            title: "Executive Strategy Review",
+            description: "Quarterly alignment meeting",
+            startTime: now.addingTimeInterval(8 * 60), // in 8 minutes
+            endTime: now.addingTimeInterval(38 * 60),
+            meetLink: "https://meet.google.com/abc-defg-hij"
+        )
+        
+        calendar.events = [upcomingEvent]
+        
+        // Lead time 5m -> event in 8m should NOT trigger alert
+        calendar.notificationLeadMinutes = 5
+        calendar.evaluateUpcomingAlerts()
+        XCTAssertFalse(calendar.showNotchAlert)
+        XCTAssertNil(calendar.activeAlertEvent)
+        
+        // Lead time 10m -> event in 8m SHOULD trigger alert
+        calendar.notificationLeadMinutes = 10
+        calendar.evaluateUpcomingAlerts()
+        XCTAssertTrue(calendar.showNotchAlert)
+        XCTAssertEqual(calendar.activeAlertEvent?.title, "Executive Strategy Review")
+        
+        // Dismiss alert
+        calendar.dismissNotchAlert()
+        XCTAssertFalse(calendar.showNotchAlert)
+        XCTAssertNil(calendar.activeAlertEvent)
+    }
+    
+    @MainActor
+    func testDirectEventCreationAndCalendarViewEnhancements() {
+        let calendar = CalendarModel()
+        calendar.configuredUserEmail = "minh7898888@gmail.com"
+        calendar.isSignedIn = true
+        
+        // Select a specific day (tomorrow)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date())!
+        calendar.selectedDate = tomorrow
+        
+        // 1. Quick add event directly from Morph
+        calendar.addQuickEvent(title: "Deep Work Sprint")
+        
+        // Verify event was created and is scheduled on selectedDate
+        let tomorrowEvents = calendar.eventsForDate(tomorrow)
+        XCTAssertFalse(tomorrowEvents.isEmpty)
+        XCTAssertTrue(tomorrowEvents.contains(where: { $0.title == "Deep Work Sprint" }))
+        
+        let created = tomorrowEvents.first(where: { $0.title == "Deep Work Sprint" })!
+        XCTAssertEqual(Calendar.current.component(.day, from: created.startTime), Calendar.current.component(.day, from: tomorrow))
+        
+        // 2. Add detailed event with custom hour, duration, Meet link, and location
+        calendar.addQuickEvent(
+            title: "Product Architecture Review",
+            durationMinutes: 60,
+            startHour: 15,
+            startMinute: 0,
+            addMeetLink: true,
+            description: "Deep dive into Morph system architecture",
+            location: "Morph Workspace"
+        )
+        
+        let detailedEvents = calendar.eventsForDate(tomorrow)
+        guard let detailed = detailedEvents.first(where: { $0.title == "Product Architecture Review" }) else {
+            XCTFail("Expected detailed event to exist")
+            return
+        }
+        
+        XCTAssertEqual(Calendar.current.component(.hour, from: detailed.startTime), 15)
+        XCTAssertEqual(Calendar.current.component(.minute, from: detailed.startTime), 0)
+        XCTAssertEqual(Int(detailed.endTime.timeIntervalSince(detailed.startTime)), 3600)
+        XCTAssertNotNil(detailed.meetLink)
+        XCTAssertEqual(detailed.location, "Morph Workspace")
+    }
+    
+    @MainActor
+    func testCalendarHorizontalDeckLevelAlignment() {
+        let model = NotchModel()
+        model.selectedTab = .calendar
+        model.isExpanded = true
+        model.calendar.isSignedIn = true
+        let event = CalendarEvent(
+            id: "1",
+            title: "Team Standup",
+            description: "Daily meeting",
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(3600),
+            location: "Room A"
+        )
+        model.calendar.events = [event]
+        
+        let islandView = MorphIslandView(model: model, onMouseEnter: {}, onMouseExit: {})
+        let hosting = NSHostingView(rootView: islandView)
+        hosting.frame = NSRect(x: 0, y: 0, width: 640, height: 300)
+        hosting.layoutSubtreeIfNeeded()
+        
+        let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)!
+        hosting.cacheDisplay(in: hosting.bounds, to: rep)
+        
+        // Find October text Y inside left card (x: 40...250, y >= 88)
+        var octMinY = 999
+        for y in 88..<rep.pixelsHigh {
+            for x in 40...250 {
+                if rep.colorAt(x: x, y: y)!.redComponent > 0.85 {
+                    if y < octMinY { octMinY = y }
+                }
+            }
+        }
+        
+        // Find AGENDA text Y inside right card (x: 600...800, y >= 88)
+        var agMinY = 999
+        for y in 88..<rep.pixelsHigh {
+            for x in 600...800 {
+                if rep.colorAt(x: x, y: y)!.redComponent > 0.85 {
+                    if y < agMinY { agMinY = y }
+                }
+            }
+        }
+        
+        XCTAssertNotEqual(octMinY, 999, "October text must be found")
+        XCTAssertNotEqual(agMinY, 999, "AGENDA text must be found")
+        XCTAssertEqual(octMinY, agMinY, "AGENDA and October month title must be horizontally level across the island")
+    }
+    
+    @MainActor
+    func testCalendarAddEventFullDeckSwitching() {
+        let calendar = CalendarModel()
+        calendar.isSignedIn = true
+        let event = CalendarEvent(
+            id: "1",
+            title: "Morning Sync",
+            description: "Sync with team",
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(1800)
+        )
+        calendar.events = [event]
+        
+        let view = CalendarView(calendar: calendar)
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = NSRect(x: 0, y: 0, width: 620, height: 260)
+        hosting.layoutSubtreeIfNeeded()
+        
+        // Render view in normal agenda mode
+        let repAgenda = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds)!
+        hosting.cacheDisplay(in: hosting.bounds, to: repAgenda)
+        XCTAssertGreaterThan(repAgenda.pixelsWide, 0)
+        
+        // Trigger quick event creation directly
+        calendar.addQuickEvent(
+            title: "All-Hands Architecture Review",
+            durationMinutes: 45,
+            startHour: 16,
+            startMinute: 0,
+            addMeetLink: true,
+            description: "Quarterly architecture review",
+            location: "Room 101"
+        )
+        
+        let created = calendar.eventsForDate(calendar.selectedDate)
+        XCTAssertTrue(created.contains(where: { $0.title == "All-Hands Architecture Review" }))
+        let reviewEvent = created.first(where: { $0.title == "All-Hands Architecture Review" })!
+        XCTAssertEqual(reviewEvent.location, "Room 101")
+        XCTAssertNotNil(reviewEvent.meetLink)
+    }
 }
+
 
 
 

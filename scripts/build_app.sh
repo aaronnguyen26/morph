@@ -61,3 +61,9 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 EOF
 
 echo "✅ Morph.app built successfully at: $APP_DIR"
+
+# Install into /Applications
+echo "🚀 Installing Morph.app to /Applications/Morph.app..."
+rm -rf "/Applications/Morph.app"
+cp -R "$APP_DIR" "/Applications/Morph.app"
+echo "✅ Morph.app successfully installed to /Applications/Morph.app"
