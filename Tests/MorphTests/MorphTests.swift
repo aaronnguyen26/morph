@@ -2034,6 +2034,54 @@ final class MorphTests: XCTestCase {
         calendar.deleteEvent(eventB)
         XCTAssertTrue(calendar.events.isEmpty)
     }
+    
+    @MainActor
+    func testTargetCalendarSelectionAndCreationFeature() {
+        let calendar = CalendarModel()
+        calendar.configuredUserEmail = "minh7898888@gmail.com"
+        calendar.isSignedIn = true
+        
+        // Mock available calendars
+        calendar.apiBridge.availableCalendars = [
+            GoogleCalendarInfo(id: "minh7898888@gmail.com", summary: "econ", isPrimary: true, accessRole: "owner"),
+            GoogleCalendarInfo(id: "math_cal_id@group.calendar.google.com", summary: "math", isPrimary: false, accessRole: "owner"),
+            GoogleCalendarInfo(id: "debate_cal_id@group.calendar.google.com", summary: "debate", isPrimary: false, accessRole: "owner")
+        ]
+        
+        XCTAssertEqual(calendar.apiBridge.availableCalendars.count, 3)
+        XCTAssertEqual(calendar.apiBridge.availableCalendars.first?.summary, "econ")
+        XCTAssertTrue(calendar.apiBridge.availableCalendars.first?.isPrimary == true)
+        
+        // Add event targeting secondary calendar "math"
+        calendar.addQuickEvent(
+            title: "Math Study Group",
+            durationMinutes: 60,
+            startHour: 15,
+            startMinute: 0,
+            addMeetLink: true,
+            description: "Study session for chapter 4",
+            location: "Library",
+            targetCalendarId: "math_cal_id@group.calendar.google.com"
+        )
+        
+        let events = calendar.eventsForDate(calendar.selectedDate)
+        XCTAssertTrue(events.contains(where: { $0.title == "Math Study Group" }))
+        let studyEvent = events.first(where: { $0.title == "Math Study Group" })!
+        XCTAssertEqual(studyEvent.location, "Library")
+        XCTAssertNotNil(studyEvent.meetLink)
+        
+        // Verify user event named "testing" is preserved and not accidentally filtered
+        let testEvent = CalendarEvent(
+            id: "user_test_evt_1",
+            title: "testing",
+            description: "User test session",
+            startTime: Date().addingTimeInterval(1800),
+            endTime: Date().addingTimeInterval(3600)
+        )
+        calendar.events.append(testEvent)
+        calendar.mergeAllEvents()
+        XCTAssertTrue(calendar.events.contains(where: { $0.title == "testing" }))
+    }
 }
 
 

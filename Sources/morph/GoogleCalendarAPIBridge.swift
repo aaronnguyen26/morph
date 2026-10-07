@@ -1,6 +1,20 @@
 import Foundation
 import Combine
 
+public struct GoogleCalendarInfo: Identifiable, Hashable, Equatable {
+    public let id: String
+    public let summary: String
+    public let isPrimary: Bool
+    public let accessRole: String
+    
+    public init(id: String, summary: String, isPrimary: Bool, accessRole: String) {
+        self.id = id
+        self.summary = summary
+        self.isPrimary = isPrimary
+        self.accessRole = accessRole
+    }
+}
+
 @MainActor
 public final class GoogleCalendarAPIBridge: ObservableObject {
     public static let shared = GoogleCalendarAPIBridge()
@@ -10,6 +24,7 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
     @Published public var events: [CalendarEvent] = []
     @Published public var primaryEmail: String?
     @Published public var lastSyncDate: Date?
+    @Published public var availableCalendars: [GoogleCalendarInfo] = []
     
     // Map event ID -> Google Calendar ID (e.g. primary or secondary group calendar)
     private var eventCalendarMap: [String: String] = [:]
@@ -112,6 +127,17 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
             return []
         }
         
+        // Ingest available calendars list
+        var loadedCalendars: [GoogleCalendarInfo] = []
+        for c in items {
+            guard let id = c["id"] as? String else { continue }
+            let summary = (c["summary"] as? String) ?? id
+            let isPrimary = (c["primary"] as? Bool) ?? false
+            let accessRole = (c["accessRole"] as? String) ?? "reader"
+            loadedCalendars.append(GoogleCalendarInfo(id: id, summary: summary, isPrimary: isPrimary, accessRole: accessRole))
+        }
+        self.availableCalendars = loadedCalendars
+
         // Detect primary calendar email
         if let primaryCal = items.first(where: { ($0["primary"] as? Bool) == true }),
            let id = primaryCal["id"] as? String {
@@ -232,13 +258,14 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
         endTime: Date,
         description: String? = nil,
         location: String? = nil,
-        addMeetLink: Bool = false
+        addMeetLink: Bool = false,
+        calendarId: String? = nil
     ) async -> CalendarEvent? {
         guard let token = await ensureValidAccessToken() else {
             return nil
         }
         
-        let targetCalId = primaryEmail ?? "primary"
+        let targetCalId = calendarId ?? primaryEmail ?? "primary"
         guard let encodedCalId = targetCalId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
             return nil
         }

@@ -263,8 +263,7 @@ public final class CalendarModel: ObservableObject {
                 return !t.contains("emergency retro") &&
                        !t.contains("emergency standup") &&
                        !t.contains("deep work sprint") &&
-                       !t.contains("product architecture review") &&
-                       t != "testing"
+                       !t.contains("product architecture review")
             }
         }
         
@@ -566,7 +565,8 @@ public final class CalendarModel: ObservableObject {
         startMinute: Int = 0,
         addMeetLink: Bool = false,
         description: String? = nil,
-        location: String? = nil
+        location: String? = nil,
+        targetCalendarId: String? = nil
     ) {
         let cal = Calendar.current
         let now = Date()
@@ -615,7 +615,8 @@ public final class CalendarModel: ObservableObject {
                     endTime: end,
                     description: eventDesc,
                     location: eventLoc,
-                    addMeetLink: addMeetLink
+                    addMeetLink: addMeetLink,
+                    calendarId: targetCalendarId
                 ) {
                     await MainActor.run {
                         // Replace optimistic local event with real Google Calendar event ID

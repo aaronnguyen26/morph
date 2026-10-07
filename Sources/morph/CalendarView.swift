@@ -8,6 +8,7 @@ public struct CalendarView: View {
     @State private var newEventHour: Int = 14
     @State private var newEventHasMeet: Bool = true
     @State private var newEventLocation: String = ""
+    @State private var selectedCalendarId: String = "primary"
     @State private var isSubmittingEvent: Bool = false
     @State private var isAddingEvent: Bool = false
     @State private var showNotificationSettings: Bool = false
@@ -317,6 +318,9 @@ public struct CalendarView: View {
                     Button(action: {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             isAddingEvent.toggle()
+                            if isAddingEvent && selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                                selectedCalendarId = first.id
+                            }
                         }
                     }) {
                         HStack(spacing: 3) {
@@ -435,6 +439,9 @@ public struct CalendarView: View {
                             Button(action: {
                                 withAnimation(.easeInOut(duration: 0.18)) {
                                     isAddingEvent = true
+                                    if selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                                        selectedCalendarId = first.id
+                                    }
                                 }
                             }) {
                                 HStack(spacing: 3) {
@@ -619,7 +626,7 @@ public struct CalendarView: View {
                 }
             }
             
-            // 3. Location & Google Meet
+            // 3. Location, Conferencing & Target Calendar
             VStack(alignment: .leading, spacing: 2) {
                 Text("LOCATION & CONFERENCING")
                     .font(.system(size: 6.5, weight: .bold, design: .monospaced))
@@ -661,6 +668,48 @@ public struct CalendarView: View {
                     }
                     .buttonStyle(.plain)
                     .help(newEventHasMeet ? "Google Meet conference attached" : "Attach Google Meet")
+                }
+                
+                // Target Google Calendar Selector (if multiple calendars exist)
+                let writableCals = calendar.apiBridge.availableCalendars.filter { $0.accessRole == "owner" || $0.accessRole == "writer" }
+                if writableCals.count > 1 {
+                    HStack(spacing: 4) {
+                        Text("CALENDAR:")
+                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.45))
+                        
+                        Menu {
+                            ForEach(writableCals) { cal in
+                                Button(action: { selectedCalendarId = cal.id }) {
+                                    HStack {
+                                        Text(cal.summary)
+                                        if cal.isPrimary {
+                                            Text("(Primary)")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                let currentSummary = writableCals.first(where: { $0.id == selectedCalendarId })?.summary ?? "Primary"
+                                Text(currentSummary)
+                                    .font(.system(size: 7.5, weight: .semibold))
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 5.5))
+                                    .foregroundColor(Color.white.opacity(0.5))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Capsule())
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        
+                        Spacer()
+                    }
+                    .padding(.top, 1)
                 }
             }
             
@@ -745,7 +794,8 @@ public struct CalendarView: View {
             startMinute: 0,
             addMeetLink: newEventHasMeet,
             description: "Scheduled via Morph for \(dateString)",
-            location: loc.isEmpty ? nil : loc
+            location: loc.isEmpty ? nil : loc,
+            targetCalendarId: selectedCalendarId
         )
         
         // Reset inputs and close creation drawer after a brief feedback animation
