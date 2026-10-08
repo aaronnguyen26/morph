@@ -85,20 +85,31 @@ public struct MorphIslandView: View {
                         style: .continuous
                     )
                     .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(model.isExpanded ? 0.20 : 0.28),
-                                Color.white.opacity(model.isExpanded ? 0.08 : 0.16)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1
+                        model.dropShelf.isDraggingOverNotch
+                            ? LinearGradient(
+                                colors: [Color.cyan.opacity(0.85), Color.cyan.opacity(0.5)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            : LinearGradient(
+                                colors: [
+                                    Color.white.opacity(model.isExpanded ? 0.20 : 0.28),
+                                    Color.white.opacity(model.isExpanded ? 0.08 : 0.16)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                        style: StrokeStyle(
+                            lineWidth: model.dropShelf.isDraggingOverNotch ? 1.5 : 1,
+                            dash: model.dropShelf.isDraggingOverNotch ? [6, 3] : []
+                        )
                     )
                 )
                 .shadow(
-                    color: model.isExpanded ? Color.black.opacity(0.65) : Color.black.opacity(0.3),
-                    radius: model.isExpanded ? 24 : 8,
+                    color: model.dropShelf.isDraggingOverNotch
+                        ? Color.cyan.opacity(0.55)
+                        : (model.isExpanded ? Color.black.opacity(0.65) : Color.black.opacity(0.3)),
+                    radius: model.dropShelf.isDraggingOverNotch ? 16 : (model.isExpanded ? 24 : 8),
                     x: 0,
                     y: model.isExpanded ? 10 : 4
                 )

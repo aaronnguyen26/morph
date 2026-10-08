@@ -170,6 +170,19 @@ public final class CommandApprovalModel: ObservableObject {
         let handler = completionHandlers.removeValue(forKey: id)
         handler?(decision)
         
+        // Post distributed notification for CLI / external scripts waiting on the decision
+        DistributedNotificationCenter.default().postNotificationName(
+            NSNotification.Name("com.morph.commandApprovalDecision.\(id.uuidString)"),
+            object: nil,
+            userInfo: [
+                "id": id.uuidString,
+                "status": newStatus.rawValue,
+                "decision": decision == .approved ? "approved" : (decision == .rejected ? "rejected" : "expired"),
+                "exitCode": NSNumber(value: decision.exitCode)
+            ],
+            deliverImmediately: true
+        )
+        
         // Update currentRequest pointer
         if currentRequest?.id == id {
             currentRequest = pendingRequests.first

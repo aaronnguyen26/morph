@@ -238,12 +238,12 @@ public final class NotchModel: ObservableObject {
         
         if timerRunning && musicPlaying {
             return .dualActive
+        } else if devMonitor.isTaskActive || (devMonitor.currentTask != nil && devMonitor.statusMessage != "Idle") {
+            return .devMonitorActive
         } else if timerRunning {
             return .pomodoroOnly
         } else if musicPlaying {
             return .mediaOnly
-        } else if devMonitor.isTaskActive {
-            return .devMonitorActive
         } else if calendarAlert {
             return .calendarAlert
         } else if dropShelf.hasItems {

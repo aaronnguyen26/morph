@@ -137,6 +137,14 @@ public final class DevAgentMonitorModel: ObservableObject {
         self.progress = isSuccess ? 1.0 : progress
         self.statusMessage = finalMessage
         self.isTaskActive = false
+        
+        // Retain completion state briefly, then return notch to idle
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard let self = self, !self.isTaskActive else { return }
+            self.currentTask = nil
+            self.statusMessage = "Idle"
+        }
     }
     
     public func cancelTask() {

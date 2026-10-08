@@ -265,6 +265,7 @@ public struct DevAgentMonitorView: View {
 public struct CompactDevMonitorWingLeft: View {
     @ObservedObject var monitor: DevAgentMonitorModel
     let model: NotchModel
+    @State private var isSpinning: Bool = false
     
     public init(monitor: DevAgentMonitorModel, model: NotchModel) {
         self.monitor = monitor
@@ -275,16 +276,30 @@ public struct CompactDevMonitorWingLeft: View {
         Button(action: {
             model.openContextualFeature(.devMonitor)
         }) {
-            HStack(spacing: 5) {
-                Text(">_")
-                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.cyan)
+            HStack(spacing: 5.5) {
+                if monitor.isTaskActive {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.cyan)
+                } else if monitor.currentTask?.status == .succeeded {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.green)
+                } else if monitor.currentTask?.status == .failed {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.red)
+                } else {
+                    Text(">_")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.cyan)
+                }
                 
                 Text(truncatedMessage)
                     .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(Color.white.opacity(0.9))
                     .lineLimit(1)
-                    .frame(maxWidth: 110, alignment: .leading)
+                    .frame(maxWidth: 125, alignment: .leading)
             }
             .padding(.leading, 12)
         }

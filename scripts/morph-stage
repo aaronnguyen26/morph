@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# morph-stage: Stage one or more files directly into Morph's Drop Shelf!
+# Usage:
+#   morph-stage file.png report.pdf
+#   morph-stage ~/Downloads/*
+
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+    echo "Usage: morph-stage <file-path...>"
+    exit 1
+fi
+
+for file in "$@"; do
+    ABSPATH=$(cd "$(dirname "$file")" && pwd)/$(basename "$file")
+    if [[ -e "$ABSPATH" ]]; then
+        osascript -l JavaScript -e "
+            var notif = $.NSDistributedNotificationCenter.defaultCenter;
+            var dict = $.NSMutableDictionary.alloc.init;
+            dict.setObjectForKey(\"$ABSPATH\", \"path\");
+            notif.postNotificationNameObjectUserInfoDeliverImmediately(\"com.morph.dropShelf.stage\", null, dict, true);
+        " 2>/dev/null || true
+        echo "📥 Staged to Morph Drop Shelf: $ABSPATH"
+    else
+        echo "⚠️  File not found: $file"
+    fi
+done

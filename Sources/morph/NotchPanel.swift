@@ -24,6 +24,7 @@ public final class NotchPanel: NSPanel {
         self.standardWindowButton(.closeButton)?.isHidden = true
         self.standardWindowButton(.miniaturizeButton)?.isHidden = true
         self.standardWindowButton(.zoomButton)?.isHidden = true
+        self.registerForDraggedTypes([.fileURL, .URL, .string])
     }
     
     public override var canBecomeKey: Bool {

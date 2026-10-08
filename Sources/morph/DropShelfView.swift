@@ -348,6 +348,7 @@ public struct DropShelfCardView: View {
 public struct CompactDropShelfWingLeft: View {
     @ObservedObject var shelf: DropShelfModel
     let model: NotchModel
+    @State private var isPulsing: Bool = false
     
     public init(shelf: DropShelfModel, model: NotchModel) {
         self.shelf = shelf
@@ -358,18 +359,33 @@ public struct CompactDropShelfWingLeft: View {
         Button(action: {
             model.openContextualFeature(.dropShelf)
         }) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 if shelf.isDraggingOverNotch {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundColor(.cyan)
-                    Text("Drop Here")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                    ZStack {
+                        Circle()
+                            .stroke(Color.cyan.opacity(0.4), lineWidth: 2)
+                            .frame(width: 17, height: 17)
+                            .scaleEffect(isPulsing ? 1.25 : 0.95)
+                            .opacity(isPulsing ? 0.2 : 0.8)
+                        
+                        Image(systemName: "arrow.down.to.line.compact")
+                            .font(.system(size: 10, weight: .black))
+                            .foregroundColor(.cyan)
+                    }
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                            isPulsing = true
+                        }
+                    }
+                    
+                    Text("Drop to Stash")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
                         .foregroundColor(.cyan)
                 } else {
-                    Image(systemName: "paperclip")
+                    Image(systemName: "tray.and.arrow.down.fill")
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(.white)
+                    
                     Text("\(shelf.count) \(shelf.count == 1 ? "file" : "files")")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
@@ -392,8 +408,16 @@ public struct CompactDropShelfWingRight: View {
     }
     
     public var body: some View {
-        HStack(spacing: 5) {
-            if shelf.hasItems {
+        HStack(spacing: 6) {
+            if shelf.isDraggingOverNotch {
+                Text("Release")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.cyan)
+                    .clipShape(Capsule())
+            } else if shelf.hasItems {
                 Button(action: {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                         shelf.clearAll()

@@ -71,6 +71,52 @@ public final class MorphController: NSObject {
             )
         }
         
+        self.hostingView.onDraggingEntered = { [weak self] sender in
+            guard let self = self else { return [] }
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                    self.model.dropShelf.isDraggingOverNotch = true
+                }
+            }
+            return .copy
+        }
+        
+        self.hostingView.onDraggingUpdated = { _ in
+            return .copy
+        }
+        
+        self.hostingView.onDraggingExited = { [weak self] _ in
+            guard let self = self else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                    self.model.dropShelf.isDraggingOverNotch = false
+                }
+            }
+        }
+        
+        self.hostingView.onPerformDragOperation = { [weak self] sender in
+            guard let self = self else { return false }
+            let pasteboard = sender.draggingPasteboard
+            guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty else {
+                Task { @MainActor [weak self] in
+                    self?.model.dropShelf.isDraggingOverNotch = false
+                }
+                return false
+            }
+            
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                    self.model.dropShelf.isDraggingOverNotch = false
+                    self.model.dropShelf.stageFiles(urls: urls)
+                    self.model.openContextualFeature(.dropShelf)
+                }
+            }
+            return true
+        }
+        
         self.panel.contentView = hostingView
         self.panel.onKeyEquivalent = { event in
             ShortcutManager.shared.handleKeyEvent(event)
@@ -110,19 +156,14 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
             
-        // Observe Pomodoro, Media, and Scratchpad state to dynamically size compact notch indicators
-        Publishers.Merge4(
-            model.pomodoro.$isRunning.map { _ in () },
-            model.media.$isPlaying.map { _ in () },
-            model.$isNotePinnedToNotch.map { _ in () },
-            model.scratchpad.$text.map { _ in () }
-        )
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] _ in
-            guard let self = self, !self.model.isExpanded else { return }
-            self.resizePanelToRestingState()
-        }
-        .store(in: &cancellables)
+        // Observe any submodel state changes to dynamically resize the compact notch window
+        model.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self, !self.model.isExpanded else { return }
+                self.resizePanelToRestingState()
+            }
+            .store(in: &cancellables)
         
         // Listen to external/scriptable distributed notifications
         DistributedNotificationCenter.default().addObserver(
@@ -166,6 +207,30 @@ public final class MorphController: NSObject {
             name: NSNotification.Name("com.morph.togglePinNote"),
             object: nil
         )
+        
+        // Developer & Engineering IPC Observers (Listen on both Distributed and Default for testability)
+        let ipcNames = [
+            "com.morph.devTask.start": #selector(handleDevTaskStartNotification(_:)),
+            "com.morph.devTask.output": #selector(handleDevTaskOutputNotification(_:)),
+            "com.morph.devTask.complete": #selector(handleDevTaskCompleteNotification(_:)),
+            "com.morph.requestApproval": #selector(handleRequestApprovalNotification(_:)),
+            "com.morph.dropShelf.stage": #selector(handleStageFileNotification(_:))
+        ]
+        
+        for (name, selector) in ipcNames {
+            DistributedNotificationCenter.default().addObserver(
+                self,
+                selector: selector,
+                name: NSNotification.Name(name),
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: selector,
+                name: NSNotification.Name(name),
+                object: nil
+            )
+        }
     }
     
     @objc private func handleSelectTabNotification(_ notification: Notification) {
@@ -219,6 +284,83 @@ public final class MorphController: NSObject {
     @objc private func handleTogglePinNoteNotification(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             self?.model.isNotePinnedToNotch.toggle()
+        }
+    }
+    
+    @objc private func handleDevTaskStartNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let title = (notification.userInfo?["title"] as? String) ?? "Terminal Task"
+            let command = (notification.userInfo?["command"] as? String) ?? ""
+            let id = (notification.userInfo?["id"] as? String) ?? UUID().uuidString
+            self.model.devMonitor.startTask(id: id, title: title, command: command)
+        }
+    }
+    
+    @objc private func handleDevTaskOutputNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let line = notification.userInfo?["line"] as? String {
+                self.model.devMonitor.appendLine(line)
+            } else if let output = notification.userInfo?["output"] as? String {
+                self.model.devMonitor.appendOutput(output)
+            }
+            if let progressNum = notification.userInfo?["progress"] as? NSNumber {
+                self.model.devMonitor.updateProgress(progressNum.doubleValue)
+            }
+        }
+    }
+    
+    @objc private func handleDevTaskCompleteNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let isSuccess = (notification.userInfo?["isSuccess"] as? NSNumber)?.boolValue ?? true
+            let exitCode = (notification.userInfo?["exitCode"] as? NSNumber)?.int32Value ?? 0
+            let message = notification.userInfo?["message"] as? String
+            self.model.devMonitor.completeTask(isSuccess: isSuccess, exitCode: exitCode, message: message)
+        }
+    }
+    
+    @objc private func handleRequestApprovalNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard let command = notification.userInfo?["command"] as? String else { return }
+            
+            let riskStr = (notification.userInfo?["riskLevel"] as? String) ?? "medium"
+            let riskLevel: RiskLevel = RiskLevel(rawValue: riskStr.lowercased()) ?? .medium
+            let timeout = (notification.userInfo?["timeout"] as? NSNumber)?.doubleValue ?? 30.0
+            let source = (notification.userInfo?["source"] as? String) ?? "Terminal"
+            
+            var reqId: UUID? = nil
+            if let idStr = notification.userInfo?["id"] as? String, let parsed = UUID(uuidString: idStr) {
+                reqId = parsed
+            }
+            
+            let request = CommandApprovalRequest(
+                id: reqId ?? UUID(),
+                command: command,
+                riskLevel: riskLevel,
+                timeoutSeconds: timeout,
+                requestedAt: Date(),
+                source: source,
+                metadata: [:],
+                status: .pending
+            )
+            
+            self.model.commandApproval.pendingRequests.append(request)
+            if self.model.commandApproval.currentRequest == nil {
+                self.model.commandApproval.currentRequest = request
+            }
+        }
+    }
+    
+    @objc private func handleStageFileNotification(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let path = notification.userInfo?["path"] as? String {
+                let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+                self.model.dropShelf.stageFile(url: url)
+            }
         }
     }
     
