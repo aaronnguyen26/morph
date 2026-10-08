@@ -183,15 +183,37 @@ final class YTMInnerTubeTests: XCTestCase {
         XCTAssertNotNil(media.libraryError)
         
         engine.innerTubeOverride = { _, _ in
-            ["contents": ["singleColumnBrowseResultsRenderer": ["tabs": [["tabRenderer": ["content": ["sectionListRenderer": ["contents": [
-                ["gridRenderer": ["items": [
-                    ["musicTwoRowItemRenderer": [
-                        "title": ["runs": [["text": "Road Trip"]]],
-                        "subtitle": ["runs": [["text": "Playlist"]]],
-                        "navigationEndpoint": ["browseEndpoint": ["browseId": "VLPLroad"]]
-                    ]]
-                ]]]
-            ]]]]]]]]
+            [
+                "contents": [
+                    "singleColumnBrowseResultsRenderer": [
+                        "tabs": [
+                            [
+                                "tabRenderer": [
+                                    "content": [
+                                        "sectionListRenderer": [
+                                            "contents": [
+                                                [
+                                                    "gridRenderer": [
+                                                        "items": [
+                                                            [
+                                                                "musicTwoRowItemRenderer": [
+                                                                    "title": ["runs": [["text": "Road Trip"]]],
+                                                                    "subtitle": ["runs": [["text": "Playlist"]]],
+                                                                    "navigationEndpoint": ["browseEndpoint": ["browseId": "VLPLroad"]]
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
         }
         await engine.refreshLibraryPlaylists()
         XCTAssertNil(engine.libraryError)

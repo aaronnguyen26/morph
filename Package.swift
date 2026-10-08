@@ -17,7 +17,10 @@ let package = Package(
         .testTarget(
             name: "MorphTests",
             dependencies: ["morph"],
-            path: "Tests/MorphTests"
+            path: "Tests/MorphTests",
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )
