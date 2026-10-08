@@ -357,6 +357,7 @@ public final class MorphController: NSObject {
         model.isHovered = true
         
         if !model.isExpanded {
+            model.syncExpandedFeatureWithActiveContext()
             expandPanel()
             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                 self.model.isExpanded = true

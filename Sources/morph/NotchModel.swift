@@ -356,13 +356,52 @@ public final class NotchModel: ObservableObject {
             .store(in: &cancellables)
     }
     
+    /// Synchronizes the displayed feature/tab with whatever active feature is showing in the collapsed HUD
+    public func syncExpandedFeatureWithActiveContext() {
+        switch compactHUDMode {
+        case .pomodoroOnly:
+            selectedTab = .timer
+            activeContextFeature = nil
+        case .mediaOnly:
+            selectedTab = .music
+            activeContextFeature = nil
+        case .dualActive:
+            // Dual active displays both timer and media. Focus is primary if running, otherwise music
+            if pomodoro.isRunning {
+                selectedTab = .timer
+            } else {
+                selectedTab = .music
+            }
+            activeContextFeature = nil
+        case .notesPinned:
+            selectedTab = .notes
+            activeContextFeature = nil
+        case .calendarAlert:
+            selectedTab = .calendar
+            activeContextFeature = nil
+        case .meetingFlight:
+            activeContextFeature = .meetingFlight
+        case .dropShelfActive:
+            activeContextFeature = .dropShelf
+        case .none:
+            // Remain on current tab or home
+            break
+        }
+    }
+    
     public func toggleExpand() {
+        if !isExpanded {
+            syncExpandedFeatureWithActiveContext()
+        }
         isExpanded.toggle()
     }
     
     public func togglePin() {
         isPinned.toggle()
         if isPinned {
+            if !isExpanded {
+                syncExpandedFeatureWithActiveContext()
+            }
             isExpanded = true
         }
     }
@@ -370,6 +409,7 @@ public final class NotchModel: ObservableObject {
     public func openFeature(_ tab: MorphTab) {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = tab
+            activeContextFeature = nil
             isExpanded = true
         }
     }

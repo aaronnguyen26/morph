@@ -324,6 +324,7 @@ public struct MorphIslandView: View {
     
     private var expandChevron: some View {
         Button(action: {
+            model.syncExpandedFeatureWithActiveContext()
             withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                 model.isExpanded = true
             }
@@ -668,6 +669,7 @@ private struct CompactPomodoroWingRight: View {
             .help(pomodoro.isRunning ? "Pause Focus Timer (⌘⏎)" : "Start Focus Timer (⌘⏎)")
             
             Button(action: {
+                model.syncExpandedFeatureWithActiveContext()
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                     model.isExpanded = true
                 }
@@ -809,6 +811,7 @@ private struct CompactMediaWingRight: View {
             .help("Next Track (⌘])")
             
             Button(action: {
+                model.syncExpandedFeatureWithActiveContext()
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                     model.isExpanded = true
                 }
@@ -945,6 +948,22 @@ private struct CompactDualWingRight: View {
             }
             .buttonStyle(.plain)
             .help("Next Track (⌘])")
+            
+            Button(action: {
+                model.syncExpandedFeatureWithActiveContext()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                    model.isExpanded = true
+                }
+            }) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .frame(width: 16, height: 16)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Expand Island (⌘⌥M)")
         }
         .padding(.trailing, 12)
     }
@@ -1044,6 +1063,7 @@ private struct CompactCalendarWingRight: View {
             .help("Dismiss Alert")
             
             Button(action: {
+                model.syncExpandedFeatureWithActiveContext()
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                     model.isExpanded = true
                 }
