@@ -41,6 +41,21 @@ public enum CompactHUDMode: String, Equatable {
     case dualActive
     case notesPinned
     case calendarAlert
+    case commandApproval
+    case meetingFlight
+    case devMonitorActive
+    case dropShelfActive
+    case devSnippetDetected
+}
+
+public enum ContextualFeature: String, Identifiable, Equatable {
+    case commandApproval = "Approval Gate"
+    case meetingFlight = "Meeting Cockpit"
+    case devMonitor = "Terminal Monitor"
+    case dropShelf = "Drop Shelf"
+    case devSnippet = "Snippet Shelf"
+    
+    public var id: String { rawValue }
 }
 
 @MainActor
@@ -57,6 +72,7 @@ public final class NotchModel: ObservableObject {
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
     @Published public var selectedTab: MorphTab = .home
+    @Published public var activeContextFeature: ContextualFeature? = nil
     
     // Sub-models for the features
     public let pomodoro: PomodoroModel
@@ -64,6 +80,11 @@ public final class NotchModel: ObservableObject {
     public let scratchpad: ScratchpadModel
     public let calendar: CalendarModel
     public let supabase: SupabaseService
+    public let dropShelf: DropShelfModel
+    public let meetingController: MeetingFlightControllerModel
+    public let devMonitor: DevAgentMonitorModel
+    public let commandApproval: CommandApprovalModel
+    public let devClipboard: DevSnippetClipboardModel
     
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
@@ -75,13 +96,23 @@ public final class NotchModel: ObservableObject {
         media: MediaControllerModel = MediaControllerModel(),
         scratchpad: ScratchpadModel = ScratchpadModel(),
         calendar: CalendarModel = CalendarModel(),
-        supabase: SupabaseService = .shared
+        supabase: SupabaseService = .shared,
+        dropShelf: DropShelfModel = DropShelfModel(),
+        meetingController: MeetingFlightControllerModel = MeetingFlightControllerModel(),
+        devMonitor: DevAgentMonitorModel = DevAgentMonitorModel(),
+        commandApproval: CommandApprovalModel = CommandApprovalModel(),
+        devClipboard: DevSnippetClipboardModel = DevSnippetClipboardModel()
     ) {
         self.pomodoro = pomodoro
         self.media = media
         self.scratchpad = scratchpad
         self.calendar = calendar
         self.supabase = supabase
+        self.dropShelf = dropShelf
+        self.meetingController = meetingController
+        self.devMonitor = devMonitor
+        self.commandApproval = commandApproval
+        self.devClipboard = devClipboard
         
         detectScreenNotch()
         observeSubmodels()
@@ -185,20 +216,40 @@ public final class NotchModel: ObservableObject {
     }
     
     public var compactHUDMode: CompactHUDMode {
+        if commandApproval.hasPendingApproval {
+            return .commandApproval
+        }
+        
+        if dropShelf.isDraggingOverNotch {
+            return .dropShelfActive
+        }
+        
+        if meetingController.isInCall || meetingController.isPreMeetingWindow {
+            return .meetingFlight
+        }
+        
+        if isNotePinnedToNotch {
+            return .notesPinned
+        }
+        
         let timerRunning = pomodoro.isRunning
         let musicPlaying = media.isPlaying
         let calendarAlert = calendar.showNotchAlert
         
-        if isNotePinnedToNotch {
-            return .notesPinned
-        } else if timerRunning && musicPlaying {
+        if timerRunning && musicPlaying {
             return .dualActive
         } else if timerRunning {
             return .pomodoroOnly
         } else if musicPlaying {
             return .mediaOnly
+        } else if devMonitor.isTaskActive {
+            return .devMonitorActive
         } else if calendarAlert {
             return .calendarAlert
+        } else if dropShelf.hasItems {
+            return .dropShelfActive
+        } else if devClipboard.showToast {
+            return .devSnippetDetected
         } else {
             return .none
         }
@@ -224,6 +275,16 @@ public final class NotchModel: ObservableObject {
             return max(idleWidth + 200, 400)
         case .calendarAlert:
             return max(idleWidth + 280, 480)
+        case .commandApproval:
+            return max(idleWidth + 300, 500)
+        case .meetingFlight:
+            return max(idleWidth + 280, 480)
+        case .devMonitorActive:
+            return max(idleWidth + 280, 480)
+        case .dropShelfActive:
+            return max(idleWidth + 240, 440)
+        case .devSnippetDetected:
+            return max(idleWidth + 240, 440)
         }
     }
     
@@ -232,7 +293,8 @@ public final class NotchModel: ObservableObject {
         switch compactHUDMode {
         case .notesPinned:
             return max(idleHeight + 24, 56)
-        case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAlert:
+        case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAlert,
+             .commandApproval, .meetingFlight, .devMonitorActive, .dropShelfActive, .devSnippetDetected:
             return idleHeight
         }
     }
@@ -278,25 +340,30 @@ public final class NotchModel: ObservableObject {
     }
     
     private func observeSubmodels() {
-        // Trigger UI refresh when submodel playback/timer/note/supabase state changes
-        Publishers.MergeMany(
-            pomodoro.$isRunning.map { _ in () }.eraseToAnyPublisher(),
-            pomodoro.$timeRemaining.map { _ in () }.eraseToAnyPublisher(),
-            pomodoro.$mode.map { _ in () }.eraseToAnyPublisher(),
-            media.$isPlaying.map { _ in () }.eraseToAnyPublisher(),
-            media.$currentTime.map { _ in () }.eraseToAnyPublisher(),
-            media.$visualizerBars.map { _ in () }.eraseToAnyPublisher(),
-            media.$trackTitle.map { _ in () }.eraseToAnyPublisher(),
-            $isNotePinnedToNotch.map { _ in () }.eraseToAnyPublisher(),
-            scratchpad.$text.map { _ in () }.eraseToAnyPublisher(),
-            calendar.$showNotchAlert.map { _ in () }.eraseToAnyPublisher(),
-            calendar.$events.map { _ in () }.eraseToAnyPublisher(),
-            supabase.$currentUser.map { _ in () }.eraseToAnyPublisher()
-        )
-        .sink { [weak self] _ in
+        // Break up observation sinks so Swift compiler can type-check effortlessly
+        let triggerChange: () -> Void = { [weak self] in
             self?.objectWillChange.send()
         }
-        .store(in: &cancellables)
+        
+        pomodoro.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        media.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        scratchpad.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        calendar.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        supabase.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        dropShelf.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        meetingController.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        devMonitor.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        commandApproval.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        devClipboard.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
+        
+        // Sync CalendarModel events into MeetingFlightControllerModel
+        meetingController.updateFromCalendar(events: calendar.events)
+        calendar.$events
+            .sink { [weak self] events in
+                self?.meetingController.updateFromCalendar(events: events)
+            }
+            .store(in: &cancellables)
         
         pomodoro.$completedSessionsCount
             .dropFirst()
@@ -342,6 +409,20 @@ public final class NotchModel: ObservableObject {
     public func returnToHome() {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = .home
+            activeContextFeature = nil
+        }
+    }
+    
+    public func openContextualFeature(_ feature: ContextualFeature) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            activeContextFeature = feature
+            isExpanded = true
+        }
+    }
+    
+    public func closeContextualFeature() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            activeContextFeature = nil
         }
     }
 }

@@ -1,9 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct MorphIslandView: View {
     @ObservedObject var model: NotchModel
     var onMouseEnter: () -> Void
     var onMouseExit: () -> Void
+    @State private var isNotchDragTargeted: Bool = false
     
     public init(model: NotchModel, onMouseEnter: @escaping () -> Void, onMouseExit: @escaping () -> Void) {
         self.model = model
@@ -134,13 +136,38 @@ public struct MorphIslandView: View {
                     onMouseExit()
                 }
             }
+            .onDrop(of: [.fileURL], isTargeted: $isNotchDragTargeted) { providers in
+                handleNotchFileDrop(providers: providers)
+            }
+            .onChange(of: isNotchDragTargeted) { _, targeted in
+                model.dropShelf.isDraggingOverNotch = targeted
+            }
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
             .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isCompactActive)
             .animation(.spring(response: 0.3, dampingFraction: 0.78), value: model.selectedTab)
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.activeContextFeature)
             
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+    
+    private func handleNotchFileDrop(providers: [NSItemProvider]) -> Bool {
+        var didLoadAny = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let fileURL = url {
+                        Task { @MainActor in
+                            model.dropShelf.stageFile(url: fileURL)
+                            model.openContextualFeature(.dropShelf)
+                        }
+                    }
+                }
+                didLoadAny = true
+            }
+        }
+        return didLoadAny
     }
     
     // MARK: - 1. Idle Flush Notch View (Smooth border radius, no sharp corners)
@@ -203,6 +230,16 @@ public struct MorphIslandView: View {
             CompactNotesWingLeft(model: model)
         case .calendarAlert:
             CompactCalendarWingLeft(calendar: model.calendar, model: model)
+        case .commandApproval:
+            CompactApprovalWingLeft(approval: model.commandApproval, model: model)
+        case .meetingFlight:
+            CompactMeetingWingLeft(controller: model.meetingController, model: model)
+        case .devMonitorActive:
+            CompactDevMonitorWingLeft(monitor: model.devMonitor, model: model)
+        case .dropShelfActive:
+            CompactDropShelfWingLeft(shelf: model.dropShelf, model: model)
+        case .devSnippetDetected:
+            CompactSnippetWingLeft(clipboard: model.devClipboard, model: model)
         case .none:
             EmptyView()
         }
@@ -223,6 +260,16 @@ public struct MorphIslandView: View {
                 .padding(.trailing, 10)
         case .calendarAlert:
             CompactCalendarWingRight(calendar: model.calendar, model: model)
+        case .commandApproval:
+            CompactApprovalWingRight(approval: model.commandApproval, model: model)
+        case .meetingFlight:
+            CompactMeetingWingRight(controller: model.meetingController, model: model)
+        case .devMonitorActive:
+            CompactDevMonitorWingRight(monitor: model.devMonitor, model: model)
+        case .dropShelfActive:
+            CompactDropShelfWingRight(shelf: model.dropShelf, model: model)
+        case .devSnippetDetected:
+            CompactSnippetWingRight(clipboard: model.devClipboard, model: model)
         case .none:
             EmptyView()
         }
@@ -302,25 +349,45 @@ public struct MorphIslandView: View {
             
             // Main Feature Body: Sits completely BELOW the notch blind spot!
             ZStack {
-                switch model.selectedTab {
-                case .home:
-                    HomeView(model: model)
-                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                case .timer:
-                    PomodoroView(pomodoro: model.pomodoro)
-                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                case .music:
-                    MediaView(media: model.media)
-                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                case .notes:
-                    ScratchpadView(scratchpad: model.scratchpad)
-                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                case .calendar:
-                    CalendarView(calendar: model.calendar)
-                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                case .profile:
-                    ProfileView(model: model)
-                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                if let contextFeature = model.activeContextFeature {
+                    switch contextFeature {
+                    case .commandApproval:
+                        CommandApprovalView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .meetingFlight:
+                        MeetingFlightControllerView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .devMonitor:
+                        DevAgentMonitorView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .dropShelf:
+                        DropShelfView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .devSnippet:
+                        DevSnippetClipboardView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    }
+                } else {
+                    switch model.selectedTab {
+                    case .home:
+                        HomeView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .timer:
+                        PomodoroView(pomodoro: model.pomodoro)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .music:
+                        MediaView(media: model.media)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .notes:
+                        ScratchpadView(scratchpad: model.scratchpad)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .calendar:
+                        CalendarView(calendar: model.calendar)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .profile:
+                        ProfileView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    }
                 }
             }
             .frame(maxHeight: .infinity)
@@ -336,7 +403,30 @@ public struct MorphIslandView: View {
         HStack(spacing: 0) {
             // LEFT WING (Outside Notch: 100% Visible)
             HStack(spacing: 4) {
-                if model.selectedTab != .home {
+                if let contextFeature = model.activeContextFeature {
+                    Button(action: {
+                        model.closeContextualFeature()
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 8.5, weight: .bold))
+                            Text("Done")
+                                .font(.system(size: 9.5, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Return to Morph Tab (Esc)")
+                    
+                    Text(contextFeature.rawValue)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .lineLimit(1)
+                } else if model.selectedTab != .home {
                     Button(action: {
                         model.returnToHome()
                     }) {
@@ -407,6 +497,7 @@ public struct MorphIslandView: View {
                         Button(action: {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                                 model.selectedTab = tab
+                                model.activeContextFeature = nil
                             }
                         }) {
                             HStack(spacing: 3) {
@@ -450,6 +541,7 @@ public struct MorphIslandView: View {
                 Button(action: {
                     model.isPinned = false
                     model.isExpanded = false
+                    model.activeContextFeature = nil
                 }) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 8.5, weight: .bold))

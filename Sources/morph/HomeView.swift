@@ -39,6 +39,10 @@ public struct HomeView: View {
             .buttonStyle(.plain)
             .help("Open Profile (⌘5)")
             
+            // Contextual Activity Indicator (Active Only)
+            activeContextPillView
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            
             // 3. Ultra-Clean Minimalist Action Pills (Pure Monochrome Luxury)
             HStack(spacing: 8) {
                 // Focus Feature Pill
@@ -184,5 +188,91 @@ public struct HomeView: View {
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    @ViewBuilder
+    private var activeContextPillView: some View {
+        if model.commandApproval.hasPendingApproval {
+            Button(action: {
+                model.openContextualFeature(.commandApproval)
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .foregroundColor(.orange)
+                        .font(.system(size: 8.5))
+                    Text("Command Approval Required")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.orange)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
+                .background(Color.orange.opacity(0.16))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.orange.opacity(0.3), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Review and authorize pending command")
+        } else if model.meetingController.isInCall || model.meetingController.isPreMeetingWindow {
+            Button(action: {
+                model.openContextualFeature(.meetingFlight)
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "video.fill")
+                        .foregroundColor(.green)
+                        .font(.system(size: 8.5))
+                    Text(model.meetingController.isInCall ? "In Call: \(model.meetingController.formattedCallDuration)" : "Upcoming Meeting Ready")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.green)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
+                .background(Color.green.opacity(0.16))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.green.opacity(0.3), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Open Meeting Flight Controller")
+        } else if model.devMonitor.isTaskActive {
+            Button(action: {
+                model.openContextualFeature(.devMonitor)
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "terminal.fill")
+                        .foregroundColor(.cyan)
+                        .font(.system(size: 8.5))
+                    Text(model.devMonitor.statusMessage)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.cyan)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
+                .background(Color.cyan.opacity(0.16))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.cyan.opacity(0.3), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Open Terminal Monitor")
+        } else if model.dropShelf.hasItems {
+            Button(action: {
+                model.openContextualFeature(.dropShelf)
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "paperclip")
+                        .foregroundColor(.white)
+                        .font(.system(size: 8.5))
+                    Text("\(model.dropShelf.count) Files Staged")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain)
+            .help("Open Drop Shelf")
+        }
     }
 }
