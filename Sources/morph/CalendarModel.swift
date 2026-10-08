@@ -632,8 +632,9 @@ public final class CalendarModel: ObservableObject {
             }
         }
         
-        // 2. Also save to EventKit if authorized
-        if eventKitEngine.isAuthorized,
+        // 2. Also save to EventKit if authorized (and not running in automated tests)
+        if !Self.isTestingEnvironment,
+           eventKitEngine.isAuthorized,
            let created = eventKitEngine.createEvent(
             title: title,
             startDate: start,
@@ -679,7 +680,7 @@ public final class CalendarModel: ObservableObject {
         }
         
         // 4. Dispatch deletion to EventKit if authorized
-        if eventKitEngine.isAuthorized {
+        if !Self.isTestingEnvironment && eventKitEngine.isAuthorized {
             eventKitEngine.deleteEvent(id: id, matchingEmail: configuredUserEmail)
             eventKitEngine.deleteEvent(id: rawId, matchingEmail: configuredUserEmail)
         }
