@@ -995,14 +995,57 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func play(videoId: String, listId: String? = nil) {
         let vid = videoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !vid.isEmpty else { return }
-        var comps = URLComponents(string: "https://music.youtube.com/watch")!
-        var items = [URLQueryItem(name: "v", value: vid)]
-        if let l = listId?.trimmingCharacters(in: .whitespacesAndNewlines), !l.isEmpty {
-            items.append(URLQueryItem(name: "list", value: l))
+        
+        // Normalize listId: strip "VL" browse prefix if present (YouTube watch requires "PL..." or "LM", not "VLPL...")
+        var cleanList: String? = listId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let l = cleanList, l.hasPrefix("VL") {
+            cleanList = String(l.dropFirst(2))
         }
-        comps.queryItems = items
-        if let url = comps.url {
-            webView.load(URLRequest(url: url))
+        
+        // 1. Try immediate in-page playback via movie_player API (seamless, zero full-page reload, preserves WebKit session)
+        let listArg = cleanList.map { "'\($0)'" } ?? "null"
+        let script = """
+        (function() {
+            var vid = '\(vid)';
+            var listId = \(listArg);
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.loadVideoById === 'function') {
+                try {
+                    if (listId && listId.length > 0) {
+                        p.loadVideoById({ videoId: vid, list: listId });
+                    } else {
+                        p.loadVideoById(vid);
+                    }
+                    if (typeof p.playVideo === 'function') {
+                        p.playVideo();
+                    }
+                    if (typeof window.morphSendUpdate === 'function') {
+                        setTimeout(window.morphSendUpdate, 250);
+                    }
+                    return true;
+                } catch(e) {}
+            }
+            // Fallback inside the page: navigate via window.location without tearing down WebKit
+            var target = '/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
+            window.location.href = target;
+            return false;
+        })();
+        """
+        
+        // If webView is already on music.youtube.com, evaluate the script
+        if let host = webView.url?.host, host.hasSuffix("music.youtube.com") {
+            evaluate(script)
+        } else {
+            // Initial cold load: construct full watch URL
+            var comps = URLComponents(string: "https://music.youtube.com/watch")!
+            var items = [URLQueryItem(name: "v", value: vid)]
+            if let l = cleanList, !l.isEmpty {
+                items.append(URLQueryItem(name: "list", value: l))
+            }
+            comps.queryItems = items
+            if let url = comps.url {
+                webView.load(URLRequest(url: url))
+            }
         }
     }
     

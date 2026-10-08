@@ -451,7 +451,9 @@ public final class MediaControllerModel: ObservableObject {
     /// `list=` parameter for starting playback inside the currently opened container (artists play as radio).
     private var selectedPlaybackListId: String? {
         guard let sel = selectedPlaylist, sel.kind != .artist, sel.kind != .queue, sel.id != "pl_queue" else { return nil }
-        return sel.playbackListId ?? (sel.kind == .playlist ? sel.id : nil)
+        let raw = sel.playbackListId ?? (sel.kind == .playlist ? sel.id : nil)
+        guard let r = raw else { return nil }
+        return r.hasPrefix("VL") ? String(r.dropFirst(2)) : r
     }
     
     private func markPlaying(_ item: YTMPlaylistItem) {
@@ -474,16 +476,19 @@ public final class MediaControllerModel: ObservableObject {
         markPlaying(item)
         
         if selectedPlaylist?.id == "pl_queue" {
-            if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
+            // Live queue: item.id holds the exact DOM queue index string from extraction
+            if let idx = Int(item.id) {
+                engine.playQueueIndex(idx)
+            } else if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
                 engine.playQueueIndex(matchIdx)
+            } else {
+                playSearch("\(item.title) \(item.artist)")
             }
-        } else if let vid = item.videoId {
+        } else if let vid = item.videoId, !vid.isEmpty {
+            // Direct playback of the exact clicked track in the playlist container
             engine.play(videoId: vid, listId: selectedPlaybackListId)
-        } else if let idx = Int(item.id) {
-            engine.playPlaylistSong(index: idx)
-        } else if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
-            engine.playPlaylistSong(index: matchIdx)
         } else {
+            // Never blindly click random DOM list items on unrelated pages; search and play exact track
             playSearch("\(item.title) \(item.artist)")
         }
     }

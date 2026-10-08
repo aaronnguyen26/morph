@@ -591,6 +591,12 @@ public struct MediaView: View {
                 .foregroundColor(.white)
                 .focused($playlistSearchFocused)
                 .onAppear { playlistSearchFocused = true }
+                .onSubmit {
+                    let q = media.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !q.isEmpty {
+                        media.runCatalogSearch(q)
+                    }
+                }
             
             if media.isSearchingCatalog {
                 ProgressView()
@@ -1073,6 +1079,11 @@ public struct MediaView: View {
                 .foregroundColor(.white)
                 .focused($songSearchFocused)
                 .onAppear { songSearchFocused = true }
+                .onSubmit {
+                    if let pl = media.selectedPlaylist, let first = media.filteredSongs(for: pl).first {
+                        media.playSongInSelectedPlaylist(first)
+                    }
+                }
             
             if !media.songSearchQuery.isEmpty {
                 Button(action: { media.songSearchQuery = "" }) {
