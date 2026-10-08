@@ -238,7 +238,7 @@ public final class NotchModel: ObservableObject {
         
         if timerRunning && musicPlaying {
             return .dualActive
-        } else if devMonitor.isTaskActive || (devMonitor.currentTask != nil && devMonitor.statusMessage != "Idle") {
+        } else if devMonitor.isTaskActive {
             return .devMonitorActive
         } else if timerRunning {
             return .pomodoroOnly
