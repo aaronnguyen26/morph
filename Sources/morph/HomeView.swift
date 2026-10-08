@@ -273,6 +273,107 @@ public struct HomeView: View {
             }
             .buttonStyle(.plain)
             .help("Open Drop Shelf")
+        } else {
+            // Quick Test Tray for Contextual Features
+            HStack(spacing: 6) {
+                Button(action: {
+                    model.openContextualFeature(.dropShelf)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "tray.and.arrow.down")
+                            .font(.system(size: 7.5))
+                        Text("Drop Shelf")
+                            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.05))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Test Drop Shelf")
+                
+                Button(action: {
+                    model.openContextualFeature(.devMonitor)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 7.5))
+                        Text("Terminal")
+                            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.cyan.opacity(0.7))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.cyan.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Test Terminal Monitor")
+                
+                Button(action: {
+                    if !model.commandApproval.hasPendingApproval {
+                        model.commandApproval.requestApproval(
+                            command: "npm run deploy --production",
+                            riskLevel: .high,
+                            timeoutSeconds: 45,
+                            source: "Demo"
+                        )
+                    }
+                    model.openContextualFeature(.commandApproval)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 7.5))
+                        Text("Approval Gate")
+                            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.orange.opacity(0.7))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.orange.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Test Command Approval Gate")
+                
+                Button(action: {
+                    model.openContextualFeature(.devSnippet)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 7.5))
+                        Text("Snippets")
+                            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.purple.opacity(0.7))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.purple.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Test Code Snippets")
+                
+                Button(action: {
+                    model.openContextualFeature(.meetingFlight)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "video")
+                            .font(.system(size: 7.5))
+                        Text("Meeting")
+                            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.green.opacity(0.7))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color.green.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Test Meeting Flight Cockpit")
+            }
         }
     }
 }

@@ -194,7 +194,18 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         openInSystemBrowser(url: url)
     }
     
+    private static var isTestingEnvironment: Bool {
+        return ProcessInfo.processInfo.processName.contains("xctest") ||
+            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
+            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
+            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
+            NSClassFromString("XCTestCase") != nil
+    }
+    
     private func openInSystemBrowser(url: URL) {
+        // Never trigger external browser launches or AppleScripts during unit tests!
+        guard !Self.isTestingEnvironment else { return }
+        
         // Reuse existing browser tab if one is already open to decrease tab clutter
         if reuseExistingBrowserTabIfPossible(targetURL: url) {
             return
@@ -202,7 +213,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         
         if let defaultBrowserAppURL = NSWorkspace.shared.urlForApplication(toOpen: url) {
             let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
+            config.activates = false
             NSWorkspace.shared.open([url], withApplicationAt: defaultBrowserAppURL, configuration: config, completionHandler: nil)
         } else {
             NSWorkspace.shared.open(url)
@@ -335,8 +346,10 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
             container.addSubview(webView, positioned: .below, relativeTo: nil)
         }
         
-        win.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if !Self.isTestingEnvironment {
+            win.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: false)
+        }
         self.isCalendarWindowVisible = true
     }
     
