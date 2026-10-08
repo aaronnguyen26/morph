@@ -943,18 +943,37 @@ public struct MediaView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 8)
                 if playlist.id != "pl_queue" {
-                    Button(action: { media.loadTracksForSelectedPlaylist() }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrow.clockwise").font(.system(size: 8))
-                            Text("Retry").font(.system(size: 8.5, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Button(action: { media.loadTracksForSelectedPlaylist() }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 8))
+                                Text("Retry").font(.system(size: 8.5, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.14))
+                            .clipShape(Capsule())
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.14))
-                        .clipShape(Capsule())
+                        .buttonStyle(.plain)
+                        
+                        if !media.isSignedIn {
+                            Button(action: {
+                                media.openPlayerWindow()
+                            }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 8))
+                                    Text("Sign In").font(.system(size: 8.5, weight: .semibold))
+                                }
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
             }
             Spacer(minLength: 10)

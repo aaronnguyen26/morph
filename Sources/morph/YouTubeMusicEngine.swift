@@ -905,14 +905,23 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     private func browseId(for playlist: YTMPlaylist) -> String {
         switch playlist.kind {
         case .artist, .album:
-            return playlist.browseId ?? playlist.id
+            let raw = playlist.browseId ?? playlist.id
+            return raw.replacingOccurrences(of: "/channel/", with: "")
         default:
-            if let b = playlist.browseId, b.hasPrefix("VL") { return b }
-            return playlist.id.hasPrefix("VL") ? playlist.id : "VL\(playlist.id)"
+            var raw = playlist.browseId ?? playlist.id
+            if let range = raw.range(of: "list=") {
+                raw = String(raw[range.upperBound...])
+                if let amp = raw.firstIndex(of: "&") {
+                    raw = String(raw[..<amp])
+                }
+            }
+            if raw.hasPrefix("VL") { return raw }
+            return "VL\(raw)"
         }
     }
     
     private func loadAllPages(browseId: String, maxTracks: Int = 1500) async throws -> YTMTrackPage {
+        print("[Morph YTM] loadAllPages requesting browseId: '\(browseId)'")
         let doc = try await innerTube("browse", body: ["browseId": browseId])
         var page = YTMParser.parseTrackPage(doc)
         var token = page.continuation
@@ -927,14 +936,18 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             token = next.continuation
         }
         page.continuation = nil
+        print("[Morph YTM] loadAllPages parsed \(page.tracks.count) tracks for browseId: '\(browseId)'")
         return page
     }
     
     /// Loads the real tracks of a playlist, album or artist. For artists this returns the full "Top songs" list
     /// (falling back to the handful of songs shown on the artist page).
     public func loadTracks(for playlist: YTMPlaylist) async throws -> YTMTrackPage {
-        var page = try await loadAllPages(browseId: browseId(for: playlist))
+        let bId = browseId(for: playlist)
+        print("[Morph YTM] loadTracks for playlist: '\(playlist.title)' (id: '\(playlist.id)', kind: \(playlist.kind), browseId: '\(bId)')")
+        var page = try await loadAllPages(browseId: bId)
         if playlist.kind == .artist, let more = page.moreBrowseId, more.hasPrefix("VL") {
+            print("[Morph YTM] Fetching full top songs for artist via moreBrowseId: '\(more)'")
             if let full = try? await loadAllPages(browseId: more), full.tracks.count > page.tracks.count {
                 page.tracks = full.tracks
             }
