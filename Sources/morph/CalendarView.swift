@@ -177,11 +177,12 @@ public struct CalendarView: View {
                     // Instant Manual Refresh Button
                     Button(action: { calendar.syncWithGoogle() }) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.75))
-                            .frame(width: 18, height: 18)
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.85))
+                            .frame(width: 20, height: 20)
                             .background(Color.white.opacity(0.08))
                             .clipShape(Circle())
+                            .contentShape(Circle())
                             .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
                             .animation(calendar.isSyncing ? Animation.linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
                     }
@@ -488,7 +489,7 @@ public struct CalendarView: View {
                         }
                         .padding(.trailing, 2)
                     }
-                    .frame(maxHeight: 145)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             
@@ -597,6 +598,9 @@ public struct CalendarView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 8.5, weight: .medium))
                 .foregroundColor(.white)
+                .onSubmit {
+                    submitNewEvent()
+                }
             
             if !newEventTitle.isEmpty {
                 Button(action: { newEventTitle = "" }) {
@@ -625,39 +629,47 @@ public struct CalendarView: View {
                     newEventHour = newEventHour > 0 ? newEventHour - 1 : 23
                 }) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 6, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.7))
-                        .frame(width: 14, height: 14)
-                        .background(Color.white.opacity(0.08))
+                        .font(.system(size: 6.5, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .frame(width: 17, height: 17)
+                        .background(Color.white.opacity(0.10))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Previous hour")
                 
-                HStack(spacing: 2) {
-                    Image(systemName: "clock.fill")
-                        .font(.system(size: 6))
-                        .foregroundColor(Color.white.opacity(0.7))
-                    Text(formatHourDisplay(newEventHour))
-                        .font(.system(size: 7.2, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                Button(action: {
+                    newEventHour = (newEventHour + 1) % 24
+                }) {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "clock.fill")
+                            .font(.system(size: 6.5))
+                            .foregroundColor(Color.white.opacity(0.8))
+                        Text(formatHourDisplay(newEventHour))
+                            .font(.system(size: 7.2, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 4)
+                    .frame(height: 17)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 3)
+                .buttonStyle(.plain)
+                .help("Tap to advance hour or use chevrons")
                 
                 Button(action: {
                     newEventHour = newEventHour < 23 ? newEventHour + 1 : 0
                 }) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 6, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.7))
-                        .frame(width: 14, height: 14)
-                        .background(Color.white.opacity(0.08))
+                        .font(.system(size: 6.5, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .frame(width: 17, height: 17)
+                        .background(Color.white.opacity(0.10))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Next hour")
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 3)
             .padding(.vertical, 2)
             .background(Color.white.opacity(0.09))
             .clipShape(Capsule())
@@ -669,14 +681,16 @@ public struct CalendarView: View {
                 ForEach([15, 30, 45, 60], id: \.self) { duration in
                     Button(action: { newEventDurationMinutes = duration }) {
                         Text("\(duration)m")
-                            .font(.system(size: 6.8, weight: newEventDurationMinutes == duration ? .bold : .medium))
-                            .foregroundColor(newEventDurationMinutes == duration ? .black : Color.white.opacity(0.7))
-                            .padding(.horizontal, 4.5)
-                            .padding(.vertical, 2)
+                            .font(.system(size: 7, weight: newEventDurationMinutes == duration ? .bold : .medium))
+                            .foregroundColor(newEventDurationMinutes == duration ? .black : Color.white.opacity(0.75))
+                            .padding(.horizontal, 5)
+                            .frame(height: 17)
                             .background(newEventDurationMinutes == duration ? Color.white : Color.white.opacity(0.08))
                             .clipShape(Capsule())
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .help("Set duration to \(duration) minutes")
                 }
             }
         }
@@ -693,6 +707,9 @@ public struct CalendarView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 7.2, weight: .medium))
                     .foregroundColor(.white)
+                    .onSubmit {
+                        submitNewEvent()
+                    }
             }
             .padding(.horizontal, 5)
             .padding(.vertical, 3)
@@ -895,11 +912,12 @@ public struct CalendarView: View {
                         }
                     }) {
                         Image(systemName: "trash")
-                            .font(.system(size: 7, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.4))
-                            .frame(width: 16, height: 16)
-                            .background(Color.white.opacity(0.06))
+                            .font(.system(size: 7.5, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.55))
+                            .frame(width: 20, height: 20)
+                            .background(Color.white.opacity(0.08))
                             .clipShape(Circle())
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .help("Delete event from calendar")
