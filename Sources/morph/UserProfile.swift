@@ -57,14 +57,14 @@ public struct UserProfile: Codable, Equatable, Sendable {
     
     public init(
         id: String = "local_user",
-        firstName: String = "Aaron",
-        lastName: String = "Nguyen",
-        email: String = "minh7898888@gmail.com",
-        targetRole: String = "Senior Software Engineer",
-        streakDays: Int = 5,
-        totalFocusMinutes: Int = 120,
-        currentStatus: String = "In the Zone",
-        avatarInitials: String = "AN",
+        firstName: String = "",
+        lastName: String = "",
+        email: String = "",
+        targetRole: String = "Morph Explorer",
+        streakDays: Int = 0,
+        totalFocusMinutes: Int = 0,
+        currentStatus: String = "Ready",
+        avatarInitials: String = "",
         avatarImageBase64: String? = nil,
         avatarURL: String? = nil
     ) {

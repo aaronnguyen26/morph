@@ -31,14 +31,23 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
     public var artist: String
     public var duration: String
     public var isPlaying: Bool
+    /// Real YouTube video id (set for tracks fetched through InnerTube). Enables direct playback.
+    public var videoId: String?
+    public var thumbnailURL: String?
     
-    public init(id: String = UUID().uuidString, title: String, artist: String, duration: String = "", isPlaying: Bool = false) {
+    public init(id: String = UUID().uuidString, title: String, artist: String, duration: String = "", isPlaying: Bool = false, videoId: String? = nil, thumbnailURL: String? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
         self.duration = duration
         self.isPlaying = isPlaying
+        self.videoId = videoId
+        self.thumbnailURL = thumbnailURL
     }
+}
+
+public enum YTMPlaylistKind: String, Codable, Equatable {
+    case playlist, artist, album, queue
 }
 
 public struct YTMPlaylist: Identifiable, Codable, Equatable {
@@ -49,6 +58,9 @@ public struct YTMPlaylist: Identifiable, Codable, Equatable {
     public var trackCount: Int?
     public var tracks: [YTMPlaylistItem]
     public var browseId: String?
+    public var kind: YTMPlaylistKind
+    /// Playlist id to pass as `list=` when starting playback (nil for artists → plain radio playback).
+    public var playbackListId: String?
     
     public init(
         id: String = UUID().uuidString,
@@ -57,7 +69,9 @@ public struct YTMPlaylist: Identifiable, Codable, Equatable {
         thumbnailURL: String? = nil,
         trackCount: Int? = nil,
         tracks: [YTMPlaylistItem] = [],
-        browseId: String? = nil
+        browseId: String? = nil,
+        kind: YTMPlaylistKind = .playlist,
+        playbackListId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -66,6 +80,8 @@ public struct YTMPlaylist: Identifiable, Codable, Equatable {
         self.trackCount = trackCount
         self.tracks = tracks
         self.browseId = browseId
+        self.kind = kind
+        self.playbackListId = playbackListId
     }
 }
 
@@ -134,6 +150,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var connectionState: String = "Connecting..."
     @Published public var canGoBack: Bool = false
     @Published public var canGoForward: Bool = false
+    @Published public var libraryError: String? = nil
+    @Published public var isLoadingLibrary: Bool = false
+    private var lastLibrarySync: Date?
     
     public private(set) var webView: WKWebView!
     private var playerWindow: NSWindow?
@@ -357,7 +376,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             if url.contains("music.youtube.com") {
                 // If returning from Google OAuth redirect, automatically fetch real library playlists
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.fetchRealUserPlaylists()
+                    guard let self = self else { return }
+                    // Don't re-sync on every watch-page navigation; only when empty or stale (> 5 min).
+                    if self.userPlaylists.isEmpty || Date().timeIntervalSince(self.lastLibrarySync ?? .distantPast) > 300 {
+                        self.fetchRealUserPlaylists()
+                    }
                 }
             }
         }
@@ -754,182 +777,198 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
-    public func loadPlaylist(id: String) {
-        let cleanId = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanId.isEmpty else { return }
+    // MARK: - Native InnerTube Client (authenticated through the signed-in WebKit session)
+    public enum InnerTubeError: LocalizedError {
+        case notReady
+        case http(Int)
+        case invalidResponse
         
-        // InnerTube API Query for playlist tracks using the active session cookies
-        // BrowseId for playlists starts with 'VL' (e.g. VLPL... or VL<id>)
-        let browseId = cleanId.hasPrefix("VL") ? cleanId : "VL\(cleanId)"
-        let script = """
-        (function() {
-            try {
-                if (window.ytcfg && typeof window.ytcfg.get === 'function') {
-                    var context = window.ytcfg.get('INNERTUBE_CONTEXT');
-                    var apiKey = window.ytcfg.get('INNERTUBE_API_KEY');
-                    if (context) {
-                        var body = {
-                            context: context,
-                            browseId: '\(browseId)'
-                        };
-                        var url = '/youtubei/v1/browse' + (apiKey ? ('?key=' + apiKey) : '');
-                        fetch(url, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body)
-                        })
-                        .then(function(res) { return res.json(); })
-                        .then(function(data) {
-                            var tracks = [];
-                            try {
-                                var section = data.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.musicPlaylistShelfRenderer?.contents ||
-                                              data.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer?.contents?.[0]?.musicPlaylistShelfRenderer?.contents || [];
-                                for (var i = 0; i < Math.min(section.length, 60); i++) {
-                                    var item = section[i].musicResponsiveListItemRenderer;
-                                    if (item) {
-                                        var title = item.flexColumns?.[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]?.text || '';
-                                        var artist = item.flexColumns?.[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.map(function(r) { return r.text; }).join('') || '';
-                                        var dur = item.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs?.[0]?.text || '';
-                                        var songId = item.playlistItemData?.videoId || ('' + i);
-                                        if (title) {
-                                            tracks.push({
-                                                id: songId,
-                                                title: title,
-                                                artist: artist,
-                                                duration: dur,
-                                                isPlaying: false
-                                            });
-                                        }
-                                    }
-                                }
-                            } catch(e) {}
-                            if (tracks.length > 0) {
-                                var currentData = (typeof getTrackInfo === 'function') ? getTrackInfo() : {};
-                                currentData.queue = tracks;
-                                window.webkit.messageHandlers.\(kHandlerName).postMessage(currentData);
-                            }
-                        })
-                        .catch(function(err) {});
-                    }
-                }
-            } catch(e) {}
-        })();
-        """
-        evaluate(script)
-        
-        // Also load the playlist page if webView is idle (no active playback), otherwise preserve active music!
-        if !trackData.isPlaying {
-            let urlString = "https://music.youtube.com/playlist?list=\(cleanId)"
-            if let url = URL(string: urlString) {
-                self.webView.load(URLRequest(url: url))
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                self?.fetchTracksFromCurrentPage()
+        public var errorDescription: String? {
+            switch self {
+            case .notReady: return "YouTube Music isn't ready yet. Open the player window and finish loading / signing in."
+            case .http(let code): return code == 401 || code == 403
+                ? "YouTube Music rejected the request (HTTP \(code)). Please sign in again."
+                : "YouTube Music request failed (HTTP \(code))."
+            case .invalidResponse: return "YouTube Music returned an unexpected response."
             }
         }
     }
     
+    /// Test seam: when set, replaces the WebKit-backed network call.
+    public var innerTubeOverride: (@MainActor @Sendable (String, [String: Any]) async throws -> [String: Any])?
+    
+    private func waitUntilReady(timeout: TimeInterval = 12) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let host = webView.url?.host, host.hasSuffix("music.youtube.com"), !webView.isLoading {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        throw InnerTubeError.notReady
+    }
+    
+    /// Calls `https://music.youtube.com/youtubei/v1/<endpoint>` from inside the page (same origin, with the user's
+    /// cookies and a freshly computed SAPISIDHASH `Authorization` header — without it YouTube answers as if logged out,
+    /// which is why the library used to come back empty).
+    public func innerTube(_ endpoint: String, body: [String: Any]) async throws -> [String: Any] {
+        if let override = innerTubeOverride {
+            return try await override(endpoint, body)
+        }
+        try await waitUntilReady()
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+        let bodyJSON = String(decoding: bodyData, as: UTF8.self)
+        let js = """
+        const cfg = (window.ytcfg && typeof window.ytcfg.get === 'function') ? window.ytcfg : null;
+        let context = cfg ? cfg.get('INNERTUBE_CONTEXT') : null;
+        if (!context) { context = { client: { clientName: 'WEB_REMIX', clientVersion: '1.20250310.01.00', hl: 'en', gl: 'US' } }; }
+        const apiKey = cfg ? cfg.get('INNERTUBE_API_KEY') : null;
+        const payload = JSON.parse(bodyJSON);
+        payload.context = context;
+        const headers = { 'Content-Type': 'application/json', 'X-Goog-AuthUser': '0', 'X-Origin': 'https://music.youtube.com' };
+        headers['X-Youtube-Client-Name'] = String((cfg && cfg.get('INNERTUBE_CONTEXT_CLIENT_NAME')) || 67);
+        headers['X-Youtube-Client-Version'] = String((cfg && cfg.get('INNERTUBE_CONTEXT_CLIENT_VERSION')) || context.client.clientVersion);
+        const visitor = cfg ? cfg.get('VISITOR_DATA') : null;
+        if (visitor) { headers['X-Goog-Visitor-Id'] = visitor; }
+        const m = document.cookie.match(/(?:^|;\\s*)(?:SAPISID|__Secure-3PAPISID)=([^;]+)/);
+        if (m) {
+            const ts = Math.floor(Date.now() / 1000);
+            const data = new TextEncoder().encode(ts + ' ' + m[1] + ' https://music.youtube.com');
+            const digest = await crypto.subtle.digest('SHA-1', data);
+            const hex = Array.from(new Uint8Array(digest)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+            headers['Authorization'] = 'SAPISIDHASH ' + ts + '_' + hex;
+        }
+        const url = '/youtubei/v1/' + endpoint + '?prettyPrint=false' + (apiKey ? ('&key=' + apiKey) : '');
+        const res = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(payload), credentials: 'include' });
+        if (!res.ok) { throw new Error('HTTP ' + res.status); }
+        return await res.text();
+        """
+        let result: Any?
+        do {
+            result = try await webView.callAsyncJavaScript(js, arguments: ["endpoint": endpoint, "bodyJSON": bodyJSON], in: nil, contentWorld: .page)
+        } catch {
+            let msg = error.localizedDescription
+            if let range = msg.range(of: #"HTTP (\d{3})"#, options: .regularExpression),
+               let code = Int(msg[range].dropFirst(5)) {
+                throw InnerTubeError.http(code)
+            }
+            throw error
+        }
+        guard let text = result as? String,
+              let data = text.data(using: .utf8),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw InnerTubeError.invalidResponse
+        }
+        return json
+    }
+    
+    // MARK: Library playlists
     public func fetchRealUserPlaylists() {
-        let script = """
-        (function() {
-            // InnerTube API Query for User Library Playlists
-            try {
-                if (window.ytcfg && typeof window.ytcfg.get === 'function') {
-                    var context = window.ytcfg.get('INNERTUBE_CONTEXT');
-                    var apiKey = window.ytcfg.get('INNERTUBE_API_KEY');
-                    if (context) {
-                        var body = {
-                            context: context,
-                            browseId: 'FEmusic_library_playlists'
-                        };
-                        var url = '/youtubei/v1/browse' + (apiKey ? ('?key=' + apiKey) : '');
-                        fetch(url, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body)
-                        })
-                        .then(function(res) { return res.json(); })
-                        .then(function(data) {
-                            var extracted = [];
-                            try {
-                                var section = data.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.gridRenderer?.items ||
-                                              data.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer?.contents?.[0]?.gridRenderer?.items || [];
-                                for (var i = 0; i < section.length; i++) {
-                                    var card = section[i].musicTwoRowItemRenderer;
-                                    if (card) {
-                                        var title = card.title?.runs?.[0]?.text || '';
-                                        var sub = card.subtitle?.runs?.map(function(r) { return r.text; }).join('') || '';
-                                        var browseId = card.navigationEndpoint?.browseEndpoint?.browseId || '';
-                                        var listId = card.navigationEndpoint?.watchEndpoint?.playlistId || '';
-                                        if (!listId && browseId.indexOf('VL') === 0) {
-                                            listId = browseId.substring(2);
-                                        }
-                                        var thumbs = card.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails;
-                                        var thumb = (thumbs && thumbs.length > 0) ? thumbs[thumbs.length - 1].url : null;
-                                        if (title && (listId || browseId)) {
-                                            extracted.push({
-                                                id: listId || browseId,
-                                                title: title,
-                                                subtitle: sub,
-                                                thumbnailURL: thumb,
-                                                browseId: browseId
-                                            });
-                                        }
-                                    }
-                                }
-                            } catch(e) {}
-                            if (extracted.length > 0) {
-                                var currentData = (typeof getTrackInfo === 'function') ? getTrackInfo() : {};
-                                currentData.playlists = extracted;
-                                window.webkit.messageHandlers.\(kHandlerName).postMessage(currentData);
-                            }
-                        })
-                        .catch(function(err) {});
-                    }
-                }
-            } catch(e) {}
-            
-            // Also trigger immediate DOM scraping update
-            if (typeof window.morphSendUpdate === 'function') {
-                window.morphSendUpdate();
-            }
-        })();
-        """
-        evaluate(script)
+        Task { @MainActor in
+            await self.refreshLibraryPlaylists()
+        }
     }
     
-    public func fetchTracksFromCurrentPage() {
-        let script = """
-        (function() {
-            var tracks = [];
-            var items = document.querySelectorAll('ytmusic-responsive-list-item-renderer');
-            for (var i = 0; i < Math.min(items.length, 50); i++) {
-                var it = items[i];
-                var tEl = it.querySelector('.title yt-formatted-string') || it.querySelector('.title') || it.querySelector('.flex-columns:first-child yt-formatted-string');
-                var bEl = it.querySelector('.secondary-flex-columns yt-formatted-string') || it.querySelector('.byline') || it.querySelector('yt-formatted-string.byline');
-                var dEl = it.querySelector('.fixed-columns yt-formatted-string') || it.querySelector('.duration') || it.querySelector('yt-formatted-string.duration');
-                var title = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
-                var artist = bEl ? (bEl.innerText || bEl.textContent || '').trim() : '';
-                var dur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
-                var isSel = it.hasAttribute('selected') || it.classList.contains('selected');
-                if (title) {
-                    tracks.push({
-                        id: '' + i,
-                        title: title,
-                        artist: artist,
-                        duration: dur,
-                        isPlaying: isSel
-                    });
-                }
+    public func refreshLibraryPlaylists() async {
+        isLoadingLibrary = true
+        libraryError = nil
+        defer { isLoadingLibrary = false }
+        do {
+            var doc = try await innerTube("browse", body: ["browseId": "FEmusic_liked_playlists"])
+            var parsed = YTMParser.parseLibraryPlaylists(doc)
+            var all = parsed.playlists
+            var seenIds = Set(all.map { $0.id })
+            var lastToken: String?
+            var pages = 0
+            while let token = parsed.continuation, token != lastToken, pages < 15 {
+                lastToken = token
+                doc = try await innerTube("browse", body: ["continuation": token])
+                parsed = YTMParser.parseLibraryPlaylists(doc)
+                for p in parsed.playlists where seenIds.insert(p.id).inserted { all.append(p) }
+                pages += 1
             }
-            if (typeof window.morphSendUpdate === 'function') {
-                window.morphSendUpdate();
+            if !all.contains(where: { $0.id == "LM" }) && (isSignedIn || !all.isEmpty) {
+                all.insert(YTMPlaylist(id: "LM", title: "Liked Music", subtitle: "Auto playlist", browseId: "VLLM", kind: .playlist, playbackListId: "LM"), at: 0)
             }
-        })();
-        """
-        evaluate(script)
+            if all.isEmpty {
+                libraryError = isSignedIn ? nil : "Sign in to YouTube Music to see your playlists."
+            } else {
+                userPlaylists = all
+                lastLibrarySync = Date()
+            }
+        } catch {
+            libraryError = error.localizedDescription
+        }
     }
     
+    // MARK: Tracks of a playlist / album / artist
+    private func browseId(for playlist: YTMPlaylist) -> String {
+        switch playlist.kind {
+        case .artist, .album:
+            return playlist.browseId ?? playlist.id
+        default:
+            if let b = playlist.browseId, b.hasPrefix("VL") { return b }
+            return playlist.id.hasPrefix("VL") ? playlist.id : "VL\(playlist.id)"
+        }
+    }
+    
+    private func loadAllPages(browseId: String, maxTracks: Int = 1500) async throws -> YTMTrackPage {
+        let doc = try await innerTube("browse", body: ["browseId": browseId])
+        var page = YTMParser.parseTrackPage(doc)
+        var token = page.continuation
+        var lastToken: String?
+        var guardCount = 0
+        while let t = token, t != lastToken, page.tracks.count < maxTracks, guardCount < 40 {
+            lastToken = t
+            guardCount += 1
+            let next = YTMParser.parseTrackPage(try await innerTube("browse", body: ["continuation": t]), startIndex: page.tracks.count)
+            if next.tracks.isEmpty { break }
+            page.tracks += next.tracks
+            token = next.continuation
+        }
+        page.continuation = nil
+        return page
+    }
+    
+    /// Loads the real tracks of a playlist, album or artist. For artists this returns the full "Top songs" list
+    /// (falling back to the handful of songs shown on the artist page).
+    public func loadTracks(for playlist: YTMPlaylist) async throws -> YTMTrackPage {
+        var page = try await loadAllPages(browseId: browseId(for: playlist))
+        if playlist.kind == .artist, let more = page.moreBrowseId, more.hasPrefix("VL") {
+            if let full = try? await loadAllPages(browseId: more), full.tracks.count > page.tracks.count {
+                page.tracks = full.tracks
+            }
+        }
+        if page.playbackListId == nil, playlist.kind == .playlist {
+            page.playbackListId = playlist.playbackListId ?? (playlist.id.hasPrefix("VL") ? String(playlist.id.dropFirst(2)) : playlist.id)
+        }
+        return page
+    }
+    
+    // MARK: Catalog search (songs, artists, albums, playlists)
+    public func searchCatalog(_ query: String) async throws -> [YTMSearchResult] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return [] }
+        let doc = try await innerTube("search", body: ["query": q])
+        return YTMParser.parseSearch(doc)
+    }
+    
+    // MARK: Direct playback by video id
+    public func play(videoId: String, listId: String? = nil) {
+        let vid = videoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !vid.isEmpty else { return }
+        var comps = URLComponents(string: "https://music.youtube.com/watch")!
+        var items = [URLQueryItem(name: "v", value: vid)]
+        if let l = listId?.trimmingCharacters(in: .whitespacesAndNewlines), !l.isEmpty {
+            items.append(URLQueryItem(name: "list", value: l))
+        }
+        comps.queryItems = items
+        if let url = comps.url {
+            webView.load(URLRequest(url: url))
+        }
+    }
+    
+
     public func playPlaylistSong(index: Int) {
         let script = """
         (function() {
@@ -1432,39 +1471,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                     }
                     
-                    // 2. Shelf / Two-Row items
-                    var twoRow = document.querySelectorAll('ytmusic-two-row-item-renderer, ytmusic-responsive-list-item-renderer');
-                    for (var r = 0; r < twoRow.length; r++) {
-                        var rItem = twoRow[r];
-                        var rA = rItem.querySelector('a.yt-simple-endpoint') || rItem.querySelector('a');
-                        var rHref = rA ? (rA.getAttribute('href') || '') : '';
-                        if (rHref.indexOf('playlist?list=') !== -1 || rHref.indexOf('browse/VL') !== -1) {
-                            var rId = '';
-                            var rM = rHref.match(/[?&]list=([^&]+)/);
-                            if (rM) rId = rM[1];
-                            else if (rHref.indexOf('browse/VL') !== -1) rId = rHref.split('browse/VL')[1].split('/')[0];
-                            
-                            var rTEl = rItem.querySelector('.title yt-formatted-string') || rItem.querySelector('.title') || rItem.querySelector('a.title');
-                            var rSEl = rItem.querySelector('.subtitle yt-formatted-string') || rItem.querySelector('.subtitle');
-                            var rImg = rItem.querySelector('img#img') || rItem.querySelector('img');
-                            
-                            var rTitle = rTEl ? (rTEl.innerText || rTEl.textContent || '').trim() : '';
-                            var rSub = rSEl ? (rSEl.innerText || rSEl.textContent || '').trim() : 'Playlist';
-                            var rThumb = rImg ? rImg.src : null;
-                            
-                            if (rTitle && rId && !seenPlaylists[rId]) {
-                                seenPlaylists[rId] = true;
-                                playlists.push({
-                                    id: rId,
-                                    title: rTitle,
-                                    subtitle: rSub,
-                                    thumbnailURL: rThumb,
-                                    browseId: rHref
-                                });
-                            }
-                        }
-                    }
-                    
+                    // (Page shelves / search-result cards are deliberately NOT scraped: they used to leak
+                    // artist radios and recommendations into the user's playlist list.)
+
                     // 3. Ensure Liked Music if link is present
                     if (!seenPlaylists['LM']) {
                         var lEl = document.querySelector('a[href*="list=LM"]');

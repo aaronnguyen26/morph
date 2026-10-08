@@ -32,6 +32,7 @@ public final class CalendarModel: ObservableObject {
         }
     }
     private var sentNotificationEventIDs = Set<String>()
+    public var deletedEventIDs = Set<String>()
     
     public let engine: GoogleCalendarEngine
     public let eventKitEngine: EventKitCalendarEngine
@@ -203,7 +204,15 @@ public final class CalendarModel: ObservableObject {
         var combined: [CalendarEvent] = []
         var seenIDs = Set<String>()
         
+        func isDeleted(_ evt: CalendarEvent) -> Bool {
+            let rawId = evt.id.hasPrefix("gcal_") ? String(evt.id.dropFirst(5)) : evt.id
+            return deletedEventIDs.contains(evt.id) || 
+                   deletedEventIDs.contains(rawId) || 
+                   deletedEventIDs.contains("gcal_\(rawId)")
+        }
+        
         func isAlreadyIncluded(_ evt: CalendarEvent) -> Bool {
+            if isDeleted(evt) { return true }
             if seenIDs.contains(evt.id) { return true }
             return combined.contains { existing in
                 existing.title.lowercased() == evt.title.lowercased() &&
@@ -248,25 +257,16 @@ public final class CalendarModel: ObservableObject {
             }
         }
         
-        // 5. Ingest optimistic local and currently tracked events in self.events
+        // 5. Ingest optimistic local / user-added events in self.events that do not originate from external Google/EventKit/ICS sync feeds
         for evt in self.events {
-            if !isAlreadyIncluded(evt) {
+            let isExternalFeedEvent = evt.id.hasPrefix("google_") || evt.id.hasPrefix("gcal_") || evt.id.hasPrefix("ics_")
+            if !isExternalFeedEvent && !isAlreadyIncluded(evt) {
                 seenIDs.insert(evt.id)
                 combined.append(evt)
             }
         }
         
-        // Filter out leftover synthetic test events in production mode
-        var finalEvents = combined
-        if !Self.isTestingEnvironment {
-            finalEvents = finalEvents.filter { evt in
-                let t = evt.title.lowercased()
-                return !t.contains("emergency retro") &&
-                       !t.contains("emergency standup") &&
-                       !t.contains("deep work sprint") &&
-                       !t.contains("product architecture review")
-            }
-        }
+        let finalEvents = combined
         
         if configuredUserEmail != nil {
             // Real profile user signed in: strictly show merged real events
@@ -653,23 +653,35 @@ public final class CalendarModel: ObservableObject {
     }
     
     public func deleteEvent(id: String) {
-        // 1. Optimistically remove from local array
-        self.events.removeAll(where: { $0.id == id })
-        if activeAlertEvent?.id == id {
+        // 1. Record ID and its prefixed/unprefixed variants in deletedEventIDs to prevent resurrection
+        deletedEventIDs.insert(id)
+        let rawId = id.hasPrefix("gcal_") ? String(id.dropFirst(5)) : id
+        deletedEventIDs.insert(rawId)
+        deletedEventIDs.insert("gcal_\(rawId)")
+        
+        // 2. Remove immediately from all in-memory arrays
+        self.events.removeAll(where: { $0.id == id || $0.id == rawId || $0.id == "gcal_\(rawId)" })
+        self.engine.rawEvents.removeAll(where: { $0.id == id || $0.id == rawId || $0.id == "gcal_\(rawId)" })
+        self.apiBridge.events.removeAll(where: { $0.id == id || $0.id == rawId || $0.id == "gcal_\(rawId)" })
+        self.eventKitEngine.events.removeAll(where: { $0.id == id || $0.id == rawId || $0.id == "gcal_\(rawId)" })
+        self.icsEngine.events.removeAll(where: { $0.id == id || $0.id == rawId || $0.id == "gcal_\(rawId)" })
+        
+        if activeAlertEvent?.id == id || activeAlertEvent?.id == rawId || activeAlertEvent?.id == "gcal_\(rawId)" {
             dismissNotchAlert(for: id)
         }
         evaluateUpcomingAlerts()
         
-        // 2. Dispatch deletion to Google Calendar API Bridge if event originated from Google or has gcal_ prefix
+        // 3. Dispatch deletion to Google Calendar API Bridge
         if !Self.isTestingEnvironment {
             Task {
                 await apiBridge.deleteGoogleCalendarEvent(id: id)
             }
         }
         
-        // 3. Dispatch deletion to EventKit if authorized
+        // 4. Dispatch deletion to EventKit if authorized
         if eventKitEngine.isAuthorized {
             eventKitEngine.deleteEvent(id: id, matchingEmail: configuredUserEmail)
+            eventKitEngine.deleteEvent(id: rawId, matchingEmail: configuredUserEmail)
         }
     }
     

@@ -3,12 +3,12 @@ import Combine
 
 @MainActor
 public final class MediaControllerModel: ObservableObject {
-    @Published public var trackTitle: String = "Starboy"
-    @Published public var artistName: String = "The Weeknd • Daft Punk"
+    @Published public var trackTitle: String = ""
+    @Published public var artistName: String = ""
     @Published public var albumArtURL: String? = nil
     @Published public var isPlaying: Bool = false
     @Published public var currentTime: TimeInterval = 0
-    @Published public var duration: TimeInterval = 230
+    @Published public var duration: TimeInterval = 0
     @Published public var volume: Double = 0.8
     @Published public var isMuted: Bool = false
     @Published public var isLiked: Bool = false
@@ -48,6 +48,16 @@ public final class MediaControllerModel: ObservableObject {
     private var playbackTicker: AnyCancellable?
     
     @Published public var isLoadingPlaylists: Bool = false
+    
+    // Playlist detail loading + YouTube Music catalog search state
+    @Published public var isLoadingTracks: Bool = false
+    @Published public var tracksError: String? = nil
+    @Published public var libraryError: String? = nil
+    @Published public var searchResults: [YTMSearchResult] = []
+    @Published public var isSearchingCatalog: Bool = false
+    @Published public var catalogSearchError: String? = nil
+    private var searchTask: Task<Void, Never>?
+    private var trackLoadTask: Task<Void, Never>?
     
     public init(engine: YouTubeMusicEngine = YouTubeMusicEngine.shared) {
         self.engine = engine
@@ -149,19 +159,12 @@ public final class MediaControllerModel: ObservableObject {
                 }
                 
                 if !data.playlists.isEmpty {
-                    var merged = self.playlists
-                    for ep in data.playlists {
-                        if let existingIdx = merged.firstIndex(where: { $0.id == ep.id }) {
-                            merged[existingIdx] = ep
-                        } else {
-                            merged.append(ep)
-                        }
-                    }
-                    self.playlists = merged
+                    self.mergePlaylists(data.playlists)
                 }
                 
-                // If a playlist was loaded and engine provided queue, update selectedPlaylist tracks
-                if let sel = self.selectedPlaylist, !data.queue.isEmpty {
+                // Only the live "Now Playing Queue" mirrors the player's queue. Real playlists, albums and
+                // artists get their tracks from InnerTube (previously the queue overwrote every opened playlist).
+                if let sel = self.selectedPlaylist, sel.id == "pl_queue", !data.queue.isEmpty {
                     var updated = sel
                     updated.tracks = data.queue
                     self.selectedPlaylist = updated
@@ -183,17 +186,38 @@ public final class MediaControllerModel: ObservableObject {
         engine.$userPlaylists
             .sink { [weak self] enginePlaylists in
                 guard let self = self, !enginePlaylists.isEmpty else { return }
-                var merged = self.playlists
-                for ep in enginePlaylists {
-                    if let existingIdx = merged.firstIndex(where: { $0.id == ep.id }) {
-                        merged[existingIdx] = ep
-                    } else {
-                        merged.append(ep)
-                    }
-                }
-                self.playlists = merged
+                self.mergePlaylists(enginePlaylists)
             }
             .store(in: &cancellables)
+        
+        engine.$libraryError
+            .sink { [weak self] err in self?.libraryError = err }
+            .store(in: &cancellables)
+        
+        // Debounced YouTube Music catalog search driven by the playlist search field.
+        $playlistSearchQuery
+            .removeDuplicates()
+            .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
+            .sink { [weak self] query in
+                self?.runCatalogSearch(query)
+            }
+            .store(in: &cancellables)
+    }
+    
+    /// Merges incoming playlists by id, keeping any tracks that were already loaded.
+    func mergePlaylists(_ incoming: [YTMPlaylist]) {
+        var merged = playlists
+        for ep in incoming {
+            if let idx = merged.firstIndex(where: { $0.id == ep.id }) {
+                var updated = ep
+                if updated.tracks.isEmpty { updated.tracks = merged[idx].tracks }
+                if updated.playbackListId == nil { updated.playbackListId = merged[idx].playbackListId }
+                merged[idx] = updated
+            } else {
+                merged.append(ep)
+            }
+        }
+        playlists = merged
     }
     
     public var formattedCurrentTime: String {
@@ -267,7 +291,6 @@ public final class MediaControllerModel: ObservableObject {
             engine.nextTrack()
             executeBrowserNextTrack()
             Self.postSystemMediaKey(key: 19)
-            simulateNextTrack()
         }
     }
     
@@ -362,19 +385,74 @@ public final class MediaControllerModel: ObservableObject {
         selectedPlaylist = pl
         isSearchingSongs = false
         songSearchQuery = ""
+        tracksError = nil
+        trackLoadTask?.cancel()
         
-        if isDirectEngineActive && pl.id != "pl_queue" {
-            engine.loadPlaylist(id: pl.id)
+        // The live queue is mirrored from the player; everything else is fetched natively.
+        guard pl.id != "pl_queue", pl.kind != .queue else {
+            isLoadingTracks = false
+            return
+        }
+        // Already loaded (cached) → show immediately.
+        guard pl.tracks.isEmpty else {
+            isLoadingTracks = false
+            return
+        }
+        loadTracksForSelectedPlaylist()
+    }
+    
+    /// Fetches the real tracks (playlist, album or artist) of `selectedPlaylist` from YouTube Music.
+    public func loadTracksForSelectedPlaylist() {
+        guard let pl = selectedPlaylist, pl.id != "pl_queue", pl.kind != .queue else { return }
+        trackLoadTask?.cancel()
+        isLoadingTracks = true
+        tracksError = nil
+        trackLoadTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                let page = try await self.engine.loadTracks(for: pl)
+                guard !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
+                self.applyLoadedTracks(page, to: pl)
+                self.tracksError = page.tracks.isEmpty ? "No songs found in this \(pl.kind == .artist ? "artist" : "playlist")." : nil
+            } catch {
+                guard !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
+                self.tracksError = error.localizedDescription
+            }
+            self.isLoadingTracks = false
+        }
+    }
+    
+    func applyLoadedTracks(_ page: YTMTrackPage, to pl: YTMPlaylist) {
+        var updated = selectedPlaylist ?? pl
+        updated.tracks = page.tracks.map { t in
+            var t = t
+            t.isPlaying = (t.title == trackTitle && isPlaying)
+            return t
+        }
+        updated.trackCount = page.tracks.count
+        if let list = page.playbackListId { updated.playbackListId = list }
+        selectedPlaylist = updated
+        if updated.kind == .playlist, playlists.contains(where: { $0.id == updated.id }) {
+            mergePlaylists([updated])
         }
     }
     
     public func backToPlaylists() {
+        trackLoadTask?.cancel()
+        isLoadingTracks = false
+        tracksError = nil
         selectedPlaylist = nil
         isSearchingSongs = false
         songSearchQuery = ""
     }
     
-    public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
+    /// `list=` parameter for starting playback inside the currently opened container (artists play as radio).
+    private var selectedPlaybackListId: String? {
+        guard let sel = selectedPlaylist, sel.kind != .artist, sel.kind != .queue, sel.id != "pl_queue" else { return nil }
+        return sel.playbackListId ?? (sel.kind == .playlist ? sel.id : nil)
+    }
+    
+    private func markPlaying(_ item: YTMPlaylistItem) {
         trackTitle = item.title
         if !item.artist.isEmpty {
             artistName = item.artist
@@ -382,15 +460,24 @@ public final class MediaControllerModel: ObservableObject {
         currentTime = 0
         isPlaying = true
         
-        // Update isPlaying state across tracks in selectedPlaylist
         if var sel = selectedPlaylist {
             for i in 0..<sel.tracks.count {
                 sel.tracks[i].isPlaying = (sel.tracks[i].id == item.id)
             }
             selectedPlaylist = sel
         }
+    }
+    
+    public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
+        markPlaying(item)
         
-        if let idx = Int(item.id) {
+        if selectedPlaylist?.id == "pl_queue" {
+            if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
+                engine.playQueueIndex(matchIdx)
+            }
+        } else if let vid = item.videoId {
+            engine.play(videoId: vid, listId: selectedPlaybackListId)
+        } else if let idx = Int(item.id) {
             engine.playPlaylistSong(index: idx)
         } else if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
             engine.playPlaylistSong(index: matchIdx)
@@ -400,18 +487,94 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func playEntireSelectedPlaylist() {
-        guard let sel = selectedPlaylist, !sel.tracks.isEmpty else { return }
-        playSongInSelectedPlaylist(sel.tracks[0])
+        guard let sel = selectedPlaylist, let first = sel.tracks.first else { return }
+        if let vid = first.videoId, sel.id != "pl_queue" {
+            markPlaying(first)
+            engine.play(videoId: vid, listId: selectedPlaybackListId)
+            return
+        }
+        playSongInSelectedPlaylist(first)
         engine.playEntirePlaylist()
     }
     
     public func refreshPlaylists() {
         isLoadingPlaylists = true
-        engine.fetchRealUserPlaylists()
-        engine.fetchTracksFromCurrentPage()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.isLoadingPlaylists = false
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            await self.engine.refreshLibraryPlaylists()
+            self.isLoadingPlaylists = false
         }
+    }
+    
+    // MARK: - YouTube Music catalog search (songs / artists / albums / playlists)
+    func runCatalogSearch(_ rawQuery: String) {
+        searchTask?.cancel()
+        let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2 else {
+            searchResults = []
+            isSearchingCatalog = false
+            catalogSearchError = nil
+            return
+        }
+        isSearchingCatalog = true
+        catalogSearchError = nil
+        searchTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                let results = try await self.engine.searchCatalog(q)
+                guard !Task.isCancelled,
+                      self.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
+                self.searchResults = results
+                self.catalogSearchError = results.isEmpty ? "No results on YouTube Music for \"\(q)\"." : nil
+            } catch {
+                guard !Task.isCancelled,
+                      self.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
+                self.searchResults = []
+                self.catalogSearchError = error.localizedDescription
+            }
+            self.isSearchingCatalog = false
+        }
+    }
+    
+    /// Search results grouped like the YouTube Music results page (top result first, then Songs, Artists, Albums, Playlists, Videos).
+    public var groupedSearchResults: [(kind: YTMSearchKind, items: [YTMSearchResult])] {
+        let order: [YTMSearchKind] = [.song, .artist, .album, .playlist, .video]
+        return order.compactMap { k in
+            let items = searchResults.filter { $0.kind == k }
+            return items.isEmpty ? nil : (kind: k, items: Array(items.prefix(k == .song ? 6 : 4)))
+        }
+    }
+    
+    /// Opens a search result: songs/videos start playing, artists/albums/playlists open with their real songs.
+    public func openSearchResult(_ result: YTMSearchResult) {
+        switch result.kind {
+        case .song, .video:
+            guard let track = result.asTrack else { return }
+            trackTitle = track.title
+            if !track.artist.isEmpty { artistName = track.artist }
+            currentTime = 0
+            isPlaying = true
+            if let vid = track.videoId { engine.play(videoId: vid) }
+        case .artist, .album, .playlist:
+            if let pl = result.asPlaylist {
+                selectPlaylist(pl)
+            }
+        }
+    }
+    
+    /// Jumps from an opened playlist to a YouTube Music-wide search for `query`.
+    public func searchYouTubeMusic(for query: String) {
+        backToPlaylists()
+        isSearchingPlaylists = true
+        playlistSearchQuery = query
+    }
+    
+    public func clearPlaylistSearch() {
+        searchTask?.cancel()
+        playlistSearchQuery = ""
+        searchResults = []
+        isSearchingCatalog = false
+        catalogSearchError = nil
     }
     
     public var nowPlayingQueuePlaylist: YTMPlaylist {
@@ -512,25 +675,6 @@ public final class MediaControllerModel: ObservableObject {
                     }
                 }
             }
-    }
-    
-    // Demo Track Simulation when completely offline
-    private let demoTracks: [(title: String, artist: String, duration: TimeInterval)] = [
-        ("Starboy", "The Weeknd • Daft Punk", 230),
-        ("Midnight City", "M83", 244),
-        ("Blinding Lights", "The Weeknd", 200),
-        ("Get Lucky", "Daft Punk • Pharrell Williams", 248),
-        ("Resonance", "HOME • Chillwave", 212)
-    ]
-    private var demoIndex = 0
-    
-    private func simulateNextTrack() {
-        demoIndex = (demoIndex + 1) % demoTracks.count
-        let track = demoTracks[demoIndex]
-        trackTitle = track.title
-        artistName = track.artist
-        duration = track.duration
-        currentTime = 0
     }
     
     private func pollBrowserState() async {

@@ -7,6 +7,8 @@ public struct MediaView: View {
     @State private var scrubFraction: Double = 0.0
     @State private var isSearching: Bool = false
     @State private var searchQuery: String = ""
+    @FocusState private var playlistSearchFocused: Bool
+    @FocusState private var songSearchFocused: Bool
     
     public init(media: MediaControllerModel) {
         self.media = media
@@ -108,12 +110,12 @@ public struct MediaView: View {
             albumArtSquircle
             
             VStack(alignment: .leading, spacing: 3) {
-                Text(media.trackTitle)
+                Text(media.trackTitle.isEmpty ? "No Track Selected" : media.trackTitle)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(media.trackTitle.isEmpty ? Color.white.opacity(0.6) : .white)
                     .lineLimit(1)
                 
-                Text(media.artistName)
+                Text(media.artistName.isEmpty ? "YouTube Music" : media.artistName)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.6))
                     .lineLimit(1)
@@ -427,7 +429,9 @@ public struct MediaView: View {
                 playlistsSearchBar
             }
             
-            if media.isLoadingPlaylists {
+            if media.isSearchingPlaylists && !media.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                catalogSearchDeck
+            } else if media.isLoadingPlaylists {
                 VStack(spacing: 8) {
                     Spacer(minLength: 12)
                     ProgressView()
@@ -448,9 +452,10 @@ public struct MediaView: View {
                     Text(media.isSignedIn ? "No Custom Playlists Found" : "No YouTube Music Playlists Found")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.85))
-                    Text(media.isSignedIn
-                         ? "You are signed in! Create playlists on YouTube Music or click Sync to refresh."
-                         : "Sign in once to YouTube Music to access all your playlists and music.")
+                    Text(media.libraryError
+                         ?? (media.isSignedIn
+                             ? "You are signed in! Create playlists on YouTube Music or click Sync to refresh."
+                             : "Sign in once to YouTube Music to access all your playlists and music."))
                         .font(.system(size: 8, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.45))
                         .multilineTextAlignment(.center)
@@ -580,15 +585,154 @@ public struct MediaView: View {
                 .font(.system(size: 8.5))
                 .foregroundColor(Color.white.opacity(0.5))
             
-            TextField("Search playlists...", text: $media.playlistSearchQuery)
+            TextField("Search songs, artists, albums...", text: $media.playlistSearchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(.white)
+                .focused($playlistSearchFocused)
+                .onAppear { playlistSearchFocused = true }
+            
+            if media.isSearchingCatalog {
+                ProgressView()
+                    .scaleEffect(0.4)
+                    .frame(width: 10, height: 10)
+                    .colorScheme(.dark)
+            } else if !media.playlistSearchQuery.isEmpty {
+                Button(action: { media.clearPlaylistSearch() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(Color.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3.5)
         .background(Color.white.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+    
+    // MARK: - YouTube Music style search results (library matches + Songs / Artists / Albums / Playlists)
+    private var catalogSearchDeck: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            LazyVStack(alignment: .leading, spacing: 3) {
+                let local = media.filteredPlaylists
+                if !local.isEmpty {
+                    searchSectionHeader("In your library")
+                    ForEach(local.prefix(4)) { playlist in
+                        playlistCardRow(playlist: playlist)
+                    }
+                }
+                
+                if media.isSearchingCatalog && media.searchResults.isEmpty {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 12, height: 12)
+                            .colorScheme(.dark)
+                        Text("Searching YouTube Music...")
+                            .font(.system(size: 8.5, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.55))
+                    }
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                } else if media.searchResults.isEmpty, let err = media.catalogSearchError {
+                    Text(err)
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.5))
+                        .multilineTextAlignment(.center)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                }
+                
+                ForEach(Array(media.groupedSearchResults.enumerated()), id: \.offset) { _, group in
+                    searchSectionHeader(group.kind.sectionTitle)
+                    ForEach(group.items) { result in
+                        searchResultRow(result)
+                    }
+                }
+            }
+            .padding(.trailing, 2)
+        }
+        .frame(maxHeight: 116)
+    }
+    
+    private func searchSectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+            .tracking(0.6)
+            .foregroundColor(Color.white.opacity(0.4))
+            .padding(.top, 3)
+            .padding(.leading, 2)
+    }
+    
+    private func searchResultRow(_ result: YTMSearchResult) -> some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                media.openSearchResult(result)
+            }
+        }) {
+            HStack(spacing: 8) {
+                artworkThumb(url: result.thumbnailURL, size: 26, circle: result.kind == .artist, fallbackIcon: result.kind.iconName)
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(result.title)
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    if !result.subtitle.isEmpty {
+                        Text(result.subtitle)
+                            .font(.system(size: 8, weight: .regular))
+                            .foregroundColor(Color.white.opacity(0.45))
+                            .lineLimit(1)
+                    }
+                }
+                
+                Spacer(minLength: 4)
+                
+                Image(systemName: (result.kind == .song || result.kind == .video) ? "play.fill" : "chevron.right")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.35))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3.5)
+            .background(Color.white.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(result.kind == .song || result.kind == .video ? "Play \(result.title)" : "Open \(result.title)")
+    }
+    
+    private func artworkThumb(url: String?, size: CGFloat, circle: Bool = false, fallbackIcon: String) -> some View {
+        let shape = RoundedRectangle(cornerRadius: circle ? size / 2 : 6, style: .continuous)
+        return ZStack {
+            shape
+                .fill(Color.white.opacity(0.08))
+                .frame(width: size, height: size)
+            if let url = url, let u = URL(string: url) {
+                AsyncImage(url: u) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: size, height: size)
+                            .clipShape(shape)
+                    } else {
+                        Image(systemName: fallbackIcon)
+                            .font(.system(size: size * 0.38, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.6))
+                    }
+                }
+            } else {
+                Image(systemName: fallbackIcon)
+                    .font(.system(size: size * 0.38, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.6))
+            }
+        }
+        .frame(width: size, height: size)
     }
     
     private var nowPlayingQueueCardRow: some View {
@@ -654,7 +798,7 @@ public struct MediaView: View {
                         .foregroundColor(.white)
                         .lineLimit(1)
                     
-                    Text(playlist.subtitle.isEmpty ? "\(playlist.tracks.count) tracks" : playlist.subtitle)
+                    Text(playlist.subtitle.isEmpty ? (playlist.tracks.isEmpty ? "Playlist" : "\(playlist.tracks.count) tracks") : playlist.subtitle)
                         .font(.system(size: 8, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.45))
                         .lineLimit(1)
@@ -663,9 +807,11 @@ public struct MediaView: View {
                 Spacer(minLength: 4)
                 
                 HStack(spacing: 4) {
-                    Text("\(playlist.tracks.count)")
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.4))
+                    if !playlist.tracks.isEmpty {
+                        Text("\(playlist.tracks.count)")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.4))
+                    }
                     
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8, weight: .bold))
@@ -730,21 +876,21 @@ public struct MediaView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 let songs = media.filteredSongs(for: playlist)
                 if songs.isEmpty {
-                    VStack(spacing: 4) {
-                        Spacer(minLength: 12)
-                        Image(systemName: "music.note")
-                            .font(.system(size: 14))
-                            .foregroundColor(Color.white.opacity(0.3))
-                        Text("No songs found in this playlist")
-                            .font(.system(size: 8.5, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.45))
-                        Spacer(minLength: 12)
-                    }
-                    .frame(maxWidth: .infinity)
+                    songsEmptyState(playlist: playlist)
                 } else {
                     LazyVStack(spacing: 3) {
                         ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
                             songItemRow(index: index, song: song)
+                        }
+                        
+                        if media.isLoadingTracks {
+                            HStack(spacing: 5) {
+                                ProgressView().scaleEffect(0.45).frame(width: 10, height: 10).colorScheme(.dark)
+                                Text("Loading more...")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundColor(Color.white.opacity(0.45))
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
                     .padding(.trailing, 2)
@@ -752,6 +898,68 @@ public struct MediaView: View {
             }
             .frame(maxHeight: media.isSearchingSongs ? 116 : 138)
         }
+    }
+    
+    @ViewBuilder
+    private func songsEmptyState(playlist: YTMPlaylist) -> some View {
+        let query = media.songSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        VStack(spacing: 5) {
+            Spacer(minLength: 10)
+            if media.isLoadingTracks && playlist.tracks.isEmpty {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .colorScheme(.dark)
+                Text("Loading songs from YouTube Music...")
+                    .font(.system(size: 8.5, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.6))
+            } else if !query.isEmpty && !playlist.tracks.isEmpty {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color.white.opacity(0.3))
+                Text("No songs match \"\(query)\"")
+                    .font(.system(size: 8.5, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.5))
+                Button(action: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                        media.searchYouTubeMusic(for: query)
+                    }
+                }) {
+                    Text("Search YouTube Music")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Image(systemName: "music.note")
+                    .font(.system(size: 14))
+                    .foregroundColor(Color.white.opacity(0.3))
+                Text(media.tracksError ?? "No songs found in this playlist")
+                    .font(.system(size: 8.5, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.5))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+                if playlist.id != "pl_queue" {
+                    Button(action: { media.loadTracksForSelectedPlaylist() }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.clockwise").font(.system(size: 8))
+                            Text("Retry").font(.system(size: 8.5, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.14))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Spacer(minLength: 10)
+        }
+        .frame(maxWidth: .infinity)
     }
     
     private func playlistDetailHeaderRow(playlist: YTMPlaylist) -> some View {
@@ -781,6 +989,16 @@ public struct MediaView: View {
                 .font(.system(size: 9, weight: .heavy, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
+            
+            if !playlist.tracks.isEmpty {
+                Text("\(playlist.tracks.count)")
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.5))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+            }
             
             Spacer()
             
@@ -830,10 +1048,21 @@ public struct MediaView: View {
                 .font(.system(size: 8.5))
                 .foregroundColor(Color.white.opacity(0.5))
             
-            TextField("Search songs in playlist...", text: $media.songSearchQuery)
+            TextField("Search in this playlist...", text: $media.songSearchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundColor(.white)
+                .focused($songSearchFocused)
+                .onAppear { songSearchFocused = true }
+            
+            if !media.songSearchQuery.isEmpty {
+                Button(action: { media.songSearchQuery = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(Color.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3.5)
@@ -849,9 +1078,11 @@ public struct MediaView: View {
             }
         }) {
             HStack(spacing: 7) {
-                // Play State / Index Indicator
+                // Play State / Index Indicator (artwork when YouTube provides it)
                 ZStack {
-                    if isCurrentSong {
+                    if let thumb = song.thumbnailURL, !isCurrentSong {
+                        artworkThumb(url: thumb, size: 20, fallbackIcon: "music.note")
+                    } else if isCurrentSong {
                         HStack(alignment: .bottom, spacing: 1.2) {
                             ForEach(0..<3, id: \.self) { barIdx in
                                 RoundedRectangle(cornerRadius: 0.5)
