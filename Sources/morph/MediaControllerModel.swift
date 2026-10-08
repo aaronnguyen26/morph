@@ -371,14 +371,15 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func filteredSongs(for pl: YTMPlaylist) -> [YTMPlaylistItem] {
-        let list = pl.tracks
+        let list = YTMPlaylistItem.deduplicateAdjacent(pl.tracks)
         let query = songSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if query.isEmpty {
             return list
         }
-        return list.filter {
+        let filtered = list.filter {
             $0.title.lowercased().contains(query) || $0.artist.lowercased().contains(query)
         }
+        return YTMPlaylistItem.deduplicateAdjacent(filtered)
     }
     
     public func selectPlaylist(_ pl: YTMPlaylist) {
@@ -424,12 +425,13 @@ public final class MediaControllerModel: ObservableObject {
     
     func applyLoadedTracks(_ page: YTMTrackPage, to pl: YTMPlaylist) {
         var updated = selectedPlaylist ?? pl
-        updated.tracks = page.tracks.map { t in
+        let deduplicated = YTMPlaylistItem.deduplicateAdjacent(page.tracks)
+        updated.tracks = deduplicated.map { t in
             var t = t
             t.isPlaying = (t.title == trackTitle && isPlaying)
             return t
         }
-        updated.trackCount = page.tracks.count
+        updated.trackCount = deduplicated.count
         if let list = page.playbackListId { updated.playbackListId = list }
         selectedPlaylist = updated
         if updated.kind == .playlist, playlists.contains(where: { $0.id == updated.id }) {

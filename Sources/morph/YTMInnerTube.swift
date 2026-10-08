@@ -287,6 +287,7 @@ public enum YTMParser {
            let pid = shelf["playlistId"] as? String {
             page.playbackListId = pid
         }
+        page.tracks = YTMPlaylistItem.deduplicateAdjacent(page.tracks)
         return page
     }
     

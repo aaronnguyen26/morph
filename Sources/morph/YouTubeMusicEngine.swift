@@ -44,6 +44,29 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
         self.videoId = videoId
         self.thumbnailURL = thumbnailURL
     }
+    
+    /// Returns the tracks with adjacent duplicates collapsed (same videoId, or same title and matching artist).
+    public static func deduplicateAdjacent(_ tracks: [YTMPlaylistItem]) -> [YTMPlaylistItem] {
+        var result: [YTMPlaylistItem] = []
+        for track in tracks {
+            if let last = result.last {
+                let sameVideoId = (track.videoId != nil && !track.videoId!.isEmpty && track.videoId == last.videoId)
+                let cleanTitle1 = track.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let cleanTitle2 = last.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let sameTitle = !cleanTitle1.isEmpty && cleanTitle1 == cleanTitle2
+                
+                let cleanArtist1 = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let cleanArtist2 = last.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let sameArtist = cleanArtist1 == cleanArtist2 || cleanArtist1.isEmpty || cleanArtist2.isEmpty
+                
+                if sameVideoId || (sameTitle && sameArtist) {
+                    continue
+                }
+            }
+            result.append(track)
+        }
+        return result
+    }
 }
 
 public enum YTMPlaylistKind: String, Codable, Equatable {
@@ -301,6 +324,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     ))
                 }
             }
+            parsedQueue = YTMPlaylistItem.deduplicateAdjacent(parsedQueue)
         }
         
         var parsedPlaylists: [YTMPlaylist] = []
@@ -935,6 +959,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             page.tracks += next.tracks
             token = next.continuation
         }
+        page.tracks = YTMPlaylistItem.deduplicateAdjacent(page.tracks)
         page.continuation = nil
         print("[Morph YTM] loadAllPages parsed \(page.tracks.count) tracks for browseId: '\(browseId)'")
         return page
@@ -1437,13 +1462,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             var qDur = qDurEl ? (qDurEl.innerText || qDurEl.textContent || '').trim() : '';
                             var isSel = it.hasAttribute('selected') || it.classList.contains('selected') || it.getAttribute('play-state') === 'playing';
                             if (qTitle) {
-                                queue.push({
-                                    id: '' + i,
-                                    title: qTitle,
-                                    artist: qArtist,
-                                    duration: qDur,
-                                    isPlaying: isSel
-                                });
+                                var lastQ = queue.length > 0 ? queue[queue.length - 1] : null;
+                                var isAdjDup = lastQ && (lastQ.title.toLowerCase() === qTitle.toLowerCase()) && (!lastQ.artist || !qArtist || lastQ.artist.toLowerCase() === qArtist.toLowerCase());
+                                if (!isAdjDup) {
+                                    queue.push({
+                                        id: '' + i,
+                                        title: qTitle,
+                                        artist: qArtist,
+                                        duration: qDur,
+                                        isPlaying: isSel
+                                    });
+                                }
                             }
                         }
                     }
