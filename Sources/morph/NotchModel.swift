@@ -41,19 +41,13 @@ public enum CompactHUDMode: String, Equatable {
     case dualActive
     case notesPinned
     case calendarAlert
-    case commandApproval
     case meetingFlight
-    case devMonitorActive
     case dropShelfActive
-    case devSnippetDetected
 }
 
 public enum ContextualFeature: String, Identifiable, Equatable {
-    case commandApproval = "Approval Gate"
     case meetingFlight = "Meeting Cockpit"
-    case devMonitor = "Terminal Monitor"
     case dropShelf = "Drop Shelf"
-    case devSnippet = "Snippet Shelf"
     
     public var id: String { rawValue }
 }
@@ -82,9 +76,6 @@ public final class NotchModel: ObservableObject {
     public let supabase: SupabaseService
     public let dropShelf: DropShelfModel
     public let meetingController: MeetingFlightControllerModel
-    public let devMonitor: DevAgentMonitorModel
-    public let commandApproval: CommandApprovalModel
-    public let devClipboard: DevSnippetClipboardModel
     
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
@@ -98,10 +89,7 @@ public final class NotchModel: ObservableObject {
         calendar: CalendarModel = CalendarModel(),
         supabase: SupabaseService = .shared,
         dropShelf: DropShelfModel = DropShelfModel(),
-        meetingController: MeetingFlightControllerModel = MeetingFlightControllerModel(),
-        devMonitor: DevAgentMonitorModel = DevAgentMonitorModel(),
-        commandApproval: CommandApprovalModel = CommandApprovalModel(),
-        devClipboard: DevSnippetClipboardModel = DevSnippetClipboardModel()
+        meetingController: MeetingFlightControllerModel = MeetingFlightControllerModel()
     ) {
         self.pomodoro = pomodoro
         self.media = media
@@ -110,9 +98,6 @@ public final class NotchModel: ObservableObject {
         self.supabase = supabase
         self.dropShelf = dropShelf
         self.meetingController = meetingController
-        self.devMonitor = devMonitor
-        self.commandApproval = commandApproval
-        self.devClipboard = devClipboard
         
         detectScreenNotch()
         observeSubmodels()
@@ -216,10 +201,6 @@ public final class NotchModel: ObservableObject {
     }
     
     public var compactHUDMode: CompactHUDMode {
-        if commandApproval.hasPendingApproval {
-            return .commandApproval
-        }
-        
         if dropShelf.isDraggingOverNotch {
             return .dropShelfActive
         }
@@ -238,8 +219,6 @@ public final class NotchModel: ObservableObject {
         
         if timerRunning && musicPlaying {
             return .dualActive
-        } else if devMonitor.isTaskActive {
-            return .devMonitorActive
         } else if timerRunning {
             return .pomodoroOnly
         } else if musicPlaying {
@@ -248,8 +227,6 @@ public final class NotchModel: ObservableObject {
             return .calendarAlert
         } else if dropShelf.hasItems {
             return .dropShelfActive
-        } else if devClipboard.showToast {
-            return .devSnippetDetected
         } else {
             return .none
         }
@@ -275,15 +252,9 @@ public final class NotchModel: ObservableObject {
             return max(idleWidth + 200, 400)
         case .calendarAlert:
             return max(idleWidth + 280, 480)
-        case .commandApproval:
-            return max(idleWidth + 300, 500)
         case .meetingFlight:
             return max(idleWidth + 280, 480)
-        case .devMonitorActive:
-            return max(idleWidth + 280, 480)
         case .dropShelfActive:
-            return max(idleWidth + 240, 440)
-        case .devSnippetDetected:
             return max(idleWidth + 240, 440)
         }
     }
@@ -294,7 +265,7 @@ public final class NotchModel: ObservableObject {
         case .notesPinned:
             return max(idleHeight + 24, 56)
         case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAlert,
-             .commandApproval, .meetingFlight, .devMonitorActive, .dropShelfActive, .devSnippetDetected:
+             .meetingFlight, .dropShelfActive:
             return idleHeight
         }
     }
@@ -352,9 +323,6 @@ public final class NotchModel: ObservableObject {
         supabase.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         dropShelf.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         meetingController.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
-        devMonitor.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
-        commandApproval.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
-        devClipboard.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
         
         // Sync CalendarModel events into MeetingFlightControllerModel

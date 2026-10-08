@@ -241,16 +241,10 @@ public struct MorphIslandView: View {
             CompactNotesWingLeft(model: model)
         case .calendarAlert:
             CompactCalendarWingLeft(calendar: model.calendar, model: model)
-        case .commandApproval:
-            CompactApprovalWingLeft(approval: model.commandApproval, model: model)
         case .meetingFlight:
             CompactMeetingWingLeft(controller: model.meetingController, model: model)
-        case .devMonitorActive:
-            CompactDevMonitorWingLeft(monitor: model.devMonitor, model: model)
         case .dropShelfActive:
             CompactDropShelfWingLeft(shelf: model.dropShelf, model: model)
-        case .devSnippetDetected:
-            CompactSnippetWingLeft(clipboard: model.devClipboard, model: model)
         case .none:
             EmptyView()
         }
@@ -271,16 +265,10 @@ public struct MorphIslandView: View {
                 .padding(.trailing, 10)
         case .calendarAlert:
             CompactCalendarWingRight(calendar: model.calendar, model: model)
-        case .commandApproval:
-            CompactApprovalWingRight(approval: model.commandApproval, model: model)
         case .meetingFlight:
             CompactMeetingWingRight(controller: model.meetingController, model: model)
-        case .devMonitorActive:
-            CompactDevMonitorWingRight(monitor: model.devMonitor, model: model)
         case .dropShelfActive:
             CompactDropShelfWingRight(shelf: model.dropShelf, model: model)
-        case .devSnippetDetected:
-            CompactSnippetWingRight(clipboard: model.devClipboard, model: model)
         case .none:
             EmptyView()
         }
@@ -362,20 +350,11 @@ public struct MorphIslandView: View {
             ZStack {
                 if let contextFeature = model.activeContextFeature {
                     switch contextFeature {
-                    case .commandApproval:
-                        CommandApprovalView(model: model)
-                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .meetingFlight:
                         MeetingFlightControllerView(model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                    case .devMonitor:
-                        DevAgentMonitorView(model: model)
-                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .dropShelf:
                         DropShelfView(model: model)
-                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
-                    case .devSnippet:
-                        DevSnippetClipboardView(model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     }
                 } else {
