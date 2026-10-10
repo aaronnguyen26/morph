@@ -118,7 +118,7 @@ public struct MorphIslandView: View {
                 if model.isExpanded {
                     expandedView
                         .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
+                            insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
                             removal: .opacity
                         ))
                 } else if model.isCompactActive {
@@ -153,10 +153,10 @@ public struct MorphIslandView: View {
             .onChange(of: isNotchDragTargeted) { _, targeted in
                 model.dropShelf.isDraggingOverNotch = targeted
             }
-            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isExpanded)
-            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.isCompactActive)
-            .animation(.spring(response: 0.3, dampingFraction: 0.78), value: model.selectedTab)
-            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: model.activeContextFeature)
+            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: model.isExpanded)
+            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: model.isCompactActive)
+            .animation(.spring(response: 0.30, dampingFraction: 0.82), value: model.selectedTab)
+            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: model.activeContextFeature)
             
             Spacer(minLength: 0)
         }

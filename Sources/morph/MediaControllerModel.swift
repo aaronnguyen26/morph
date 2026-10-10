@@ -282,6 +282,36 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func nextTrack() {
+        // Continuous Playback: If we have an active playlist or queue, advance to next track
+        if let sel = selectedPlaylist, !sel.tracks.isEmpty {
+            if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying }) {
+                let nextIdx = currentIdx + 1
+                if nextIdx < sel.tracks.count {
+                    let nextItem = sel.tracks[nextIdx]
+                    playSongInSelectedPlaylist(nextItem)
+                    return
+                } else if repeatMode == .all {
+                    // Loop back to start
+                    let firstItem = sel.tracks[0]
+                    playSongInSelectedPlaylist(firstItem)
+                    return
+                }
+            }
+        } else if !playlist.isEmpty {
+            if let currentIdx = playlist.firstIndex(where: { $0.isPlaying }) {
+                let nextIdx = currentIdx + 1
+                if nextIdx < playlist.count {
+                    let nextItem = playlist[nextIdx]
+                    playQueueTrack(nextItem)
+                    return
+                } else if repeatMode == .all {
+                    let firstItem = playlist[0]
+                    playQueueTrack(firstItem)
+                    return
+                }
+            }
+        }
+
         if isDirectEngineActive {
             engine.nextTrack()
         } else if isBrowserConnected {
@@ -846,13 +876,22 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserNextTrack() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        let jsCommand = """
+        (function() {
+            var confirmButtons = document.querySelectorAll('ytmusic-you-there-renderer #confirm-button, tp-yt-paper-dialog #confirm-button');
+            for (var i = 0; i < confirmButtons.length; i++) { confirmButtons[i].click(); }
+            var btn = document.querySelector('.next-button') || document.querySelector('ytmusic-player-bar .next-button');
+            if (btn) btn.click();
+        })();
+        """
+        let escapedJS = jsCommand.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ")
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
                 repeat with t in tabs of w
                     if (URL of t) contains "music.youtube.com" then
                         try
-                            execute t javascript "document.querySelector('.next-button') ? document.querySelector('.next-button').click() : null;"
+                            execute t javascript "\(escapedJS)"
                         end try
                     end if
                 end repeat

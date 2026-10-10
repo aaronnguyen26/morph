@@ -16,7 +16,7 @@ public final class NotchPanel: NSPanel {
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         self.isMovable = false
         self.isMovableByWindowBackground = false
-        self.acceptsMouseMovedEvents = false
+        self.acceptsMouseMovedEvents = true
         self.becomesKeyOnlyIfNeeded = true
         self.hidesOnDeactivate = false
         self.titleVisibility = .hidden

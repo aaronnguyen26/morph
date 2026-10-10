@@ -249,7 +249,7 @@ public final class MorphController: NSObject {
             guard let self = self else { return }
             if self.model.isExpanded {
                 self.model.isPinned = false
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
                     self.model.isExpanded = false
                 }
                 self.scheduleWindowShrink()
@@ -299,6 +299,12 @@ public final class MorphController: NSObject {
                 self?.checkMousePosition(NSEvent.mouseLocation)
             }
         }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.checkMousePosition(NSEvent.mouseLocation)
+            }
+            return event
+        }
     }
     
     public func activeUIRect() -> NSRect {
@@ -337,7 +343,7 @@ public final class MorphController: NSObject {
                 model.isHovered = true
             }
         } else {
-            if model.isExpanded && !model.isPinned && !model.calendar.isAddingEvent {
+            if model.isExpanded && !model.isPinned && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen {
                 if collapseWorkItem == nil {
                     handleMouseExit()
                 }
@@ -359,7 +365,8 @@ public final class MorphController: NSObject {
         if !model.isExpanded {
             model.syncExpandedFeatureWithActiveContext()
             expandPanel()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+            // Fluid Apple Dynamic Island expansion spring: swift organic attack with natural settle
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                 self.model.isExpanded = true
             }
             panel.makeKey()
@@ -367,12 +374,12 @@ public final class MorphController: NSObject {
     }
     
     public func handleMouseExit() {
-        guard !model.isPinned && !model.calendar.isAddingEvent else { return }
+        guard !model.isPinned && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen else { return }
         
         collapseWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            guard !self.model.isPinned && !self.model.calendar.isAddingEvent else { return }
+            guard !self.model.isPinned && !self.model.calendar.isAddingEvent && !self.model.dropShelf.isDraggingOut && !self.model.dropShelf.isHeldOpen else { return }
             
             // Sensitive verification: Is cursor still outside Morph's UI space?
             let currentMouse = NSEvent.mouseLocation
@@ -383,14 +390,16 @@ public final class MorphController: NSObject {
             }
             
             self.model.isHovered = false
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+            // Crisp, zero-clutter collapse spring: quick, controlled retraction without bouncing or stutter
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
                 self.model.isExpanded = false
             }
             self.scheduleWindowShrink()
             self.collapseWorkItem = nil
         }
         self.collapseWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.20, execute: workItem)
+        // 250ms intention buffer prevents jittery accidental dismissals while keeping UI immediate
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
     
     private func expandPanel() {
@@ -409,7 +418,8 @@ public final class MorphController: NSObject {
             self.shrinkWorkItem = nil
         }
         self.shrinkWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+        // Exactly synchronized with the 300ms retraction curve + 40ms buffer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34, execute: workItem)
     }
     
     private func resizePanelToRestingState() {

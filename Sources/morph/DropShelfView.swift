@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 public struct DropShelfView: View {
     @ObservedObject var model: NotchModel
     @State private var isTargeted: Bool = false
+    @State private var isMiniDropTargeted: Bool = false
     
     public init(model: NotchModel) {
         self.model = model
@@ -40,12 +41,43 @@ public struct DropShelfView: View {
                 Spacer()
                 
                 if let msg = shelf.lastActionMessage {
-                    Text(msg)
-                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.7))
-                        .lineLimit(1)
-                        .transition(.opacity)
+                    HStack(spacing: 4) {
+                        if shelf.isDraggingOut || shelf.isHeldOpen {
+                            Circle()
+                                .fill(Color.cyan)
+                                .frame(width: 5, height: 5)
+                        }
+                        Text(msg)
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                            .foregroundColor(shelf.isDraggingOut || shelf.isHeldOpen ? .cyan : Color.white.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    .transition(.opacity)
                 }
+                
+                // Hold Mode Toggle Option
+                Button(action: {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                        shelf.toggleHoldMode()
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: shelf.isHoldModeActive ? "pin.fill" : "pin")
+                            .font(.system(size: 8.5))
+                        Text(shelf.isHoldModeActive ? "Hold: ON" : "Hold: OFF")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .foregroundColor(shelf.isHoldModeActive ? Color.cyan : Color.white.opacity(0.70))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(shelf.isHoldModeActive ? Color.cyan.opacity(0.18) : Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(shelf.isHoldModeActive ? Color.cyan.opacity(0.4) : Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Hold Mode: Holds shelf open upon dropping files and keeps files staged after drag-out. When OFF, dragging out consumes file.")
                 
                 if shelf.hasItems {
                     Button(action: {
@@ -101,7 +133,7 @@ public struct DropShelfView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+        .onDrop(of: [.fileURL, .url], isTargeted: $isTargeted) { providers in
             handleDrop(providers: providers)
         }
     }
@@ -136,13 +168,15 @@ public struct DropShelfView: View {
                     .scaleEffect(isTargeted || shelf.isDraggingOverNotch ? 1.15 : 1.0)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isTargeted)
                 
-                Text("Drop Files Here to Stage")
+                Text("Drop PDFs & Files Here to Stage")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
-                Text("Stash files across full-screen spaces, Finder windows, and apps")
+                Text("Hold mode is \(shelf.isHoldModeActive ? "ON (files stay held)" : "OFF (files removed on drag)"). Stash files here, then drag them out anywhere.")
                     .font(.system(size: 10, weight: .regular))
                     .foregroundColor(Color.white.opacity(0.45))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
             }
         }
         .frame(maxHeight: 120)
@@ -171,12 +205,12 @@ public struct DropShelfView: View {
         ZStack {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(
-                    isTargeted ? Color.white.opacity(0.7) : Color.white.opacity(0.18),
+                    isMiniDropTargeted || isTargeted ? Color.white.opacity(0.7) : Color.white.opacity(0.18),
                     style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])
                 )
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isTargeted ? Color.white.opacity(0.08) : Color.white.opacity(0.02))
+                        .fill(isMiniDropTargeted || isTargeted ? Color.white.opacity(0.08) : Color.white.opacity(0.02))
                 )
             
             VStack(spacing: 4) {
@@ -189,6 +223,9 @@ public struct DropShelfView: View {
             }
         }
         .frame(width: 90, height: 116)
+        .onDrop(of: [.fileURL, .url], isTargeted: $isMiniDropTargeted) { providers in
+            handleDrop(providers: providers)
+        }
     }
     
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
@@ -197,6 +234,15 @@ public struct DropShelfView: View {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     if let fileURL = url {
+                        Task { @MainActor in
+                            self.shelf.stageFile(url: fileURL)
+                        }
+                    }
+                }
+                didLoadAny = true
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    if let fileURL = url, fileURL.isFileURL {
                         Task { @MainActor in
                             self.shelf.stageFile(url: fileURL)
                         }
@@ -220,127 +266,181 @@ public struct DropShelfCardView: View {
         self.shelf = shelf
     }
     
+    private var isCurrentlyDragged: Bool {
+        shelf.isDraggingOut && shelf.activeDraggedItem?.id == item.id
+    }
+    
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Top Row: Icon + Extension Badge + Close Button
-            HStack(spacing: 6) {
-                if let nsImage = item.icon {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 26, height: 26)
-                } else {
-                    Image(systemName: "doc.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(Color.white.opacity(0.7))
-                        .frame(width: 26, height: 26)
-                }
-                
-                if !item.pathExtension.isEmpty {
-                    Text(item.pathExtension)
-                        .font(.system(size: 8, weight: .heavy, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.75))
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1.5)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                }
-                
-                Spacer(minLength: 0)
-                
-                Button(action: {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                        shelf.removeItem(id: item.id)
-                    }
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 7.5, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.55))
-                        .frame(width: 16, height: 16)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Remove from shelf")
+            headerRow
+            fileInfoView
+            Spacer(minLength: 0)
+            actionButtonsRow
+        }
+        .padding(8)
+        .frame(width: 145, height: 116)
+        .background(cardBackground)
+        .overlay(cardBorder)
+        .opacity(isCurrentlyDragged ? 0.65 : 1.0)
+        .onHover { hov in
+            isHovered = hov
+            if hov {
+                NSCursor.openHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .onDrag {
+            shelf.startDragOut(for: item)
+            let provider = NSItemProvider(object: item.url as NSURL)
+            provider.suggestedName = item.name
+            return provider
+        }
+    }
+    
+    private var headerRow: some View {
+        HStack(spacing: 5) {
+            if let nsImage = item.icon {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: item.isPDF ? 28 : 26, height: item.isPDF ? 28 : 26)
+                    .clipShape(RoundedRectangle(cornerRadius: item.isPDF ? 4 : 3))
+                    .shadow(color: item.isPDF ? Color.red.opacity(0.25) : Color.clear, radius: 4)
+            } else {
+                Image(systemName: item.isPDF ? "doc.text.fill" : "doc.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(item.isPDF ? .red : Color.white.opacity(0.7))
+                    .frame(width: 26, height: 26)
             }
             
-            // Name & Size
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.name)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                
-                Text(item.formattedSize)
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.5))
+            if !item.pathExtension.isEmpty {
+                Text(item.pathExtension)
+                    .font(.system(size: 8, weight: .heavy, design: .rounded))
+                    .foregroundColor(item.isPDF ? Color.white : Color.white.opacity(0.75))
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 1.5)
+                    .background(item.isPDF ? Color.red.opacity(0.75) : Color.white.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             
             Spacer(minLength: 0)
             
-            // Quick Actions Bar
-            HStack(spacing: 4) {
-                Button(action: {
-                    shelf.revealInFinder(item: item)
-                }) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 7.5, weight: .bold))
-                        Text("Finder")
-                            .font(.system(size: 8.5, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
+            // Hold indicator pin
+            if shelf.isHoldModeActive {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundColor(Color.cyan)
+                    .padding(2.5)
+                    .background(Color.cyan.opacity(0.12))
+                    .clipShape(Circle())
+                    .help("Hold mode active: File will remain on shelf after drag-out")
+            }
+            
+            // Drag Grip
+            Image(systemName: "hand.draw.fill")
+                .font(.system(size: 7.5, weight: .semibold))
+                .foregroundColor(isHovered ? Color.cyan : Color.white.opacity(0.35))
+                .padding(2.5)
+                .background(Color.white.opacity(isHovered ? 0.12 : 0.04))
+                .clipShape(Circle())
+                .help("Drag this file out to Finder, Desktop, Mail, or any app")
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                    shelf.removeItem(id: item.id)
+                }
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .frame(width: 16, height: 16)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove from shelf")
+        }
+    }
+    
+    private var fileInfoView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.name)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            
+            Text(item.subtitle)
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundColor(Color.white.opacity(0.55))
+                .lineLimit(1)
+        }
+    }
+    
+    private var actionButtonsRow: some View {
+        HStack(spacing: 4) {
+            Button(action: {
+                shelf.revealInFinder(item: item)
+            }) {
+                HStack(spacing: 2) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 7.5, weight: .bold))
+                    Text("Finder")
+                        .font(.system(size: 8.5, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Reveal in Finder")
+            
+            Button(action: {
+                shelf.copyFilePath(item: item)
+            }) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.85))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2.5)
-                    .background(Color.white.opacity(0.12))
+                    .background(Color.white.opacity(0.10))
                     .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Reveal in Finder")
-                
-                Button(action: {
-                    shelf.copyFilePath(item: item)
-                }) {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.85))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2.5)
-                        .background(Color.white.opacity(0.10))
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Copy Path")
-                
-                Button(action: {
-                    shelf.triggerShareSheet(item: item)
-                }) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.85))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2.5)
-                        .background(Color.white.opacity(0.10))
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Share / AirDrop")
             }
+            .buttonStyle(.plain)
+            .help("Copy Path")
+            
+            Button(action: {
+                shelf.triggerShareSheet(item: item)
+            }) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.10))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Share / AirDrop")
         }
-        .padding(8)
-        .frame(width: 145, height: 116)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isHovered ? Color.white.opacity(0.09) : Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(isHovered ? Color.white.opacity(0.24) : Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-        .onHover { hov in
-            isHovered = hov
-        }
+    }
+    
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(isCurrentlyDragged ? Color.cyan.opacity(0.15) : (isHovered ? Color.white.opacity(0.09) : Color.white.opacity(0.05)))
+    }
+    
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(
+                isCurrentlyDragged
+                    ? Color.cyan.opacity(0.7)
+                    : (isHovered ? Color.white.opacity(0.24) : Color.white.opacity(0.12)),
+                lineWidth: isCurrentlyDragged ? 1.5 : 0.5
+            )
     }
 }
 
@@ -382,9 +482,17 @@ public struct CompactDropShelfWingLeft: View {
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                         .foregroundColor(.cyan)
                 } else {
-                    Image(systemName: "tray.and.arrow.down.fill")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(.white)
+                    HStack(spacing: 4) {
+                        Image(systemName: "tray.and.arrow.down.fill")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(.white)
+                        
+                        if shelf.isHoldModeActive {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 6.5, weight: .bold))
+                                .foregroundColor(.cyan)
+                        }
+                    }
                     
                     Text("\(shelf.count) \(shelf.count == 1 ? "file" : "files")")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -394,7 +502,16 @@ public struct CompactDropShelfWingLeft: View {
             .padding(.leading, 12)
         }
         .buttonStyle(.plain)
-        .help("Open Drop Shelf")
+        .help(shelf.stagedItems.count == 1 ? "Click to expand, or drag file directly out" : "Open Drop Shelf")
+        .onDrag {
+            guard shelf.stagedItems.count == 1, let firstItem = shelf.stagedItems.first else {
+                return NSItemProvider()
+            }
+            shelf.startDragOut(for: firstItem)
+            let provider = NSItemProvider(object: firstItem.url as NSURL)
+            provider.suggestedName = firstItem.name
+            return provider
+        }
     }
 }
 
@@ -418,6 +535,16 @@ public struct CompactDropShelfWingRight: View {
                     .background(Color.cyan)
                     .clipShape(Capsule())
             } else if shelf.hasItems {
+                if shelf.isHeldOpen {
+                    Text("Held")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.cyan.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+                
                 Button(action: {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                         shelf.clearAll()

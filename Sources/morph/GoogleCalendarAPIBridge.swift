@@ -256,6 +256,7 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
         title: String,
         startTime: Date,
         endTime: Date,
+        isAllDay: Bool = false,
         description: String? = nil,
         location: String? = nil,
         addMeetLink: Bool = false,
@@ -277,22 +278,32 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
             return nil
         }
         
-        let isoFormatter = ISO8601DateFormatter()
-        let startStr = isoFormatter.string(from: startTime)
-        let endStr = isoFormatter.string(from: endTime)
-        let timeZoneId = TimeZone.current.identifier
-        
         var bodyDict: [String: Any] = [
-            "summary": title,
-            "start": [
+            "summary": title
+        ]
+        
+        if isAllDay {
+            let dayFormatter = DateFormatter()
+            dayFormatter.dateFormat = "yyyy-MM-dd"
+            dayFormatter.timeZone = TimeZone.current
+            let startDayStr = dayFormatter.string(from: startTime)
+            let endDayStr = dayFormatter.string(from: endTime)
+            bodyDict["start"] = ["date": startDayStr]
+            bodyDict["end"] = ["date": endDayStr]
+        } else {
+            let isoFormatter = ISO8601DateFormatter()
+            let startStr = isoFormatter.string(from: startTime)
+            let endStr = isoFormatter.string(from: endTime)
+            let timeZoneId = TimeZone.current.identifier
+            bodyDict["start"] = [
                 "dateTime": startStr,
                 "timeZone": timeZoneId
-            ],
-            "end": [
+            ]
+            bodyDict["end"] = [
                 "dateTime": endStr,
                 "timeZone": timeZoneId
             ]
-        ]
+        }
         
         if let desc = description, !desc.isEmpty {
             bodyDict["description"] = desc
@@ -300,7 +311,7 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
         if let loc = location, !loc.isEmpty {
             bodyDict["location"] = loc
         }
-        if addMeetLink {
+        if addMeetLink && !isAllDay {
             bodyDict["conferenceData"] = [
                 "createRequest": [
                     "requestId": "morph-\(UUID().uuidString)",
@@ -336,8 +347,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
                 description: description ?? "Google Calendar Event",
                 startTime: startTime,
                 endTime: endTime,
-                isAllDay: false,
-                meetLink: meet,
+                isAllDay: isAllDay,
+                meetLink: isAllDay ? nil : meet,
                 location: location,
                 attendees: []
             )

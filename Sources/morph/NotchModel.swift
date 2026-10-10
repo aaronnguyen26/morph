@@ -201,7 +201,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public var compactHUDMode: CompactHUDMode {
-        if dropShelf.isDraggingOverNotch {
+        if dropShelf.isDraggingOverNotch || dropShelf.isDraggingOut || dropShelf.isHeldOpen {
             return .dropShelfActive
         }
         
@@ -415,6 +415,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public func returnToHome() {
+        dropShelf.isHeldOpen = false
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = .home
             activeContextFeature = nil
@@ -429,6 +430,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public func closeContextualFeature() {
+        dropShelf.isHeldOpen = false
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             activeContextFeature = nil
         }

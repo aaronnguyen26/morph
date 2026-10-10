@@ -6,6 +6,7 @@ public struct CalendarView: View {
     @State private var newEventTitle: String = ""
     @State private var newEventDurationMinutes: Int = 30
     @State private var newEventHour: Int = 14
+    @State private var newEventIsAllDay: Bool = false
     @State private var newEventHasMeet: Bool = true
     @State private var newEventLocation: String = ""
     @State private var selectedCalendarId: String = "primary"
@@ -82,8 +83,9 @@ public struct CalendarView: View {
             }
             
             // Day of Week Header (M T W T F S S)
+            let weekdays = ["M", "T", "W", "T", "F", "S", "S"]
             HStack(spacing: 0) {
-                ForEach(["M", "T", "W", "T", "F", "S", "S"], id: \.self) { day in
+                ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
                     Text(day)
                         .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.4))
@@ -492,8 +494,6 @@ public struct CalendarView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            
-            Spacer(minLength: 0)
         }
         .padding(9)
         .frame(maxHeight: .infinity)
@@ -507,38 +507,58 @@ public struct CalendarView: View {
     
     // MARK: - Dedicated Full Add Event Canvas
     private var fullAddEventView: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
+            // Header with Selected Date & Google Calendar target cycler
             addEventHeaderRow
+            
+            // Mode Selector: Timed Meeting vs All-Day / Deadline
+            addEventTypeSelectorRow
+            
+            // Event Title Input
             addEventTitleRow
-            addEventTimeDurationRow
+            
+            // Dynamic Time/Duration Row OR All-Day / Deadline Preset Row
+            if newEventIsAllDay {
+                addEventAllDayRow
+            } else {
+                addEventTimeDurationRow
+            }
+            
+            // Location & Google Meet Row
             addEventLocationRow
-            Spacer(minLength: 2)
+            
+            Spacer(minLength: 4)
+            
+            // Primary Action Buttons (Discard / Add to Calendar)
             addEventActionRow
         }
-        .padding(6)
+        .padding(8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.white.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.09), lineWidth: 0.8)
         )
     }
     
     // MARK: - Add Event Form Subcomponents
     private var addEventHeaderRow: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "calendar")
-                .font(.system(size: 7))
-                .foregroundColor(Color.white.opacity(0.7))
-            
-            let df: DateFormatter = {
-                let f = DateFormatter()
-                f.dateFormat = "EEE, MMM d, yyyy"
-                return f
-            }()
-            Text(df.string(from: calendar.selectedDate))
-                .font(.system(size: 7.5, weight: .semibold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.85))
+        HStack(spacing: 5) {
+            HStack(spacing: 3.5) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 8))
+                    .foregroundColor(Color.white.opacity(0.75))
+                
+                let df: DateFormatter = {
+                    let f = DateFormatter()
+                    f.dateFormat = "EEE, MMM d, yyyy"
+                    return f
+                }()
+                Text(df.string(from: calendar.selectedDate))
+                    .font(.system(size: 8, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.9))
+            }
             
             Spacer()
             
@@ -553,50 +573,100 @@ public struct CalendarView: View {
                         selectedCalendarId = first.id
                     }
                 }) {
-                    HStack(spacing: 2.5) {
+                    HStack(spacing: 3) {
                         Circle()
-                            .fill(Color.blue.opacity(0.8))
-                            .frame(width: 4, height: 4)
+                            .fill(Color.blue.opacity(0.85))
+                            .frame(width: 4.5, height: 4.5)
                         Text(currentSummary)
-                            .font(.system(size: 6.8, weight: .medium))
+                            .font(.system(size: 7, weight: .medium))
                             .lineLimit(1)
                         Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 5))
-                            .foregroundColor(Color.white.opacity(0.5))
+                            .font(.system(size: 5.5))
+                            .foregroundColor(Color.white.opacity(0.55))
                     }
                     .foregroundColor(Color.white.opacity(0.85))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1.5)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
                     .background(Color.white.opacity(0.08))
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("Click to cycle target Google Calendar")
+                .help("Click to switch target Google Calendar")
             } else {
-                Text(formatHourDisplay(newEventHour))
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 4.5)
-                    .padding(.vertical, 1.5)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(newEventIsAllDay ? Color.orange : Color.green.opacity(0.85))
+                        .frame(width: 4, height: 4)
+                    Text(newEventIsAllDay ? "All-Day" : formatHourDisplay(newEventHour))
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.10))
+                .clipShape(Capsule())
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2.5)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3.5)
         .background(Color.white.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+    
+    private var addEventTypeSelectorRow: some View {
+        HStack(spacing: 4) {
+            Button(action: {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                    newEventIsAllDay = false
+                }
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 7, weight: .bold))
+                    Text("Timed Event")
+                        .font(.system(size: 7.2, weight: !newEventIsAllDay ? .bold : .medium))
+                }
+                .foregroundColor(!newEventIsAllDay ? .black : Color.white.opacity(0.65))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .background(!newEventIsAllDay ? Color.white : Color.white.opacity(0.06))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                    newEventIsAllDay = true
+                }
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "flag.fill")
+                        .font(.system(size: 6.5, weight: .bold))
+                    Text("All Day / Deadline")
+                        .font(.system(size: 7.2, weight: newEventIsAllDay ? .bold : .medium))
+                }
+                .foregroundColor(newEventIsAllDay ? .black : Color.white.opacity(0.65))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .background(newEventIsAllDay ? Color.white : Color.white.opacity(0.06))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.05))
+        .clipShape(Capsule())
     }
     
     private var addEventTitleRow: some View {
         HStack(spacing: 5) {
-            Image(systemName: "pencil.line")
-                .font(.system(size: 7.5))
-                .foregroundColor(Color.white.opacity(0.6))
+            Image(systemName: newEventIsAllDay ? "target" : "pencil.line")
+                .font(.system(size: 8))
+                .foregroundColor(newEventIsAllDay ? Color.orange.opacity(0.8) : Color.white.opacity(0.6))
             
-            TextField("Event title", text: $newEventTitle)
+            TextField(newEventIsAllDay ? "Deadline / all-day event title..." : "Event title...", text: $newEventTitle)
                 .textFieldStyle(.plain)
-                .font(.system(size: 8.5, weight: .medium))
+                .font(.system(size: 8.8, weight: .medium))
                 .foregroundColor(.white)
                 .onSubmit {
                     submitNewEvent()
@@ -605,24 +675,77 @@ public struct CalendarView: View {
             if !newEventTitle.isEmpty {
                 Button(action: { newEventTitle = "" }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 6.5))
+                        .font(.system(size: 7))
                         .foregroundColor(Color.white.opacity(0.45))
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3.5)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
         .background(Color.white.opacity(0.07))
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
         )
     }
     
-    private var addEventTimeDurationRow: some View {
+    private var addEventAllDayRow: some View {
         HStack(spacing: 4) {
+            HStack(spacing: 3) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 7.5))
+                    .foregroundColor(Color.orange.opacity(0.85))
+                Text("Full Day Focus")
+                    .font(.system(size: 7.2, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.85))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.orange.opacity(0.12))
+            .clipShape(Capsule())
+            
+            Spacer()
+            
+            // Quick Deadline Template Badges
+            HStack(spacing: 3) {
+                Button(action: {
+                    if !newEventTitle.contains("[Deadline]") {
+                        newEventTitle = "[Deadline] " + newEventTitle
+                    }
+                }) {
+                    Text("+ Deadline")
+                        .font(.system(size: 6.8, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.09))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: {
+                    if !newEventTitle.contains("[Goal]") {
+                        newEventTitle = "[Goal] " + newEventTitle
+                    }
+                }) {
+                    Text("+ Goal")
+                        .font(.system(size: 6.8, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.09))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 2)
+    }
+    
+    private var addEventTimeDurationRow: some View {
+        HStack(spacing: 5) {
             // Stepper Hour Control
             HStack(spacing: 2) {
                 Button(action: {
@@ -676,14 +799,14 @@ public struct CalendarView: View {
             
             Spacer()
             
-            // Duration Chips
+            // Duration Chips (15m, 30m, 45m, 1h, 2h)
             HStack(spacing: 2.5) {
-                ForEach([15, 30, 45, 60], id: \.self) { duration in
+                ForEach([15, 30, 45, 60, 120], id: \.self) { duration in
                     Button(action: { newEventDurationMinutes = duration }) {
-                        Text("\(duration)m")
+                        Text(duration >= 60 ? "\(duration / 60)h" : "\(duration)m")
                             .font(.system(size: 7, weight: newEventDurationMinutes == duration ? .bold : .medium))
                             .foregroundColor(newEventDurationMinutes == duration ? .black : Color.white.opacity(0.75))
-                            .padding(.horizontal, 5)
+                            .padding(.horizontal, 4.5)
                             .frame(height: 17)
                             .background(newEventDurationMinutes == duration ? Color.white : Color.white.opacity(0.08))
                             .clipShape(Capsule())
@@ -700,10 +823,10 @@ public struct CalendarView: View {
         HStack(spacing: 4) {
             HStack(spacing: 3) {
                 Image(systemName: "mappin.and.ellipse")
-                    .font(.system(size: 6.5))
+                    .font(.system(size: 6.8))
                     .foregroundColor(Color.white.opacity(0.55))
                 
-                TextField("Location (optional)", text: $newEventLocation)
+                TextField(newEventIsAllDay ? "Notes / details (optional)" : "Location (optional)", text: $newEventLocation)
                     .textFieldStyle(.plain)
                     .font(.system(size: 7.2, weight: .medium))
                     .foregroundColor(.white)
@@ -711,46 +834,52 @@ public struct CalendarView: View {
                         submitNewEvent()
                     }
             }
-            .padding(.horizontal, 5)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3.5)
             .background(Color.white.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             
-            // Google Meet Toggle
-            Button(action: {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                    newEventHasMeet.toggle()
+            // Google Meet Toggle (Only relevant for timed meetings)
+            if !newEventIsAllDay {
+                Button(action: {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        newEventHasMeet.toggle()
+                    }
+                }) {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: newEventHasMeet ? "video.fill" : "video")
+                            .font(.system(size: 6))
+                        Text("Meet")
+                            .font(.system(size: 6.8, weight: .bold))
+                    }
+                    .foregroundColor(newEventHasMeet ? .black : Color.white.opacity(0.7))
+                    .padding(.horizontal, 5.5)
+                    .padding(.vertical, 3.5)
+                    .background(newEventHasMeet ? Color.white : Color.white.opacity(0.10))
+                    .clipShape(Capsule())
                 }
-            }) {
-                HStack(spacing: 2.5) {
-                    Image(systemName: newEventHasMeet ? "video.fill" : "video")
-                        .font(.system(size: 6))
-                    Text("Meet")
-                        .font(.system(size: 6.8, weight: .bold))
-                }
-                .foregroundColor(newEventHasMeet ? .black : Color.white.opacity(0.7))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 3)
-                .background(newEventHasMeet ? Color.white : Color.white.opacity(0.10))
-                .clipShape(Capsule())
+                .buttonStyle(.plain)
+                .help(newEventHasMeet ? "Google Meet conference attached" : "Attach Google Meet")
             }
-            .buttonStyle(.plain)
-            .help(newEventHasMeet ? "Google Meet conference attached" : "Attach Google Meet")
         }
     }
     
     private var addEventActionRow: some View {
         HStack(spacing: 6) {
             Button(action: {
+                newEventTitle = ""
+                newEventLocation = ""
+                newEventIsAllDay = false
+                newEventDurationMinutes = 30
                 withAnimation(.easeInOut(duration: 0.18)) {
                     calendar.isAddingEvent = false
                 }
             }) {
                 Text("Discard")
-                    .font(.system(size: 7.2, weight: .medium))
+                    .font(.system(size: 7.5, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.6))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
                     .background(Color.white.opacity(0.06))
                     .clipShape(Capsule())
             }
@@ -759,30 +888,30 @@ public struct CalendarView: View {
             Spacer()
             
             Button(action: submitNewEvent) {
-                HStack(spacing: 3) {
+                HStack(spacing: 3.5) {
                     if isSubmittingEvent {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle(tint: .black))
                             .scaleEffect(0.5)
                             .frame(width: 7, height: 7)
                     } else {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 7, weight: .bold))
+                        Image(systemName: newEventIsAllDay ? "flag.checkered" : "plus.circle.fill")
+                            .font(.system(size: 7.5, weight: .bold))
                     }
                     
-                    Text(isSubmittingEvent ? "Saving..." : "Add to Calendar")
-                        .font(.system(size: 7.2, weight: .bold))
+                    Text(isSubmittingEvent ? "Saving..." : (newEventIsAllDay ? "Add Deadline" : "Add to Calendar"))
+                        .font(.system(size: 7.5, weight: .bold))
                 }
                 .foregroundColor(.black)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
                 .background(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.25) : Color.white)
                 .clipShape(Capsule())
                 .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
             }
             .buttonStyle(.plain)
             .disabled(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingEvent)
-            .help("Save event to Google Calendar")
+            .help(newEventIsAllDay ? "Save all-day event or deadline" : "Save event to Google Calendar")
         }
     }
     
@@ -804,13 +933,18 @@ public struct CalendarView: View {
         formatter.timeStyle = .none
         let dateString = formatter.string(from: calendar.selectedDate)
         
+        let desc = newEventIsAllDay 
+            ? "Deadline / All-Day Goal scheduled via Morph for \(dateString)"
+            : "Scheduled via Morph for \(dateString)"
+            
         calendar.addQuickEvent(
             title: title,
             durationMinutes: newEventDurationMinutes,
-            startHour: newEventHour,
+            startHour: newEventIsAllDay ? nil : newEventHour,
             startMinute: 0,
-            addMeetLink: newEventHasMeet,
-            description: "Scheduled via Morph for \(dateString)",
+            isAllDay: newEventIsAllDay,
+            addMeetLink: newEventIsAllDay ? false : newEventHasMeet,
+            description: desc,
             location: loc.isEmpty ? nil : loc,
             targetCalendarId: selectedCalendarId
         )
@@ -820,6 +954,8 @@ public struct CalendarView: View {
             isSubmittingEvent = false
             newEventTitle = ""
             newEventLocation = ""
+            newEventIsAllDay = false
+            newEventDurationMinutes = 30
             withAnimation(.easeInOut(duration: 0.18)) {
                 calendar.isAddingEvent = false
             }
@@ -830,15 +966,29 @@ public struct CalendarView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 // Time Range Chip
-                Text(event.formattedTimeRange)
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundColor(Color.white)
+                if event.isAllDay {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "flag.fill")
+                            .font(.system(size: 6))
+                        Text(event.title.localizedCaseInsensitiveContains("deadline") ? "DEADLINE" : "ALL DAY")
+                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(Color.orange.opacity(0.95))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.12))
+                    .background(Color.orange.opacity(0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                } else {
+                    Text(event.formattedTimeRange)
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                }
                 
-                if event.isStartingSoon {
+                if event.isStartingSoon && !event.isAllDay {
                     Text("STARTING SOON")
                         .font(.system(size: 7, weight: .heavy, design: .rounded))
                         .foregroundColor(.black)

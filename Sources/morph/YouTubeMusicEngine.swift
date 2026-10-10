@@ -572,22 +572,71 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func nextTrack() {
         let script = """
         (function() {
-            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
-            if (p && typeof p.nextVideo === 'function') {
-                p.nextVideo();
-            } else {
+            try {
+                // 1. Dismiss any "Still watching" popups
+                var confirmButtons = document.querySelectorAll(
+                    'ytmusic-you-there-renderer #confirm-button, ' +
+                    'tp-yt-paper-dialog #confirm-button, ' +
+                    'yt-confirm-dialog-renderer #confirm-button, ' +
+                    '.ytmusic-you-there-renderer button, ' +
+                    'ytmusic-dialog-renderer button'
+                );
+                for (var i = 0; i < confirmButtons.length; i++) {
+                    var cb = confirmButtons[i];
+                    if (cb && (cb.offsetParent !== null || cb.offsetWidth > 0)) {
+                        cb.click();
+                        var inner = cb.querySelector('button, #button, yt-button-shape');
+                        if (inner) inner.click();
+                    }
+                }
+
+                // 2. Ensure autoplay toggle is on
+                var automixToggle = document.querySelector('#automix-toggle tp-yt-paper-toggle-button') ||
+                                    document.querySelector('ytmusic-player-queue tp-yt-paper-toggle-button');
+                if (automixToggle && !(automixToggle.hasAttribute('checked') || automixToggle.getAttribute('aria-checked') === 'true')) {
+                    automixToggle.click();
+                }
+
+                // 3. Trigger next video via player API or button
+                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                var advanced = false;
+                if (p && typeof p.nextVideo === 'function') {
+                    try {
+                        p.nextVideo();
+                        advanced = true;
+                    } catch(e) {}
+                }
+                
                 var btn = document.querySelector('.next-button') || 
                           document.querySelector('#right-controls .next-button') || 
                           document.querySelector('ytmusic-player-bar .next-button') ||
                           document.querySelector('tp-yt-paper-icon-button.next-button') ||
                           document.querySelector('[aria-label*="Next" i]') ||
                           document.querySelector('[aria-label*="tiếp" i]');
-                if (btn) {
+                if (btn && (!btn.disabled && !btn.hasAttribute('disabled'))) {
                     btn.click();
                     var inner = btn.querySelector('button, #button, yt-icon');
                     if (inner) inner.click();
+                    advanced = true;
                 }
-            }
+
+                // 4. Fallback: Advance DOM queue item if queue exists
+                if (!advanced) {
+                    var queueItems = document.querySelectorAll('ytmusic-player-queue-item');
+                    if (queueItems && queueItems.length > 1) {
+                        for (var qi = 0; qi < queueItems.length - 1; qi++) {
+                            var item = queueItems[qi];
+                            if (item.hasAttribute('selected') || item.classList.contains('selected') || item.getAttribute('play-state') === 'playing') {
+                                var nextItem = queueItems[qi + 1];
+                                var playTarget = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
+                                playTarget.click();
+                                nextItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch(e) {}
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 350);
             }
@@ -1000,6 +1049,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         var cleanList: String? = listId?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let l = cleanList, l.hasPrefix("VL") {
             cleanList = String(l.dropFirst(2))
+        }
+        
+        // Continuous Playback Guarantee: If no playlist is provided, default to the song's Radio list (RDAMVM<videoId>)
+        // YouTube Music uses RDAMVM to automatically generate an endless autoplay queue of related songs.
+        if cleanList == nil || cleanList?.isEmpty == true {
+            cleanList = "RDAMVM\(vid)"
         }
         
         // 1. Try immediate in-page playback via movie_player API (seamless, zero full-page reload, preserves WebKit session)
@@ -1619,22 +1674,91 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 } catch(e) {}
             };
             
+            function dismissModalsAndEnableAutoplay() {
+                try {
+                    // 1. Dismiss "Still watching?" / "Video paused. Continue watching?" popups
+                    var confirmButtons = document.querySelectorAll(
+                        'ytmusic-you-there-renderer #confirm-button, ' +
+                        'tp-yt-paper-dialog #confirm-button, ' +
+                        'yt-confirm-dialog-renderer #confirm-button, ' +
+                        '.ytmusic-you-there-renderer button, ' +
+                        'ytmusic-dialog-renderer button'
+                    );
+                    for (var i = 0; i < confirmButtons.length; i++) {
+                        var cb = confirmButtons[i];
+                        if (cb && (cb.offsetParent !== null || cb.offsetWidth > 0)) {
+                            cb.click();
+                            var inner = cb.querySelector('button, #button, yt-button-shape');
+                            if (inner) inner.click();
+                        }
+                    }
+
+                    // 2. Ensure YouTube Music Autoplay / Automix toggle is enabled
+                    var automixToggle = document.querySelector('#automix-toggle tp-yt-paper-toggle-button') ||
+                                        document.querySelector('ytmusic-player-queue tp-yt-paper-toggle-button') ||
+                                        document.querySelector('.automix-toggle tp-yt-paper-toggle-button');
+                    if (automixToggle) {
+                        var isChecked = automixToggle.hasAttribute('checked') || automixToggle.getAttribute('aria-checked') === 'true';
+                        if (!isChecked) {
+                            automixToggle.click();
+                        }
+                    }
+                } catch(e) {}
+            }
+
             function triggerNextVideo() {
                 try {
+                    dismissModalsAndEnableAutoplay();
+
                     var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                    var advanced = false;
+
                     if (p && typeof p.nextVideo === 'function') {
-                        p.nextVideo();
-                    } else {
-                        var btn = document.querySelector('.next-button') || 
-                                  document.querySelector('#right-controls .next-button') || 
-                                  document.querySelector('ytmusic-player-bar .next-button') ||
-                                  document.querySelector('tp-yt-paper-icon-button.next-button') ||
-                                  document.querySelector('[aria-label*="Next" i]') ||
-                                  document.querySelector('[aria-label*="tiếp" i]');
-                        if (btn) {
-                            btn.click();
-                            var inner = btn.querySelector('button, #button, yt-icon');
-                            if (inner) inner.click();
+                        try {
+                            p.nextVideo();
+                            advanced = true;
+                        } catch(pe) {}
+                    }
+                    
+                    var btn = document.querySelector('.next-button') || 
+                              document.querySelector('#right-controls .next-button') || 
+                              document.querySelector('ytmusic-player-bar .next-button') ||
+                              document.querySelector('tp-yt-paper-icon-button.next-button') ||
+                              document.querySelector('[aria-label*="Next" i]') ||
+                              document.querySelector('[aria-label*="tiếp" i]');
+                    if (btn && (!btn.disabled && !btn.hasAttribute('disabled'))) {
+                        btn.click();
+                        var inner = btn.querySelector('button, #button, yt-icon');
+                        if (inner) inner.click();
+                        advanced = true;
+                    }
+
+                    // Fallback: If player has no next video in queue, play next item in DOM queue or related/automix shelf
+                    var queueItems = document.querySelectorAll('ytmusic-player-queue-item');
+                    if (queueItems && queueItems.length > 1) {
+                        var nextItem = null;
+                        for (var qi = 0; qi < queueItems.length - 1; qi++) {
+                            var item = queueItems[qi];
+                            if (item.hasAttribute('selected') || item.classList.contains('selected') || item.getAttribute('play-state') === 'playing') {
+                                nextItem = queueItems[qi + 1];
+                                break;
+                            }
+                        }
+                        if (nextItem) {
+                            var playTarget = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
+                            playTarget.click();
+                            nextItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                            advanced = true;
+                        }
+                    }
+
+                    // Fallback 2: Start first playable recommendation or up-next track
+                    if (!advanced) {
+                        var recPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-shelf-renderer #play-button');
+                        if (recPlay) {
+                            recPlay.click();
+                            var innerR = recPlay.querySelector('button, #button, yt-icon');
+                            if (innerR) innerR.click();
                         }
                     }
                 } catch(e) {}
@@ -1646,6 +1770,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     v._morphListeners = true;
                     ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
+                            dismissModalsAndEnableAutoplay();
                             window.morphSendUpdate();
                         });
                     });
@@ -1658,12 +1783,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }, 250);
                     });
                     
-                    // Safety check: if playback reaches the very end (< 0.5s remaining) and is not advancing
+                    // Continuous playback watchdog: if playback reaches the very end (< 0.5s remaining) and stops/pauses
                     v.addEventListener('timeupdate', function() {
+                        dismissModalsAndEnableAutoplay();
                         if (v.duration > 3 && v.currentTime >= (v.duration - 0.4) && !v._morphAutoAdvancing) {
                             v._morphAutoAdvancing = true;
                             setTimeout(function() {
-                                if (v.ended || v.currentTime >= (v.duration - 0.5)) {
+                                if (v.ended || v.paused || v.currentTime >= (v.duration - 0.5)) {
                                     triggerNextVideo();
                                 }
                                 setTimeout(function() { v._morphAutoAdvancing = false; }, 3000);

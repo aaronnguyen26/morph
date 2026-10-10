@@ -564,6 +564,7 @@ public final class CalendarModel: ObservableObject {
         durationMinutes: Int = 30,
         startHour: Int? = nil,
         startMinute: Int = 0,
+        isAllDay: Bool = false,
         addMeetLink: Bool = false,
         description: String? = nil,
         location: String? = nil,
@@ -572,24 +573,37 @@ public final class CalendarModel: ObservableObject {
         let cal = Calendar.current
         let now = Date()
         
-        // Base start time on selectedDate with specified hour or current hour + 1
-        var startComponents = cal.dateComponents([.year, .month, .day], from: selectedDate)
-        if let hour = startHour {
-            startComponents.hour = hour
-            startComponents.minute = startMinute
-        } else {
-            let nowComponents = cal.dateComponents([.hour, .minute], from: now)
-            startComponents.hour = (nowComponents.hour ?? 12) + 1
+        let start: Date
+        let end: Date
+        
+        if isAllDay {
+            var startComponents = cal.dateComponents([.year, .month, .day], from: selectedDate)
+            startComponents.hour = 0
             startComponents.minute = 0
+            startComponents.second = 0
+            let dayStart = cal.date(from: startComponents) ?? cal.startOfDay(for: selectedDate)
+            start = dayStart
+            end = cal.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86400)
+        } else {
+            // Base start time on selectedDate with specified hour or current hour + 1
+            var startComponents = cal.dateComponents([.year, .month, .day], from: selectedDate)
+            if let hour = startHour {
+                startComponents.hour = hour
+                startComponents.minute = startMinute
+            } else {
+                let nowComponents = cal.dateComponents([.hour, .minute], from: now)
+                startComponents.hour = (nowComponents.hour ?? 12) + 1
+                startComponents.minute = 0
+            }
+            startComponents.second = 0
+            
+            start = cal.date(from: startComponents) ?? now.addingTimeInterval(3600)
+            end = start.addingTimeInterval(Double(durationMinutes * 60))
         }
-        startComponents.second = 0
         
-        let start = cal.date(from: startComponents) ?? now.addingTimeInterval(3600)
-        let end = start.addingTimeInterval(Double(durationMinutes * 60))
-        
-        let initialMeet = addMeetLink ? "https://meet.google.com/new" : nil
-        let eventDesc = description ?? "Created via Morph Dynamic Notch"
-        let eventLoc = location ?? (addMeetLink ? "Google Meet" : nil)
+        let initialMeet = (addMeetLink && !isAllDay) ? "https://meet.google.com/new" : nil
+        let eventDesc = description ?? (isAllDay ? "All-Day Event / Deadline via Morph" : "Created via Morph Dynamic Notch")
+        let eventLoc = location ?? (addMeetLink && !isAllDay ? "Google Meet" : nil)
         
         // Optimistically create local CalendarEvent
         let localEvent = CalendarEvent(
@@ -598,6 +612,7 @@ public final class CalendarModel: ObservableObject {
             description: eventDesc,
             startTime: start,
             endTime: end,
+            isAllDay: isAllDay,
             meetLink: initialMeet,
             location: eventLoc
         )
@@ -614,9 +629,10 @@ public final class CalendarModel: ObservableObject {
                     title: title,
                     startTime: start,
                     endTime: end,
+                    isAllDay: isAllDay,
                     description: eventDesc,
                     location: eventLoc,
-                    addMeetLink: addMeetLink,
+                    addMeetLink: addMeetLink && !isAllDay,
                     calendarId: targetCalendarId
                 ) {
                     await MainActor.run {
@@ -641,7 +657,7 @@ public final class CalendarModel: ObservableObject {
             endDate: end,
             description: eventDesc,
             location: eventLoc,
-            url: addMeetLink ? URL(string: "https://meet.google.com/new") : nil,
+            url: (addMeetLink && !isAllDay) ? URL(string: "https://meet.google.com/new") : nil,
             matchingEmail: configuredUserEmail
            ) {
             self.events.removeAll(where: { $0.id == localEvent.id })
