@@ -1266,6 +1266,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func showPlayerWindow() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         let win = ensurePlayerWindow()
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

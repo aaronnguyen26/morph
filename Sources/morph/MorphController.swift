@@ -121,7 +121,9 @@ public final class MorphController: NSObject {
         self.panel.onKeyEquivalent = { event in
             ShortcutManager.shared.handleKeyEvent(event)
         }
-        self.panel.orderFrontRegardless()
+        if !MorphEnvironment.isTestingEnvironment {
+            self.panel.orderFrontRegardless()
+        }
     }
     
     private func setupObservers() {
@@ -294,6 +296,7 @@ public final class MorphController: NSObject {
     }
     
     private func setupMouseMonitors() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.checkMousePosition(NSEvent.mouseLocation)
@@ -369,7 +372,9 @@ public final class MorphController: NSObject {
             withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                 self.model.isExpanded = true
             }
-            panel.makeKey()
+            if !MorphEnvironment.isTestingEnvironment {
+                panel.makeKey()
+            }
         }
     }
     
@@ -435,5 +440,24 @@ public final class MorphController: NSObject {
         let w = model.currentWidth
         let h = model.currentHeight
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
+    }
+    
+    /// Tears down observers, monitors, and explicitly orders out the panel
+    public func teardown() {
+        collapseWorkItem?.cancel()
+        collapseWorkItem = nil
+        shrinkWorkItem?.cancel()
+        shrinkWorkItem = nil
+        cancellables.removeAll()
+        if let gm = globalMonitor {
+            NSEvent.removeMonitor(gm)
+            globalMonitor = nil
+        }
+        if let lm = localMonitor {
+            NSEvent.removeMonitor(lm)
+            localMonitor = nil
+        }
+        DistributedNotificationCenter.default().removeObserver(self)
+        panel?.orderOut(nil)
     }
 }

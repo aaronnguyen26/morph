@@ -36,11 +36,7 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
     private var tokenExpiry: Date?
     
     private static var isTestingEnvironment: Bool {
-        return ProcessInfo.processInfo.processName.contains("xctest") ||
-            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
-            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
-            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
-            NSClassFromString("XCTestCase") != nil
+        return MorphEnvironment.isTestingEnvironment
     }
     
     public init() {

@@ -4,7 +4,7 @@ import Combine
 
 @MainActor
 public final class MenuBarManager: NSObject {
-    private var statusItem: NSStatusItem!
+    private var statusItem: NSStatusItem?
     private let model: NotchModel
     private let controller: MorphController
     private var cancellables = Set<AnyCancellable>()
@@ -18,9 +18,11 @@ public final class MenuBarManager: NSObject {
     }
     
     private func setupStatusItem() {
-        self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusItem = item
         
-        if let button = statusItem.button {
+        if let button = item.button {
             button.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Morph")
             button.imagePosition = .imageLeft
             button.toolTip = "Morph Productivity Notch"
@@ -119,7 +121,14 @@ public final class MenuBarManager: NSObject {
         quitItem.target = self
         menu.addItem(quitItem)
         
-        statusItem.menu = menu
+        statusItem?.menu = menu
+    }
+    
+    public func teardown() {
+        if let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
     }
     
     @objc private func toggleExpand() {

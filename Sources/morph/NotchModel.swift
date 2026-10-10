@@ -105,11 +105,7 @@ public final class NotchModel: ObservableObject {
     }
     
     private var isTesting: Bool {
-        return ProcessInfo.processInfo.processName.contains("xctest") ||
-            ProcessInfo.processInfo.arguments.contains(where: { $0.contains("xctest") }) ||
-            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
-            ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil ||
-            NSClassFromString("XCTestCase") != nil
+        return MorphEnvironment.isTestingEnvironment
     }
     
     /// Ensures that profile sign-in is the first step whenever someone opens the app unauthenticated,

@@ -450,6 +450,7 @@ public final class ShortcutManager: NSObject {
     
     // MARK: - Action Selectors
     @objc public func showAbout() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         NSApplication.shared.orderFrontStandardAboutPanel(nil)
     }
     
@@ -673,6 +674,7 @@ public final class ShortcutManager: NSObject {
     
     // Helper to ensure NotchPanel is key window for keyboard events
     public func ensurePanelKey() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         guard let controller = controller else { return }
         controller.panel.makeKey()
     }

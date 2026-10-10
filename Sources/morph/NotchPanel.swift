@@ -25,6 +25,36 @@ public final class NotchPanel: NSPanel {
         self.standardWindowButton(.miniaturizeButton)?.isHidden = true
         self.standardWindowButton(.zoomButton)?.isHidden = true
         self.registerForDraggedTypes([.fileURL, .URL, .string])
+        
+        if MorphEnvironment.isTestingEnvironment {
+            self.alphaValue = 0.0
+            self.ignoresMouseEvents = true
+        }
+    }
+    
+    public override func orderFrontRegardless() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        super.orderFrontRegardless()
+    }
+    
+    public override func orderFront(_ sender: Any?) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        super.orderFront(sender)
+    }
+    
+    public override func makeKeyAndOrderFront(_ sender: Any?) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        super.makeKeyAndOrderFront(sender)
+    }
+    
+    public override func makeKey() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        super.makeKey()
+    }
+    
+    public override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        super.order(place, relativeTo: otherWin)
     }
     
     public override var canBecomeKey: Bool {
