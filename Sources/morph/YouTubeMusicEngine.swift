@@ -67,6 +67,73 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
         }
         return result
     }
+    
+    /// Returns the tracks with ALL duplicate entries eliminated across the entire playlist,
+    /// deduplicating by videoId (if available) and normalized title + artist.
+    public static func deduplicate(_ tracks: [YTMPlaylistItem]) -> [YTMPlaylistItem] {
+        var result: [YTMPlaylistItem] = []
+        var videoIdIndex: [String: Int] = [:]
+        var titleArtistIndex: [String: Int] = [:]
+        var titleOnlyIndex: [String: Int] = [:]
+        
+        for track in tracks {
+            let vid = track.videoId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let cleanTitle = track.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let cleanArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let titleArtistKey = "\(cleanTitle)|\(cleanArtist)"
+            
+            var existingIdx: Int?
+            
+            // 1. Check videoId duplication
+            if !vid.isEmpty, let idx = videoIdIndex[vid] {
+                existingIdx = idx
+            }
+            // 2. Check title + artist duplication
+            else if !cleanTitle.isEmpty && !cleanArtist.isEmpty, let idx = titleArtistIndex[titleArtistKey] {
+                existingIdx = idx
+            }
+            // 3. Check title duplication if artist matches or one of them is empty
+            else if !cleanTitle.isEmpty, let idx = titleOnlyIndex[cleanTitle] {
+                let existingArtist = result[idx].artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if existingArtist.isEmpty || cleanArtist.isEmpty || existingArtist == cleanArtist {
+                    existingIdx = idx
+                }
+            }
+            
+            if let idx = existingIdx {
+                // Enrich existing item if new item has richer metadata
+                if result[idx].artist.isEmpty && !track.artist.isEmpty {
+                    result[idx].artist = track.artist
+                }
+                if (result[idx].videoId == nil || result[idx].videoId!.isEmpty) && track.videoId != nil {
+                    result[idx].videoId = track.videoId
+                }
+                if result[idx].duration.isEmpty && !track.duration.isEmpty {
+                    result[idx].duration = track.duration
+                }
+                if result[idx].thumbnailURL == nil && track.thumbnailURL != nil {
+                    result[idx].thumbnailURL = track.thumbnailURL
+                }
+                if !result[idx].isPlaying && track.isPlaying {
+                    result[idx].isPlaying = true
+                }
+                continue
+            }
+            
+            let newIdx = result.count
+            if !vid.isEmpty {
+                videoIdIndex[vid] = newIdx
+            }
+            if !cleanTitle.isEmpty && !cleanArtist.isEmpty {
+                titleArtistIndex[titleArtistKey] = newIdx
+            }
+            if !cleanTitle.isEmpty {
+                titleOnlyIndex[cleanTitle] = newIdx
+            }
+            result.append(track)
+        }
+        return result
+    }
 }
 
 public enum YTMPlaylistKind: String, Codable, Equatable {
@@ -324,7 +391,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     ))
                 }
             }
-            parsedQueue = YTMPlaylistItem.deduplicateAdjacent(parsedQueue)
+            parsedQueue = YTMPlaylistItem.deduplicate(parsedQueue)
+            var seenPlaying = false
+            for i in 0..<parsedQueue.count {
+                if parsedQueue[i].isPlaying {
+                    if !seenPlaying {
+                        seenPlaying = true
+                    } else {
+                        parsedQueue[i].isPlaying = false
+                    }
+                }
+            }
         }
         
         var parsedPlaylists: [YTMPlaylist] = []
@@ -1008,7 +1085,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             page.tracks += next.tracks
             token = next.continuation
         }
-        page.tracks = YTMPlaylistItem.deduplicateAdjacent(page.tracks)
+        page.tracks = YTMPlaylistItem.deduplicate(page.tracks)
         page.continuation = nil
         print("[Morph YTM] loadAllPages parsed \(page.tracks.count) tracks for browseId: '\(browseId)'")
         return page
@@ -1545,6 +1622,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 
                 // Playlist Queue extraction
                 var queue = [];
+                var seenQ = {};
+                var seenSelected = false;
                 try {
                     var qItems = document.querySelectorAll('ytmusic-player-queue-item');
                     if (!qItems || qItems.length === 0) {
@@ -1559,11 +1638,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             var qTitle = qTitleEl ? (qTitleEl.innerText || qTitleEl.textContent || '').trim() : '';
                             var qArtist = qArtistEl ? (qArtistEl.innerText || qArtistEl.textContent || '').trim() : '';
                             var qDur = qDurEl ? (qDurEl.innerText || qDurEl.textContent || '').trim() : '';
-                            var isSel = it.hasAttribute('selected') || it.classList.contains('selected') || it.getAttribute('play-state') === 'playing';
+                            var rawSel = it.hasAttribute('selected') || it.classList.contains('selected') || it.getAttribute('play-state') === 'playing';
+                            var isSel = false;
+                            if (rawSel && !seenSelected) {
+                                isSel = true;
+                                seenSelected = true;
+                            }
                             if (qTitle) {
-                                var lastQ = queue.length > 0 ? queue[queue.length - 1] : null;
-                                var isAdjDup = lastQ && (lastQ.title.toLowerCase() === qTitle.toLowerCase()) && (!lastQ.artist || !qArtist || lastQ.artist.toLowerCase() === qArtist.toLowerCase());
-                                if (!isAdjDup) {
+                                var qKey = (qTitle + '|' + qArtist).toLowerCase();
+                                if (!seenQ[qKey]) {
+                                    seenQ[qKey] = true;
                                     queue.push({
                                         id: '' + i,
                                         title: qTitle,

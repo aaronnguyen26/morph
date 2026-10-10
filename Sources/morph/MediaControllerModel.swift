@@ -141,9 +141,10 @@ public final class MediaControllerModel: ObservableObject {
                     self.isDisliked = data.isDisliked
                     self.isShuffle = data.isShuffle
                     self.repeatMode = data.repeatMode
-                    self.playlist = data.queue
+                    self.playlist = YTMPlaylistItem.deduplicate(data.queue)
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
+                    self.syncPlayingTrackWithPlaylists()
                 }
                 
                 let prevSignedIn = self.isSignedIn
@@ -162,8 +163,9 @@ public final class MediaControllerModel: ObservableObject {
                 // artists get their tracks from InnerTube (previously the queue overwrote every opened playlist).
                 if let sel = self.selectedPlaylist, sel.id == "pl_queue", !data.queue.isEmpty {
                     var updated = sel
-                    updated.tracks = data.queue
+                    updated.tracks = self.playlist
                     self.selectedPlaylist = updated
+                    self.syncPlayingTrackWithPlaylists()
                 }
             }
             .store(in: &cancellables)
@@ -397,7 +399,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func filteredSongs(for pl: YTMPlaylist) -> [YTMPlaylistItem] {
-        let list = YTMPlaylistItem.deduplicateAdjacent(pl.tracks)
+        let list = YTMPlaylistItem.deduplicate(pl.tracks)
         let query = songSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if query.isEmpty {
             return list
@@ -405,23 +407,26 @@ public final class MediaControllerModel: ObservableObject {
         let filtered = list.filter {
             $0.title.lowercased().contains(query) || $0.artist.lowercased().contains(query)
         }
-        return YTMPlaylistItem.deduplicateAdjacent(filtered)
+        return YTMPlaylistItem.deduplicate(filtered)
     }
     
     public func selectPlaylist(_ pl: YTMPlaylist) {
-        selectedPlaylist = pl
+        var p = pl
+        p.tracks = YTMPlaylistItem.deduplicate(p.tracks)
+        selectedPlaylist = p
         isSearchingSongs = false
         songSearchQuery = ""
         tracksError = nil
         trackLoadTask?.cancel()
+        syncPlayingTrackWithPlaylists()
         
         // The live queue is mirrored from the player; everything else is fetched natively.
-        guard pl.id != "pl_queue", pl.kind != .queue else {
+        guard p.id != "pl_queue", p.kind != .queue else {
             isLoadingTracks = false
             return
         }
         // Already loaded (cached) → show immediately.
-        guard pl.tracks.isEmpty else {
+        guard p.tracks.isEmpty else {
             isLoadingTracks = false
             return
         }
@@ -451,15 +456,12 @@ public final class MediaControllerModel: ObservableObject {
     
     func applyLoadedTracks(_ page: YTMTrackPage, to pl: YTMPlaylist) {
         var updated = selectedPlaylist ?? pl
-        let deduplicated = YTMPlaylistItem.deduplicateAdjacent(page.tracks)
-        updated.tracks = deduplicated.map { t in
-            var t = t
-            t.isPlaying = (t.title == trackTitle && isPlaying)
-            return t
-        }
+        let deduplicated = YTMPlaylistItem.deduplicate(page.tracks)
+        updated.tracks = deduplicated
         updated.trackCount = deduplicated.count
         if let list = page.playbackListId { updated.playbackListId = list }
         selectedPlaylist = updated
+        syncPlayingTrackWithPlaylists()
         if updated.kind == .playlist, playlists.contains(where: { $0.id == updated.id }) {
             mergePlaylists([updated])
         }
@@ -489,12 +491,158 @@ public final class MediaControllerModel: ObservableObject {
         }
         currentTime = 0
         isPlaying = true
+        syncPlayingTrackWithPlaylists()
+    }
+    
+    // MARK: - Track Normalization and Active Track Resolution
+    
+    /// Cleans clutter like "(Official Music Video)", "[Audio]", etc. from track titles
+    /// so left and right side titles match cleanly.
+    nonisolated public static func normalizeTitle(_ raw: String) -> String {
+        var title = raw.lowercased()
+        let removablePatterns = [
+            "\\(official video\\)",
+            "\\(official music video\\)",
+            "\\(official lyric video\\)",
+            "\\(official audio\\)",
+            "\\(audio\\)",
+            "\\(visualizer\\)",
+            "\\(lyrics\\)",
+            "\\[official video\\]",
+            "\\[official music video\\]",
+            "\\[official audio\\]",
+            "\\[audio\\]",
+            "\\[lyrics\\]",
+            "official music video",
+            "official video",
+            "official audio",
+            "lyric video"
+        ]
+        for pattern in removablePatterns {
+            title = title.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+        return title.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: " -–—\"'()[]")))
+    }
+    
+    /// Resolves the single active track ID inside a given list of tracks.
+    /// Strictly guarantees at most ONE track can ever be identified as active.
+    public func activeTrackId(in tracks: [YTMPlaylistItem]) -> String? {
+        guard !tracks.isEmpty else { return nil }
         
-        if var sel = selectedPlaylist {
-            for i in 0..<sel.tracks.count {
-                sel.tracks[i].isPlaying = (sel.tracks[i].id == item.id)
+        let currentTitleClean = Self.normalizeTitle(trackTitle)
+        let currentArtistClean = artistName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        
+        // Active queue item videoId (if available)
+        let activeQueueVideoId: String? = {
+            if let qItem = playlist.first(where: { $0.isPlaying }), let vid = qItem.videoId, !vid.isEmpty {
+                return vid
             }
-            selectedPlaylist = sel
+            return nil
+        }()
+        
+        // Tier 1: Match by videoId with active queue track
+        if let targetVid = activeQueueVideoId {
+            if let match = tracks.first(where: { $0.videoId == targetVid }) {
+                return match.id
+            }
+        }
+        
+        guard !currentTitleClean.isEmpty && currentTitleClean != "youtube music" else {
+            return nil
+        }
+        
+        // Tier 2: Match by normalized title AND artist
+        if !currentArtistClean.isEmpty && currentArtistClean != "youtube music" {
+            if let match = tracks.first(where: {
+                Self.normalizeTitle($0.title) == currentTitleClean &&
+                $0.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == currentArtistClean
+            }) {
+                return match.id
+            }
+        }
+        
+        // Tier 3: Match by normalized title alone
+        if let match = tracks.first(where: {
+            Self.normalizeTitle($0.title) == currentTitleClean
+        }) {
+            return match.id
+        }
+        
+        // Tier 4: Substring containment
+        if let match = tracks.first(where: {
+            let t = Self.normalizeTitle($0.title)
+            return !t.isEmpty && (currentTitleClean.contains(t) || t.contains(currentTitleClean))
+        }) {
+            return match.id
+        }
+        
+        // Tier 5: Fallback to first track explicitly marked isPlaying (at most one)
+        if let match = tracks.first(where: { $0.isPlaying }) {
+            return match.id
+        }
+        
+        return nil
+    }
+    
+    /// Returns true if and only if this track is the currently playing track in the provided collection.
+    /// This strictly prevents multiple tracks from showing as playing at the same time.
+    public func isSongCurrent(_ song: YTMPlaylistItem, in tracks: [YTMPlaylistItem]) -> Bool {
+        guard isPlaying else { return false }
+        return song.id == activeTrackId(in: tracks)
+    }
+    
+    /// Returns true if this track is the currently selected/active track while playback is paused.
+    public func isSongPausedCurrent(_ song: YTMPlaylistItem, in tracks: [YTMPlaylistItem]) -> Bool {
+        guard !isPlaying else { return false }
+        return song.id == activeTrackId(in: tracks)
+    }
+    
+    /// Synchronizes track playing state and metadata across selected playlist and queue.
+    /// Ensures both left side (now playing) and right side (playlist) display identical, synchronized info.
+    public func syncPlayingTrackWithPlaylists() {
+        // 1. Sync selectedPlaylist
+        if var sel = selectedPlaylist {
+            let activeId = activeTrackId(in: sel.tracks)
+            var changed = false
+            for i in 0..<sel.tracks.count {
+                let shouldBePlaying = isPlaying && (sel.tracks[i].id == activeId)
+                if sel.tracks[i].isPlaying != shouldBePlaying {
+                    sel.tracks[i].isPlaying = shouldBePlaying
+                    changed = true
+                }
+            }
+            if let activeId = activeId, let match = sel.tracks.first(where: { $0.id == activeId }) {
+                // Harmonize left deck title/artist with the playlist track's clean metadata
+                if Self.normalizeTitle(self.trackTitle) == Self.normalizeTitle(match.title) {
+                    if self.trackTitle != match.title {
+                        self.trackTitle = match.title
+                    }
+                    if !match.artist.isEmpty && (self.artistName.isEmpty || self.artistName == "YouTube Music" || self.artistName.lowercased().contains(match.artist.lowercased())) {
+                        self.artistName = match.artist
+                    }
+                }
+            }
+            if changed {
+                selectedPlaylist = sel
+            }
+        }
+        
+        // 2. Sync queue (self.playlist)
+        if !playlist.isEmpty {
+            let activeQId = activeTrackId(in: playlist)
+            for i in 0..<playlist.count {
+                playlist[i].isPlaying = isPlaying && (playlist[i].id == activeQId)
+            }
+            if let activeQId = activeQId, let matchQ = playlist.first(where: { $0.id == activeQId }) {
+                if Self.normalizeTitle(self.trackTitle) == Self.normalizeTitle(matchQ.title) {
+                    if self.trackTitle != matchQ.title {
+                        self.trackTitle = matchQ.title
+                    }
+                    if !matchQ.artist.isEmpty && (self.artistName.isEmpty || self.artistName == "YouTube Music") {
+                        self.artistName = matchQ.artist
+                    }
+                }
+            }
         }
     }
     
@@ -623,7 +771,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public var effectivePlaylist: [YTMPlaylistItem] {
-        return playlist
+        return YTMPlaylistItem.deduplicate(playlist)
     }
     
     public func playQueueTrack(_ item: YTMPlaylistItem) {
@@ -796,6 +944,7 @@ public final class MediaControllerModel: ObservableObject {
         } else {
             self.trackTitle = clean
         }
+        self.syncPlayingTrackWithPlaylists()
     }
     
     private func executeBrowserPlayPause() {

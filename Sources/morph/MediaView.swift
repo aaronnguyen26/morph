@@ -886,7 +886,7 @@ public struct MediaView: View {
                 } else {
                     LazyVStack(spacing: 3) {
                         ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
-                            songItemRow(index: index, song: song)
+                            songItemRow(index: index, song: song, in: songs)
                         }
                         
                         if media.isLoadingTracks {
@@ -1100,8 +1100,9 @@ public struct MediaView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     
-    private func songItemRow(index: Int, song: YTMPlaylistItem) -> some View {
-        let isCurrentSong = song.isPlaying || (song.title == media.trackTitle && media.isPlaying)
+    private func songItemRow(index: Int, song: YTMPlaylistItem, in songs: [YTMPlaylistItem]) -> some View {
+        let isCurrentSong = media.isSongCurrent(song, in: songs)
+        let isPausedSong = media.isSongPausedCurrent(song, in: songs)
         return Button(action: {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                 media.playSongInSelectedPlaylist(song)
@@ -1110,9 +1111,7 @@ public struct MediaView: View {
             HStack(spacing: 7) {
                 // Play State / Index Indicator (artwork when YouTube provides it)
                 ZStack {
-                    if let thumb = song.thumbnailURL, !isCurrentSong {
-                        artworkThumb(url: thumb, size: 20, fallbackIcon: "music.note")
-                    } else if isCurrentSong {
+                    if isCurrentSong {
                         HStack(alignment: .bottom, spacing: 1.2) {
                             ForEach(0..<3, id: \.self) { barIdx in
                                 RoundedRectangle(cornerRadius: 0.5)
@@ -1121,6 +1120,13 @@ public struct MediaView: View {
                             }
                         }
                         .frame(width: 14, height: 10, alignment: .bottom)
+                    } else if isPausedSong {
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 7.5))
+                            .foregroundColor(Color.white.opacity(0.85))
+                            .frame(width: 14)
+                    } else if let thumb = song.thumbnailURL {
+                        artworkThumb(url: thumb, size: 20, fallbackIcon: "music.note")
                     } else {
                         Text("\(index + 1)")
                             .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -1132,14 +1138,14 @@ public struct MediaView: View {
                 // Title & Artist
                 VStack(alignment: .leading, spacing: 1) {
                     Text(song.title)
-                        .font(.system(size: 9.5, weight: isCurrentSong ? .bold : .medium, design: .rounded))
-                        .foregroundColor(isCurrentSong ? .white : Color.white.opacity(0.85))
+                        .font(.system(size: 9.5, weight: (isCurrentSong || isPausedSong) ? .bold : .medium, design: .rounded))
+                        .foregroundColor((isCurrentSong || isPausedSong) ? .white : Color.white.opacity(0.85))
                         .lineLimit(1)
                     
                     if !song.artist.isEmpty {
                         Text(song.artist)
                             .font(.system(size: 8, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.45))
+                            .foregroundColor((isCurrentSong || isPausedSong) ? Color.white.opacity(0.7) : Color.white.opacity(0.45))
                             .lineLimit(1)
                     }
                 }
@@ -1150,16 +1156,16 @@ public struct MediaView: View {
                 if !song.duration.isEmpty {
                     Text(song.duration)
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(isCurrentSong ? Color.white.opacity(0.8) : Color.white.opacity(0.35))
+                        .foregroundColor((isCurrentSong || isPausedSong) ? Color.white.opacity(0.8) : Color.white.opacity(0.35))
                 }
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(isCurrentSong ? Color.white.opacity(0.14) : Color.white.opacity(0.03))
+            .background(isCurrentSong ? Color.white.opacity(0.14) : (isPausedSong ? Color.white.opacity(0.08) : Color.white.opacity(0.03)))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(isCurrentSong ? Color.white.opacity(0.2) : Color.clear, lineWidth: 0.5)
+                    .stroke(isCurrentSong ? Color.white.opacity(0.2) : (isPausedSong ? Color.white.opacity(0.12) : Color.clear), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)
