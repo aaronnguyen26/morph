@@ -184,4 +184,66 @@ final class YouTubeMusicSyncAndDeduplicationTests: XCTestCase {
         XCTAssertEqual(playingTracks.count, 1, "Exactly one track must be playing after auto-advance")
         XCTAssertEqual(playingTracks.first?.id, "s2")
     }
+    
+    // MARK: - Inverted Artist Permutations and False Highlight Tests
+    
+    func testDeduplicationCollapsesInvertedArtistPermutations() {
+        // e.g. "Low G & JustaTee" vs "JustaTee & Low G"
+        let t1 = YTMPlaylistItem(id: "1", title: "In Love", artist: "Low G & JustaTee")
+        let t2 = YTMPlaylistItem(id: "2", title: "In Love", artist: "JustaTee & Low G")
+        
+        let res = YTMPlaylistItem.deduplicate([t1, t2])
+        XCTAssertEqual(res.count, 1, "Inverted artist permutations must be collapsed as duplicates")
+        
+        // e.g. "Wren Evans (ft. itsnk)" vs "itsnk & Wren Evans"
+        let w1 = YTMPlaylistItem(id: "3", title: "ĐĐĐ", artist: "Wren Evans (ft. itsnk)")
+        let w2 = YTMPlaylistItem(id: "4", title: "ĐĐĐ", artist: "itsnk & Wren Evans")
+        let resW = YTMPlaylistItem.deduplicate([w1, w2])
+        XCTAssertEqual(resW.count, 1, "Featured artist variations must be collapsed as duplicates")
+    }
+    
+    @MainActor
+    func testActiveTrackIdReturnsNilWhenPlayingSongIsNotInList() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // Song playing on left: "Em Không Thể" by Tiên Tiên
+        media.trackTitle = "Em Không Thể (Reverse Ride)"
+        media.artistName = "Tiên Tiên & Touliver"
+        media.isPlaying = true
+        
+        // Tracks in current playlist on right:
+        let t1 = YTMPlaylistItem(id: "1", title: "In Love", artist: "Low G & JustaTee", isPlaying: true)
+        let t2 = YTMPlaylistItem(id: "2", title: "ĐĐĐ", artist: "Wren Evans", isPlaying: false)
+        let tracks = [t1, t2]
+        
+        // activeTrackId MUST NOT return t1 just because t1 had isPlaying: true
+        let activeId = media.activeTrackId(in: tracks)
+        XCTAssertNil(activeId, "activeTrackId must return nil when playing track is not in the list, never falsely highlight an unrelated song!")
+        
+        XCTAssertFalse(media.isSongCurrent(t1, in: tracks))
+        XCTAssertFalse(media.isSongCurrent(t2, in: tracks))
+    }
+    
+    @MainActor
+    func testRightDeckNavigationSections() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        XCTAssertEqual(media.rightDeckSection, .home)
+        
+        media.openPlaylistsSection()
+        XCTAssertEqual(media.rightDeckSection, .playlists)
+        XCTAssertNil(media.selectedPlaylist)
+        
+        let pl = YTMPlaylist(id: "custom_pl", title: "My Hits", tracks: [])
+        media.selectPlaylist(pl)
+        XCTAssertEqual(media.rightDeckSection, .playlists)
+        XCTAssertEqual(media.selectedPlaylist?.id, "custom_pl")
+        
+        media.openHubHome()
+        XCTAssertEqual(media.rightDeckSection, .home)
+        XCTAssertNil(media.selectedPlaylist)
+    }
 }
+

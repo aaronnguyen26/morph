@@ -1,6 +1,25 @@
 import SwiftUI
 import Combine
 
+public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
+    case home = "Home"
+    case playlists = "Playlists"
+    case queue = "Queue"
+    case search = "Search"
+    
+    public var id: String { rawValue }
+    public var title: String { rawValue }
+    
+    public var iconName: String {
+        switch self {
+        case .home: return "house.fill"
+        case .playlists: return "music.note.list"
+        case .queue: return "list.bullet"
+        case .search: return "magnifyingglass"
+        }
+    }
+}
+
 @MainActor
 public final class MediaControllerModel: ObservableObject {
     @Published public var trackTitle: String = ""
@@ -22,6 +41,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var playlists: [YTMPlaylist] = []
     @Published public var isSignedIn: Bool = false
     @Published public var selectedPlaylist: YTMPlaylist? = nil
+    @Published public var rightDeckSection: YTMRightDeckSection = .home
     @Published public var isSearchingPlaylists: Bool = false
     @Published public var playlistSearchQuery: String = ""
     @Published public var isSearchingSongs: Bool = false
@@ -413,7 +433,18 @@ public final class MediaControllerModel: ObservableObject {
     public func selectPlaylist(_ pl: YTMPlaylist) {
         var p = pl
         p.tracks = YTMPlaylistItem.deduplicate(p.tracks)
+        
+        // If the playlist explicitly contains an actively playing track and our current media
+        // player track is not matching any track in this playlist, adopt this active track's info.
+        if let existingActive = p.tracks.first(where: { $0.isPlaying }), activeTrackId(in: p.tracks) == nil {
+            trackTitle = existingActive.title
+            if !existingActive.artist.isEmpty {
+                artistName = existingActive.artist
+            }
+        }
+        
         selectedPlaylist = p
+        rightDeckSection = .playlists
         isSearchingSongs = false
         songSearchQuery = ""
         tracksError = nil
@@ -474,6 +505,28 @@ public final class MediaControllerModel: ObservableObject {
         selectedPlaylist = nil
         isSearchingSongs = false
         songSearchQuery = ""
+    }
+    
+    public func openPlaylistsSection() {
+        trackLoadTask?.cancel()
+        isLoadingTracks = false
+        tracksError = nil
+        selectedPlaylist = nil
+        rightDeckSection = .playlists
+        isSearchingSongs = false
+        songSearchQuery = ""
+    }
+    
+    public func openQueueSection() {
+        rightDeckSection = .queue
+    }
+    
+    public func openHubHome() {
+        trackLoadTask?.cancel()
+        isLoadingTracks = false
+        tracksError = nil
+        selectedPlaylist = nil
+        rightDeckSection = .home
     }
     
     /// `list=` parameter for starting playback inside the currently opened container (artists play as radio).
@@ -576,11 +629,8 @@ public final class MediaControllerModel: ObservableObject {
             return match.id
         }
         
-        // Tier 5: Fallback to first track explicitly marked isPlaying (at most one)
-        if let match = tracks.first(where: { $0.isPlaying }) {
-            return match.id
-        }
-        
+        // Strictly return nil if no track matches the currently playing song.
+        // Under no circumstances should an unrelated track be marked as playing.
         return nil
     }
     

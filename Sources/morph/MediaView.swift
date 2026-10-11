@@ -400,15 +400,25 @@ public struct MediaView: View {
         }
     }
     
-    // MARK: - Right Deck: Two-Step Playlist & Song Picker (328 pt)
+    // MARK: - Right Deck: YouTube Music Flexible Hub (328 pt)
     private var playlistBrowserDeck: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let currentPlaylist = media.selectedPlaylist {
+            hubTopNavigationBar
+            
+            if media.selectedPlaylist != nil && media.rightDeckSection == .playlists {
                 // STEP 2: SONGS IN CHOSEN PLAYLIST
-                playlistDetailDeck(playlist: currentPlaylist)
+                playlistDetailDeck(playlist: media.selectedPlaylist!)
             } else {
-                // STEP 1: CHOOSE A PLAYLIST
-                playlistsSelectionDeck
+                switch media.rightDeckSection {
+                case .home:
+                    hubHomeDeck
+                case .playlists:
+                    playlistsSelectionDeck
+                case .queue:
+                    playlistDetailDeck(playlist: media.nowPlayingQueuePlaylist)
+                case .search:
+                    hubSearchDeck
+                }
             }
         }
         .padding(9)
@@ -418,6 +428,172 @@ public struct MediaView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
+    }
+    
+    // MARK: - YouTube Music Hub Top Bar
+    private var hubTopNavigationBar: some View {
+        HStack(spacing: 5) {
+            // YTM Brand Icon & Badge
+            HStack(spacing: 4) {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.red)
+                Text("Music")
+                    .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            .padding(.trailing, 2)
+            
+            Spacer()
+            
+            // Section Switcher Pills
+            HStack(spacing: 2) {
+                ForEach(YTMRightDeckSection.allCases, id: \.self) { section in
+                    let isSelected = (media.rightDeckSection == section && (section != .playlists || media.selectedPlaylist == nil))
+                    Button(action: {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            if section == .playlists {
+                                media.selectedPlaylist = nil
+                            }
+                            media.rightDeckSection = section
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: section.iconName)
+                                .font(.system(size: 7.5, weight: .bold))
+                            Text(section.title)
+                                .font(.system(size: 8, weight: isSelected ? .bold : .medium))
+                        }
+                        .foregroundColor(isSelected ? .black : Color.white.opacity(0.65))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(isSelected ? Color.white : Color.white.opacity(0.06))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.bottom, 2)
+    }
+    
+    // MARK: - Hub Home Deck (Vibe Chips + Playlists Shelf + Up Next)
+    private var hubHomeDeck: some View {
+        ScrollView(.vertical, showsIndicators: true) {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                // Quick Vibe Chips
+                quickVibeChipsRow
+                
+                // Playlists Section Shelf
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("PLAYLISTS")
+                            .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                            .tracking(0.6)
+                            .foregroundColor(Color.white.opacity(0.45))
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                media.openPlaylistsSection()
+                            }
+                        }) {
+                            HStack(spacing: 2) {
+                                Text("See All (\(media.filteredPlaylists.count))")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 6.5, weight: .bold))
+                            }
+                            .foregroundColor(Color.white.opacity(0.55))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    
+                    if media.isLoadingPlaylists {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 12, height: 12)
+                                .colorScheme(.dark)
+                            Text("Loading your library...")
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.5))
+                        }
+                        .padding(.vertical, 6)
+                    } else if media.filteredPlaylists.isEmpty {
+                        Text("No playlists found yet. Sign in or click Sync.")
+                            .font(.system(size: 8, weight: .regular))
+                            .foregroundColor(Color.white.opacity(0.4))
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(media.filteredPlaylists.prefix(3)) { playlist in
+                            playlistCardRow(playlist: playlist)
+                        }
+                    }
+                }
+                
+                // Up Next / Live Queue Card
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("UP NEXT")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(0.6)
+                        .foregroundColor(Color.white.opacity(0.45))
+                    
+                    nowPlayingQueueCardRow
+                }
+            }
+            .padding(.trailing, 2)
+        }
+        .frame(maxHeight: 140)
+    }
+    
+    // Quick Vibe Mood Chips (Energize, Relax, Focus, Workout, Chill)
+    private var quickVibeChipsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                let vibes: [(String, String, String)] = [
+                    ("⚡", "Energize", "energize"),
+                    ("🧘", "Relax", "relax"),
+                    ("🎯", "Focus", "focus"),
+                    ("🏃", "Workout", "workout"),
+                    ("☕", "Chill", "chill")
+                ]
+                ForEach(vibes, id: \.1) { emoji, name, query in
+                    Button(action: {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                            media.searchYouTubeMusic(for: query)
+                            media.rightDeckSection = .search
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Text(emoji)
+                                .font(.system(size: 8))
+                            Text(name)
+                                .font(.system(size: 8, weight: .semibold))
+                        }
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Hub Dedicated Search Deck
+    private var hubSearchDeck: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            playlistsSearchBar
+            catalogSearchDeck
+        }
     }
     
     // MARK: - Step 1: Choose a Playlist
@@ -524,17 +700,33 @@ public struct MediaView: View {
     }
     
     private var playlistsHeaderRow: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "square.stack.fill")
-                .font(.system(size: 9.5, weight: .bold))
+        HStack(spacing: 5) {
+            Button(action: {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                    media.openHubHome()
+                }
+            }) {
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("Hub")
+                        .font(.system(size: 8.5, weight: .semibold))
+                }
                 .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Back to Music Hub")
             
-            Text("CHOOSE PLAYLIST")
+            Text("PLAYLISTS")
                 .font(.system(size: 9, weight: .heavy, design: .rounded))
                 .foregroundColor(Color.white.opacity(0.85))
                 .tracking(0.5)
             
-            Text("\(media.filteredPlaylists.count) playlists")
+            Text("\(media.filteredPlaylists.count)")
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .foregroundColor(Color.white.opacity(0.5))
                 .padding(.horizontal, 5)

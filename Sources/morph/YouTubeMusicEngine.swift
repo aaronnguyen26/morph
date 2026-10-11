@@ -68,6 +68,36 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
         return result
     }
     
+    /// Matches artist strings even if names are permuted or contain feat/ft variations
+    /// (e.g. "Low G & JustaTee" matches "JustaTee & Low G", "Wren Evans (ft. itsnk)" matches "itsnk & Wren Evans")
+    public static func areArtistsMatching(_ a1: String, _ a2: String) -> Bool {
+        let clean1 = a1.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let clean2 = a2.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if clean1.isEmpty || clean2.isEmpty || clean1 == clean2 { return true }
+        if clean1.contains(clean2) || clean2.contains(clean1) { return true }
+        
+        let separators = CharacterSet(charactersIn: ",&+•/()[]")
+        func extractTokens(_ raw: String) -> Set<String> {
+            let sanitized = raw
+                .replacingOccurrences(of: "feat.", with: ",")
+                .replacingOccurrences(of: "feat", with: ",")
+                .replacingOccurrences(of: "ft.", with: ",")
+                .replacingOccurrences(of: "ft", with: ",")
+                .replacingOccurrences(of: " and ", with: ",")
+            let parts = sanitized.components(separatedBy: separators)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return Set(parts)
+        }
+        
+        let set1 = extractTokens(clean1)
+        let set2 = extractTokens(clean2)
+        if !set1.isEmpty && !set2.isEmpty && (set1 == set2 || !set1.isDisjoint(with: set2)) {
+            return true
+        }
+        return false
+    }
+    
     /// Returns the tracks with ALL duplicate entries eliminated across the entire playlist,
     /// deduplicating by videoId (if available) and normalized title + artist.
     public static func deduplicate(_ tracks: [YTMPlaylistItem]) -> [YTMPlaylistItem] {
@@ -78,7 +108,8 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
         
         for track in tracks {
             let vid = track.videoId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let cleanTitle = track.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let cleanTitle = MediaControllerModel.normalizeTitle(track.title)
+            let rawTitle = track.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let cleanArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let titleArtistKey = "\(cleanTitle)|\(cleanArtist)"
             
@@ -92,10 +123,17 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
             else if !cleanTitle.isEmpty && !cleanArtist.isEmpty, let idx = titleArtistIndex[titleArtistKey] {
                 existingIdx = idx
             }
-            // 3. Check title duplication if artist matches or one of them is empty
+            // 3. Check normalized title duplication if artists match / overlap
             else if !cleanTitle.isEmpty, let idx = titleOnlyIndex[cleanTitle] {
                 let existingArtist = result[idx].artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                if existingArtist.isEmpty || cleanArtist.isEmpty || existingArtist == cleanArtist {
+                if areArtistsMatching(cleanArtist, existingArtist) {
+                    existingIdx = idx
+                }
+            }
+            // 4. Raw title check fallback
+            else if !rawTitle.isEmpty, let idx = titleOnlyIndex[rawTitle] {
+                let existingArtist = result[idx].artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if areArtistsMatching(cleanArtist, existingArtist) {
                     existingIdx = idx
                 }
             }
@@ -129,6 +167,9 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
             }
             if !cleanTitle.isEmpty {
                 titleOnlyIndex[cleanTitle] = newIdx
+            }
+            if !rawTitle.isEmpty {
+                titleOnlyIndex[rawTitle] = newIdx
             }
             result.append(track)
         }
@@ -392,13 +433,47 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 }
             }
             parsedQueue = YTMPlaylistItem.deduplicate(parsedQueue)
-            var seenPlaying = false
-            for i in 0..<parsedQueue.count {
-                if parsedQueue[i].isPlaying {
-                    if !seenPlaying {
-                        seenPlaying = true
-                    } else {
+            
+            // Synchronize current playing song with queue
+            if !title.isEmpty && title != "YouTube Music" {
+                let normCurrent = MediaControllerModel.normalizeTitle(title)
+                var matchedIdx = -1
+                for (qIdx, qItem) in parsedQueue.enumerated() {
+                    let normItem = MediaControllerModel.normalizeTitle(qItem.title)
+                    if normItem == normCurrent || (!normItem.isEmpty && (normCurrent.contains(normItem) || normItem.contains(normCurrent))) {
+                        matchedIdx = qIdx
+                        break
+                    }
+                }
+                
+                if matchedIdx >= 0 {
+                    for i in 0..<parsedQueue.count {
+                        parsedQueue[i].isPlaying = (i == matchedIdx && playing)
+                    }
+                } else if playing {
+                    let currentItem = YTMPlaylistItem(
+                        id: "current_live_track",
+                        title: title,
+                        artist: artist,
+                        duration: "",
+                        isPlaying: true,
+                        videoId: nil,
+                        thumbnailURL: art
+                    )
+                    for i in 0..<parsedQueue.count {
                         parsedQueue[i].isPlaying = false
+                    }
+                    parsedQueue.insert(currentItem, at: 0)
+                }
+            } else {
+                var seenPlaying = false
+                for i in 0..<parsedQueue.count {
+                    if parsedQueue[i].isPlaying {
+                        if !seenPlaying {
+                            seenPlaying = true
+                        } else {
+                            parsedQueue[i].isPlaying = false
+                        }
                     }
                 }
             }
@@ -1638,22 +1713,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             var qTitle = qTitleEl ? (qTitleEl.innerText || qTitleEl.textContent || '').trim() : '';
                             var qArtist = qArtistEl ? (qArtistEl.innerText || qArtistEl.textContent || '').trim() : '';
                             var qDur = qDurEl ? (qDurEl.innerText || qDurEl.textContent || '').trim() : '';
-                            var rawSel = it.hasAttribute('selected') || it.classList.contains('selected') || it.getAttribute('play-state') === 'playing';
-                            var isSel = false;
-                            if (rawSel && !seenSelected) {
-                                isSel = true;
-                                seenSelected = true;
-                            }
                             if (qTitle) {
-                                var qKey = (qTitle + '|' + qArtist).toLowerCase();
-                                if (!seenQ[qKey]) {
-                                    seenQ[qKey] = true;
+                                var normKey = qTitle.toLowerCase().replace(/\\(.*\\)|\\[.*\\]/g, '').trim();
+                                if (!seenQ[normKey]) {
+                                    seenQ[normKey] = true;
                                     queue.push({
                                         id: '' + i,
                                         title: qTitle,
                                         artist: qArtist,
                                         duration: qDur,
-                                        isPlaying: isSel
+                                        isPlaying: false
                                     });
                                 }
                             }
