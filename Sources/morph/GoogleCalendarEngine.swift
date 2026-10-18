@@ -277,10 +277,14 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         return false
     }
     
+    public var onOpenMeet: ((URL) -> Bool)?
+    
     public func openMeet(link: String) {
-        if let url = URL(string: link) {
-            NSWorkspace.shared.open(url)
+        guard let url = URL(string: link) else { return }
+        if let handler = onOpenMeet, handler(url) {
+            return
         }
+        NSWorkspace.shared.open(url)
     }
     
     // MARK: - Dedicated Calendar Window

@@ -255,6 +255,10 @@ public final class ShortcutManager: NSObject {
                 togglePin()
                 return true
             case " ":
+                if model.meetingController.isInCall {
+                    toggleMeetingMute()
+                    return true
+                }
                 togglePlayPause()
                 return true
             case "t":
@@ -303,6 +307,11 @@ public final class ShortcutManager: NSObject {
                 case "p":
                     togglePinNoteToNotch()
                     return true
+                case "e":
+                    if model.meetingController.isInCall {
+                        endCall()
+                        return true
+                    }
                 case "z":
                     // Redo will be handled by responder or edit menu
                     return false
@@ -660,6 +669,19 @@ public final class ShortcutManager: NSObject {
         guard let model = model else { return }
         model.isNotePinnedToNotch.toggle()
         lastTriggeredShortcut = model.isNotePinnedToNotch ? "⌘⇧P Note Pinned" : "⌘⇧P Note Unpinned"
+    }
+    
+    // Meeting Call Controls
+    @objc public func endCall() {
+        guard let model = model else { return }
+        model.meetingController.endCall()
+        lastTriggeredShortcut = "⌘⇧E Call Ended"
+    }
+    
+    @objc public func toggleMeetingMute() {
+        guard let model = model else { return }
+        model.meetingController.toggleMute()
+        lastTriggeredShortcut = model.meetingController.isMuted ? "Mic Muted" : "Mic Live"
     }
     
     // Helper to collapse

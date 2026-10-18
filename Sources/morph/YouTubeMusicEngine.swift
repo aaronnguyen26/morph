@@ -285,6 +285,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var isLoadingLibrary: Bool = false
     private var lastLibrarySync: Date?
     
+    public var lastEvaluatedScript: String?
+    public var onEvaluate: ((String) -> Void)?
+    
+    public func simulateTrackDataUpdate(_ data: YTMTrackData) {
+        self.trackData = data
+    }
+    
     public private(set) var webView: WKWebView!
     private var playerWindow: NSWindow?
     private var windowDelegate: PlayerWindowDelegate?
@@ -338,15 +345,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.webView.navigationDelegate = self
         self.webView.uiDelegate = self
         
-        // Host webView in playerWindow immediately so webView.window != nil (prevents WebKit throttling & audio suspension)
-        _ = ensurePlayerWindow()
-        
-        // Initial load
-        loadHome()
+        // In modern Morph architecture, webView is hosted directly within Morph's active notch panel (attachToHostingView),
+        // completely eliminating any ghost/invisible NSWindow on the user's desktop screen.
+        if !MorphEnvironment.isTestingEnvironment {
+            loadHome()
+        }
     }
 
     
     public func loadHome() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         if let url = URL(string: kYTMURL) {
             let request = URLRequest(url: url)
             self.webView.load(request)
@@ -550,6 +558,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         // Auto-detect if user just returned from Google Sign-In or arrived at YouTube Music
         if let url = webView.url?.absoluteString {
             if url.contains("music.youtube.com") {
+                // If watch URL was loaded directly, automatically start playback once page finishes loading
+                if url.contains("/watch") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                        self?.play()
+                    }
+                }
                 // If returning from Google OAuth redirect, automatically fetch real library playlists
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                     guard let self = self else { return }
@@ -607,23 +621,38 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         (function() {
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.playVideo === 'function') {
-                p.playVideo();
+                try { p.playVideo(); } catch(e) {}
             }
             var v = document.querySelector('video');
             if (v && v.paused) {
-                v.play().catch(function(){});
+                var wasMuted = v.muted;
+                var playPromise = v.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(function() {
+                        // WebKit autoplay rejection: unlock via muted autoplay then restore mute state
+                        v.muted = true;
+                        v.play().then(function() {
+                            setTimeout(function() {
+                                v.muted = wasMuted;
+                            }, 150);
+                        }).catch(function(){});
+                    });
+                }
             }
-            var btn = document.querySelector('#play-pause-button') || 
-                      document.querySelector('ytmusic-player-bar #play-pause-button') ||
-                      document.querySelector('tp-yt-paper-icon-button#play-pause-button') ||
-                      document.querySelector('[aria-label*="Play" i]') ||
-                      document.querySelector('[aria-label*="Phát" i]');
+            // Strict player-bar play button targeting to prevent clicking navigation links like "Playlists"
+            var btn = document.querySelector('ytmusic-player-bar #play-pause-button') ||
+                      document.querySelector('#play-pause-button') ||
+                      document.querySelector('ytmusic-player-bar tp-yt-paper-icon-button#play-pause-button') ||
+                      document.querySelector('ytmusic-player-bar [aria-label*="Play" i]') ||
+                      document.querySelector('ytmusic-player-bar [aria-label*="Phát" i]');
             if (btn) {
                 var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
                 if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1 || label === '') {
                     btn.click();
-                    var inner = btn.querySelector('button, #button, yt-icon');
-                    if (inner) inner.click();
+                    if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
+                        var inner = btn.querySelector('button, #button');
+                        if (inner) inner.click();
+                    }
                 }
             }
             // If neither has started, start the first playable item / supermix on page
@@ -631,8 +660,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var firstPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-two-row-item-renderer #play-button, ytmusic-play-button-renderer #button, #play-button');
                 if (firstPlay) {
                     firstPlay.click();
-                    var inner = firstPlay.querySelector('button, #button, yt-icon');
-                    if (inner) inner.click();
+                    if (firstPlay.tagName && firstPlay.tagName.toLowerCase().indexOf('-') === -1) {
+                        var firstInner = firstPlay.querySelector('button, #button');
+                        if (firstInner) firstInner.click();
+                    }
                 }
             }
             if (navigator.mediaSession) {
@@ -651,23 +682,25 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         (function() {
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.pauseVideo === 'function') {
-                p.pauseVideo();
+                try { p.pauseVideo(); } catch(e) {}
             }
             var videos = document.querySelectorAll('video, audio');
             for (var i = 0; i < videos.length; i++) {
-                videos[i].pause();
+                try { videos[i].pause(); } catch(e) {}
             }
-            var btn = document.querySelector('#play-pause-button') || 
-                      document.querySelector('ytmusic-player-bar #play-pause-button') ||
-                      document.querySelector('tp-yt-paper-icon-button#play-pause-button') ||
-                      document.querySelector('[aria-label*="Pause" i]') ||
-                      document.querySelector('[aria-label*="Tạm dừng" i]');
+            var btn = document.querySelector('ytmusic-player-bar #play-pause-button') ||
+                      document.querySelector('#play-pause-button') ||
+                      document.querySelector('ytmusic-player-bar tp-yt-paper-icon-button#play-pause-button') ||
+                      document.querySelector('ytmusic-player-bar [aria-label*="Pause" i]') ||
+                      document.querySelector('ytmusic-player-bar [aria-label*="Tạm dừng" i]');
             if (btn) {
                 var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
                 if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1 || label === '') {
                     btn.click();
-                    var inner = btn.querySelector('button, #button, yt-icon');
-                    if (inner) inner.click();
+                    if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
+                        var inner = btn.querySelector('button, #button');
+                        if (inner) inner.click();
+                    }
                 }
             }
             if (navigator.mediaSession) {
@@ -737,43 +770,58 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     var cb = confirmButtons[i];
                     if (cb && (cb.offsetParent !== null || cb.offsetWidth > 0)) {
                         cb.click();
-                        var inner = cb.querySelector('button, #button, yt-button-shape');
-                        if (inner) inner.click();
                     }
                 }
 
-                // 2. Ensure autoplay toggle is on
+                // 2. Ensure autoplay / automix toggle is enabled
                 var automixToggle = document.querySelector('#automix-toggle tp-yt-paper-toggle-button') ||
-                                    document.querySelector('ytmusic-player-queue tp-yt-paper-toggle-button');
+                                    document.querySelector('ytmusic-player-queue tp-yt-paper-toggle-button') ||
+                                    document.querySelector('.automix-toggle tp-yt-paper-toggle-button');
                 if (automixToggle && !(automixToggle.hasAttribute('checked') || automixToggle.getAttribute('aria-checked') === 'true')) {
                     automixToggle.click();
                 }
 
-                // 3. Trigger next video via player API or button
-                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
-                var advanced = false;
-                if (p && typeof p.nextVideo === 'function') {
-                    try {
-                        p.nextVideo();
-                        advanced = true;
-                    } catch(e) {}
-                }
-                
-                var btn = document.querySelector('.next-button') || 
-                          document.querySelector('#right-controls .next-button') || 
-                          document.querySelector('ytmusic-player-bar .next-button') ||
+                // 3. Primary: Click Next Button on player bar
+                var btn = document.querySelector('ytmusic-player-bar .next-button') || 
+                          document.querySelector('#left-controls .next-button') || 
+                          document.querySelector('.next-button.ytmusic-player-bar') ||
                           document.querySelector('tp-yt-paper-icon-button.next-button') ||
-                          document.querySelector('[aria-label*="Next" i]') ||
-                          document.querySelector('[aria-label*="tiếp" i]');
-                if (btn && (!btn.disabled && !btn.hasAttribute('disabled'))) {
+                          document.querySelector('.next-button') ||
+                          document.querySelector('ytmusic-player-bar [aria-label*="Next" i]') ||
+                          document.querySelector('ytmusic-player-bar [aria-label*="tiếp" i]');
+                var clicked = false;
+                if (btn && !(btn.disabled || btn.getAttribute('aria-disabled') === 'true')) {
                     btn.click();
-                    var inner = btn.querySelector('button, #button, yt-icon');
-                    if (inner) inner.click();
-                    advanced = true;
+                    clicked = true;
                 }
 
-                // 4. Fallback: Advance DOM queue item if queue exists
-                if (!advanced) {
+                // 4. Fallback 1: Native Shift+N KeyboardEvent (Universal YouTube Music shortcut)
+                if (!clicked) {
+                    var shiftN = new KeyboardEvent('keydown', {
+                        key: 'N',
+                        code: 'KeyN',
+                        keyCode: 78,
+                        which: 78,
+                        shiftKey: true,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    window.dispatchEvent(shiftN);
+                    document.dispatchEvent(shiftN);
+                    var playerBar = document.querySelector('ytmusic-player-bar');
+                    if (playerBar) {
+                        playerBar.dispatchEvent(shiftN);
+                    }
+                }
+
+                // 5. Fallback 2: Player API
+                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                if (!clicked && p && typeof p.nextVideo === 'function') {
+                    try { p.nextVideo(); } catch(e) {}
+                }
+
+                // 6. Fallback 3: DOM Queue item fallback
+                if (!clicked) {
                     var queueItems = document.querySelectorAll('ytmusic-player-queue-item');
                     if (queueItems && queueItems.length > 1) {
                         for (var qi = 0; qi < queueItems.length - 1; qi++) {
@@ -782,11 +830,22 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                 var nextItem = queueItems[qi + 1];
                                 var playTarget = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
                                 playTarget.click();
-                                nextItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                                 break;
                             }
                         }
                     }
+                }
+
+                // 7. Ensure video playback
+                var v = document.querySelector('video');
+                if (v && v.paused) {
+                    var wasMuted = v.muted;
+                    v.play().catch(function() {
+                        v.muted = true;
+                        v.play().then(function() {
+                            setTimeout(function() { v.muted = wasMuted; }, 150);
+                        }).catch(function(){});
+                    });
                 }
             } catch(e) {}
             if (typeof window.morphSendUpdate === 'function') {
@@ -797,25 +856,86 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
-    public func previousTrack() {
+    public func previousTrack(forcePreviousTrack: Bool = false) {
         let script = """
         (function() {
-            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
-            if (p && typeof p.previousVideo === 'function') {
-                p.previousVideo();
-            } else {
-                var btn = document.querySelector('.previous-button') || 
-                          document.querySelector('#left-controls .previous-button') || 
-                          document.querySelector('ytmusic-player-bar .previous-button') ||
-                          document.querySelector('tp-yt-paper-icon-button.previous-button') ||
-                          document.querySelector('[aria-label*="Previous" i]') ||
-                          document.querySelector('[aria-label*="trước" i]');
-                if (btn) {
-                    btn.click();
-                    var inner = btn.querySelector('button, #button, yt-icon');
-                    if (inner) inner.click();
+            try {
+                var force = \(forcePreviousTrack ? "true" : "false");
+                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                if (force && p && typeof p.previousVideo === 'function') {
+                    p.previousVideo();
+                    if (typeof window.morphSendUpdate === 'function') {
+                        setTimeout(window.morphSendUpdate, 250);
+                    }
+                    return;
                 }
-            }
+                // 1. Primary: Click Previous Button on player bar
+                var btn = document.querySelector('ytmusic-player-bar .previous-button') || 
+                          document.querySelector('#left-controls .previous-button') || 
+                          document.querySelector('.previous-button.ytmusic-player-bar') ||
+                          document.querySelector('tp-yt-paper-icon-button.previous-button') ||
+                          document.querySelector('.previous-button') ||
+                          document.querySelector('ytmusic-player-bar [aria-label*="Previous" i]') ||
+                          document.querySelector('ytmusic-player-bar [aria-label*="trước" i]');
+                var clicked = false;
+                if (btn && !(btn.disabled || btn.getAttribute('aria-disabled') === 'true')) {
+                    btn.click();
+                    clicked = true;
+                }
+
+                // 2. Fallback 1: Native Shift+P KeyboardEvent (Universal YouTube Music shortcut)
+                if (!clicked) {
+                    var shiftP = new KeyboardEvent('keydown', {
+                        key: 'P',
+                        code: 'KeyP',
+                        keyCode: 80,
+                        which: 80,
+                        shiftKey: true,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    window.dispatchEvent(shiftP);
+                    document.dispatchEvent(shiftP);
+                    var playerBar = document.querySelector('ytmusic-player-bar');
+                    if (playerBar) {
+                        playerBar.dispatchEvent(shiftP);
+                    }
+                }
+
+                // 3. Fallback 2: Player API
+                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                if (!clicked && p && typeof p.previousVideo === 'function') {
+                    try { p.previousVideo(); } catch(e) {}
+                }
+
+                // 4. Fallback 3: DOM Queue item fallback
+                if (!clicked) {
+                    var queueItems = document.querySelectorAll('ytmusic-player-queue-item');
+                    if (queueItems && queueItems.length > 1) {
+                        for (var qi = 1; qi < queueItems.length; qi++) {
+                            var item = queueItems[qi];
+                            if (item.hasAttribute('selected') || item.classList.contains('selected') || item.getAttribute('play-state') === 'playing') {
+                                var prevItem = queueItems[qi - 1];
+                                var playTarget = prevItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || prevItem;
+                                playTarget.click();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 5. Ensure video playback
+                var v = document.querySelector('video');
+                if (v && v.paused) {
+                    var wasMuted = v.muted;
+                    v.play().catch(function() {
+                        v.muted = true;
+                        v.play().then(function() {
+                            setTimeout(function() { v.muted = wasMuted; }, 150);
+                        }).catch(function(){});
+                    });
+                }
+            } catch(e) {}
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 350);
             }
@@ -899,13 +1019,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                       document.querySelector('#right-controls .shuffle') || 
                       document.querySelector('.shuffle.ytmusic-player-bar') ||
                       document.querySelector('tp-yt-paper-icon-button.shuffle') ||
-                      document.querySelector('[aria-label*="Shuffle" i]') ||
-                      document.querySelector('[aria-label*="xáo trộn" i]');
+                      document.querySelector('ytmusic-player-bar [aria-label*="Shuffle" i]') ||
+                      document.querySelector('ytmusic-player-bar [aria-label*="xáo trộn" i]');
             if (btn) {
                 btn.click();
-                var inner = btn.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
-                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
+                    var inner = btn.querySelector('button, #button');
+                    if (inner) inner.click();
+                }
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -922,13 +1043,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                       document.querySelector('#right-controls .repeat') || 
                       document.querySelector('.repeat.ytmusic-player-bar') ||
                       document.querySelector('tp-yt-paper-icon-button.repeat') ||
-                      document.querySelector('[aria-label*="Repeat" i]') ||
-                      document.querySelector('[aria-label*="lặp lại" i]');
+                      document.querySelector('ytmusic-player-bar [aria-label*="Repeat" i]') ||
+                      document.querySelector('ytmusic-player-bar [aria-label*="lặp lại" i]');
             if (btn) {
                 btn.click();
-                var inner = btn.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
-                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
+                    var inner = btn.querySelector('button, #button');
+                    if (inner) inner.click();
+                }
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -942,16 +1064,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let script = """
         (function() {
             var btn = document.querySelector('ytmusic-like-button-renderer #like-button') || 
+                      document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer #like-button') ||
                       document.querySelector('ytmusic-like-button-renderer .like') ||
                       document.querySelector('#like-button-renderer yt-icon-button.like') || 
                       document.querySelector('ytmusic-like-button-renderer [aria-label*="Like" i]') ||
                       document.querySelector('ytmusic-like-button-renderer [aria-label*="Thích" i]') ||
-                      document.querySelector('ytmusic-like-button-renderer yt-button-shape:first-child');
+                      document.querySelector('ytmusic-like-button-renderer yt-button-shape:first-child') ||
+                      document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer button');
             if (btn) {
                 btn.click();
-                var inner = btn.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
-                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
+                    var inner = btn.querySelector('button, #button');
+                    if (inner) inner.click();
+                }
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -965,16 +1090,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let script = """
         (function() {
             var btn = document.querySelector('ytmusic-like-button-renderer #dislike-button') || 
+                      document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer #dislike-button') ||
                       document.querySelector('ytmusic-like-button-renderer .dislike') ||
                       document.querySelector('#like-button-renderer yt-icon-button.dislike') || 
                       document.querySelector('ytmusic-like-button-renderer [aria-label*="Dislike" i]') ||
                       document.querySelector('ytmusic-like-button-renderer [aria-label*="Không thích" i]') ||
-                      document.querySelector('ytmusic-like-button-renderer yt-button-shape:last-child');
+                      document.querySelector('ytmusic-like-button-renderer yt-button-shape:last-child') ||
+                      document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer button');
             if (btn) {
                 btn.click();
-                var inner = btn.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
-                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
+                    var inner = btn.querySelector('button, #button');
+                    if (inner) inner.click();
+                }
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 250);
@@ -987,11 +1115,22 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func playQueueIndex(_ index: Int) {
         let script = """
         (function() {
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p && typeof p.playVideoAt === 'function') {
+                try {
+                    p.playVideoAt(\(index));
+                    if (typeof window.morphSendUpdate === 'function') {
+                        setTimeout(window.morphSendUpdate, 250);
+                    }
+                    return;
+                } catch(e) {}
+            }
             var items = document.querySelectorAll('ytmusic-player-queue-item, ytmusic-player-queue #contents ytmusic-player-queue-item');
             if (items && items.length > \(index)) {
                 var target = items[\(index)];
                 var playBtn = target.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || target;
-                playBtn.click();
+                var inner = playBtn.querySelector('button, #button');
+                (inner || playBtn).click();
                 target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             }
             if (typeof window.morphSendUpdate === 'function') {
@@ -1194,6 +1333,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     // MARK: Direct playback by video id
     public func play(videoId: String, listId: String? = nil) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         let vid = videoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !vid.isEmpty else { return }
         
@@ -1215,16 +1355,46 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         (function() {
             var vid = '\(vid)';
             var listId = \(listArg);
+            
+            // 1. Trigger Polymer client-side link navigation so YouTube Music's SPA router,
+            // player bar, queue, and mediaSession update together seamlessly.
+            try {
+                var watchPath = '/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
+                var link = document.createElement('a');
+                link.href = watchPath;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            } catch(eNav) {}
+            
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
-            if (p && typeof p.loadVideoById === 'function') {
+            if (p) {
                 try {
-                    if (listId && listId.length > 0) {
-                        p.loadVideoById({ videoId: vid, list: listId });
-                    } else {
-                        p.loadVideoById(vid);
+                    if (typeof p.loadVideoById === 'function') {
+                        if (listId && listId.length > 0) {
+                            try {
+                                p.loadVideoById({ videoId: vid, list: listId });
+                            } catch(e1) {
+                                p.loadVideoById(vid);
+                            }
+                        } else {
+                            p.loadVideoById(vid);
+                        }
+                    } else if (typeof p.loadVideoByPlayerVars === 'function') {
+                        p.loadVideoByPlayerVars({ videoId: vid, list: listId });
                     }
                     if (typeof p.playVideo === 'function') {
                         p.playVideo();
+                    }
+                    var v = document.querySelector('video');
+                    if (v && v.paused) {
+                        var wasMuted = v.muted;
+                        v.play().catch(function() {
+                            v.muted = true;
+                            v.play().then(function() {
+                                setTimeout(function() { v.muted = wasMuted; }, 150);
+                            }).catch(function(){});
+                        });
                     }
                     if (typeof window.morphSendUpdate === 'function') {
                         setTimeout(window.morphSendUpdate, 250);
@@ -1232,8 +1402,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     return true;
                 } catch(e) {}
             }
-            // Fallback inside the page: navigate via window.location without tearing down WebKit
-            var target = '/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
+            // Fallback inside page: navigate to absolute canonical URL (never relative, which throws SyntaxError in WebKit)
+            var target = 'https://music.youtube.com/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
             window.location.href = target;
             return false;
         })();
@@ -1264,9 +1434,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             if (items && items.length > \(index)) {
                 var target = items[\(index)];
                 var playBtn = target.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || target;
-                playBtn.click();
-                var inner = target.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
+                var inner = playBtn.querySelector('button, #button');
+                (inner || playBtn).click();
                 target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             }
             if (typeof window.morphSendUpdate === 'function') {
@@ -1282,15 +1451,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         (function() {
             var playBtn = document.querySelector('ytmusic-play-button-renderer #button, ytmusic-responsive-header-renderer #play-button, #play-button, tp-yt-paper-button.play-button');
             if (playBtn) {
-                playBtn.click();
-                var inner = playBtn.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
+                var inner = playBtn.querySelector('button, #button');
+                (inner || playBtn).click();
             } else {
                 var firstTrack = document.querySelector('ytmusic-responsive-list-item-renderer');
                 if (firstTrack) {
-                    firstTrack.click();
                     var pBtn = firstTrack.querySelector('#play-button, .play-button');
-                    if (pBtn) pBtn.click();
+                    (pBtn || firstTrack).click();
                 }
             }
             if (typeof window.morphSendUpdate === 'function') {
@@ -1317,9 +1484,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var firstPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-shelf-renderer #play-button, ytmusic-two-row-item-renderer #play-button, ytmusic-play-button-renderer #button');
             if (firstPlay) {
                 clearInterval(checkInterval);
-                firstPlay.click();
-                var inner = firstPlay.querySelector('button, #button, yt-icon');
-                if (inner) inner.click();
+                var inner = firstPlay.querySelector('button, #button');
+                (inner || firstPlay).click();
             }
             if (checkCount > 30) {
                 clearInterval(checkInterval);
@@ -1351,9 +1517,20 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func evaluate(_ js: String) {
+        self.lastEvaluatedScript = js
+        self.onEvaluate?(js)
         webView.evaluateJavaScript(js) { _, error in
             if let error = error {
-                print("[Morph YTM Engine Error]: \(error.localizedDescription)")
+                let nsErr = error as NSError
+                let detail = nsErr.userInfo["WKJavaScriptExceptionMessage"] as? String
+                    ?? nsErr.userInfo["WKJavaScriptExceptionSourceURL"] as? String
+                    ?? error.localizedDescription
+                let line = nsErr.userInfo["WKJavaScriptExceptionLineNumber"] as? Int
+                if let line = line {
+                    print("[Morph YTM Engine Error]: \(detail) (line \(line))")
+                } else {
+                    print("[Morph YTM Engine Error]: \(detail)")
+                }
             }
         }
     }
@@ -1372,7 +1549,213 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
-    // MARK: - Dedicated Web View Window (With Navigation Toolbar)
+    // MARK: - NotchPanel View Hierarchy Attachment (Zero Ghost Windows)
+    
+    /// Attaches the engine's background webView to a hosting view (e.g. Morph's NotchPanel hostingView).
+    /// This establishes webView.window != nil within Morph's actual UI window hierarchy,
+    /// completely eliminating the need for an invisible, ghost NSWindow on the user's desktop screen.
+    public func attachToHostingView(_ containerView: NSView) {
+        if self.webView.superview !== containerView {
+            self.webView.removeFromSuperview()
+            self.webView.frame = NSRect(x: -2000, y: -2000, width: 800, height: 600)
+            self.webView.autoresizingMask = []
+            containerView.addSubview(self.webView)
+        }
+        if !MorphEnvironment.isTestingEnvironment && self.webView.url == nil {
+            loadHome()
+        }
+    }
+    
+    // MARK: - Browser-Based Authentication & Tab Management
+    
+    /// Opens the Google / YouTube Music sign-in page in the user's external web browser.
+    /// Once signed in, the user can close the browser tab, and Morph will wire YouTube Music directly.
+    public func openSignInInBrowser() {
+        let signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
+        guard let url = URL(string: signInURLString) else { return }
+        openInSystemBrowser(url: url)
+    }
+    
+    /// Opens YouTube Music directly in the external web browser.
+    public func openYouTubeMusicInBrowser() {
+        guard let url = URL(string: kYTMURL) else { return }
+        openInSystemBrowser(url: url)
+    }
+    
+    private func openInSystemBrowser(url: URL) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        
+        // Reuse existing browser tab if one is already open to decrease tab clutter
+        if reuseExistingBrowserTabIfPossible(targetURL: url) {
+            return
+        }
+        
+        if let defaultBrowserAppURL = NSWorkspace.shared.urlForApplication(toOpen: url) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = false
+            NSWorkspace.shared.open([url], withApplicationAt: defaultBrowserAppURL, configuration: config, completionHandler: nil)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    @discardableResult
+    private func reuseExistingBrowserTabIfPossible(targetURL: URL) -> Bool {
+        // 1. Google Chrome
+        let chromeScript = """
+        tell application "Google Chrome"
+            repeat with w in windows
+                set tabIndex to 1
+                repeat with t in tabs of w
+                    set theURL to (URL of t as text)
+                    if theURL contains "music.youtube.com" or theURL contains "accounts.google.com" then
+                        set URL of t to "\(targetURL.absoluteString)"
+                        set active tab index of w to tabIndex
+                        set index of w to 1
+                        activate
+                        return true
+                    end if
+                    set tabIndex to tabIndex + 1
+                end repeat
+            end repeat
+            return false
+        end tell
+        """
+        
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: chromeScript) {
+            let output = scriptObject.executeAndReturnError(&error)
+            if error == nil && output.booleanValue {
+                return true
+            }
+        }
+        
+        // 2. Safari
+        let safariScript = """
+        tell application "Safari"
+            repeat with w in windows
+                set tabIndex to 1
+                repeat with t in tabs of w
+                    set theURL to (URL of t as text)
+                    if theURL contains "music.youtube.com" or theURL contains "accounts.google.com" then
+                        set URL of t to "\(targetURL.absoluteString)"
+                        set current tab of w to t
+                        set index of w to 1
+                        activate
+                        return true
+                    end if
+                    set tabIndex to tabIndex + 1
+                end repeat
+            end repeat
+            return false
+        end tell
+        """
+        
+        var safariError: NSDictionary?
+        if let safariScriptObject = NSAppleScript(source: safariScript) {
+            let output = safariScriptObject.executeAndReturnError(&safariError)
+            if safariError == nil && output.booleanValue {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    /// Synchronizes cookies and session state from an active YouTube Music tab in Chrome or Safari,
+    /// injecting them into Morph's WKWebsiteDataStore so the user can close their browser tab
+    /// and control YouTube Music directly from Morph itself.
+    public func syncSessionFromBrowser() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self = self else { return }
+            
+            // Check Google Chrome for music.youtube.com cookies
+            let chromeCookieScript = """
+            tell application "Google Chrome"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if (URL of t) contains "music.youtube.com" then
+                            try
+                                return execute t javascript "document.cookie"
+                            end try
+                        end if
+                    end repeat
+                end repeat
+                return ""
+            end tell
+            """
+            
+            var rawCookies = ""
+            var error: NSDictionary?
+            if let scriptObject = NSAppleScript(source: chromeCookieScript) {
+                let output = scriptObject.executeAndReturnError(&error)
+                if error == nil, let val = output.stringValue, !val.isEmpty {
+                    rawCookies = val
+                }
+            }
+            
+            // Check Safari if Chrome didn't have cookies
+            if rawCookies.isEmpty {
+                let safariCookieScript = """
+                tell application "Safari"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            if (URL of t) contains "music.youtube.com" then
+                                try
+                                    return do JavaScript "document.cookie" in t
+                                end try
+                            end if
+                        end repeat
+                    end repeat
+                    return ""
+                end tell
+                """
+                var safariError: NSDictionary?
+                if let scriptObject = NSAppleScript(source: safariCookieScript) {
+                    let output = scriptObject.executeAndReturnError(&safariError)
+                    if safariError == nil, let val = output.stringValue, !val.isEmpty {
+                        rawCookies = val
+                    }
+                }
+            }
+            
+            guard !rawCookies.isEmpty else { return }
+            
+            // Parse cookies string ("key=value; key2=val2")
+            let cookiePairs = rawCookies.components(separatedBy: ";")
+            let cookieStore = await MainActor.run { WKWebsiteDataStore.default().httpCookieStore }
+            
+            for pair in cookiePairs {
+                let parts = pair.components(separatedBy: "=")
+                guard parts.count >= 2 else { continue }
+                let name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                let value = parts.dropFirst().joined(separator: "=").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !name.isEmpty, !value.isEmpty else { continue }
+                
+                let props: [HTTPCookiePropertyKey: Any] = [
+                    .name: name,
+                    .value: value,
+                    .domain: ".youtube.com",
+                    .path: "/",
+                    .secure: "TRUE"
+                ]
+                if let cookie = HTTPCookie(properties: props) {
+                    await cookieStore.setCookie(cookie)
+                }
+            }
+            
+            await MainActor.run {
+                self.isSignedIn = true
+                self.fetchRealUserPlaylists()
+                // Reload internal webView to apply the newly imported session cookies
+                self.loadHome()
+            }
+        }
+    }
+    
+    // MARK: - On-Demand Dedicated Web View Window (Zero Ghost Windows On Launch)
     @discardableResult
     public func ensurePlayerWindow() -> NSWindow {
         if let win = playerWindow {
@@ -1390,7 +1773,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         win.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
         
         let delegate = PlayerWindowDelegate { [weak self] in
-            self?.isPlayerWindowVisible = false
+            self?.hidePlayerWindow()
         }
         self.windowDelegate = delegate
         win.delegate = delegate
@@ -1413,6 +1796,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         
         win.contentView = container
         win.center()
+        
+        // Zero ghost windows: do NOT order back with alpha = 0.0.
+        // The window stays off-screen until explicitly shown via showPlayerWindow().
+        win.alphaValue = 1.0
+        win.ignoresMouseEvents = false
+        
         self.playerWindow = win
         return win
     }
@@ -1420,13 +1809,21 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func showPlayerWindow() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
         let win = ensurePlayerWindow()
+        win.ignoresMouseEvents = false
+        win.alphaValue = 1.0
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.isPlayerWindowVisible = true
     }
     
     public func hidePlayerWindow() {
-        playerWindow?.orderOut(nil)
+        if let win = playerWindow {
+            win.orderOut(nil)
+            // Re-attach webView back to NotchPanel offscreen so background playback continues seamlessly
+            if let hostingView = MorphController.shared?.hostingView {
+                attachToHostingView(hostingView)
+            }
+        }
         self.isPlayerWindowVisible = false
     }
     
@@ -1841,9 +2238,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     for (var i = 0; i < confirmButtons.length; i++) {
                         var cb = confirmButtons[i];
                         if (cb && (cb.offsetParent !== null || cb.offsetWidth > 0)) {
-                            cb.click();
                             var inner = cb.querySelector('button, #button, yt-button-shape');
-                            if (inner) inner.click();
+                            (inner || cb).click();
                         }
                     }
 
@@ -1874,16 +2270,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         } catch(pe) {}
                     }
                     
-                    var btn = document.querySelector('.next-button') || 
+                    var btn = document.querySelector('ytmusic-player-bar .next-button') || 
                               document.querySelector('#right-controls .next-button') || 
-                              document.querySelector('ytmusic-player-bar .next-button') ||
-                              document.querySelector('tp-yt-paper-icon-button.next-button') ||
-                              document.querySelector('[aria-label*="Next" i]') ||
-                              document.querySelector('[aria-label*="tiếp" i]');
+                              document.querySelector('.next-button') ||
+                              document.querySelector('ytmusic-player-bar [aria-label*="Next" i]') ||
+                              document.querySelector('ytmusic-player-bar [aria-label*="tiếp" i]');
                     if (btn && (!btn.disabled && !btn.hasAttribute('disabled'))) {
-                        btn.click();
-                        var inner = btn.querySelector('button, #button, yt-icon');
-                        if (inner) inner.click();
+                        var inner = btn.querySelector('button, #button');
+                        (inner || btn).click();
                         advanced = true;
                     }
 
@@ -1900,7 +2294,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                         if (nextItem) {
                             var playTarget = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
-                            playTarget.click();
+                            var innerTarget = playTarget.querySelector('button, #button');
+                            (innerTarget || playTarget).click();
                             nextItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                             advanced = true;
                         }
@@ -1910,9 +2305,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     if (!advanced) {
                         var recPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-shelf-renderer #play-button');
                         if (recPlay) {
-                            recPlay.click();
-                            var innerR = recPlay.querySelector('button, #button, yt-icon');
-                            if (innerR) innerR.click();
+                            var innerR = recPlay.querySelector('button, #button');
+                            (innerR || recPlay).click();
                         }
                     }
                 } catch(e) {}
@@ -2123,6 +2517,12 @@ private final class PlayerWindowDelegate: NSObject, NSWindowDelegate {
     
     init(onClose: @escaping () -> Void) {
         self.onClose = onClose
+    }
+    
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Intercept close button (red traffic light / Cmd+W) to keep background audio pipeline alive
+        YouTubeMusicEngine.shared.hidePlayerWindow()
+        return false
     }
     
     func windowWillClose(_ notification: Notification) {

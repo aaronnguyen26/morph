@@ -67,6 +67,8 @@ public final class NotchModel: ObservableObject {
     @Published public var isPinned: Bool = false
     @Published public var selectedTab: MorphTab = .home
     @Published public var activeContextFeature: ContextualFeature? = nil
+    @Published public var latestTabBeforeContextualFeature: MorphTab? = nil
+    @Published public var lastUsedFeatureTab: MorphTab? = nil
     
     // Sub-models for the features
     public let pomodoro: PomodoroModel
@@ -321,6 +323,27 @@ public final class NotchModel: ObservableObject {
         meetingController.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
         
+        // Track the latest feature tab used by the user
+        $selectedTab
+            .sink { [weak self] tab in
+                if tab != .home {
+                    self?.lastUsedFeatureTab = tab
+                }
+            }
+            .store(in: &cancellables)
+            
+        // When a file is taken out of Drop Shelf, context-awarely close the tool and restore context
+        dropShelf.onItemExported = { [weak self] item in
+            self?.closeDropShelfAndRestoreContext()
+        }
+        
+        // When Drop Shelf is emptied (e.g. via xmark or clear), close and restore context
+        dropShelf.onShelfEmptied = { [weak self] in
+            if self?.activeContextFeature == .dropShelf {
+                self?.closeDropShelfAndRestoreContext()
+            }
+        }
+        
         // Sync CalendarModel events into MeetingFlightControllerModel
         meetingController.updateFromCalendar(events: calendar.events)
         calendar.$events
@@ -328,6 +351,24 @@ public final class NotchModel: ObservableObject {
                 self?.meetingController.updateFromCalendar(events: events)
             }
             .store(in: &cancellables)
+        
+        // Hook up GoogleCalendarEngine to direct in-app meeting taking
+        calendar.engine.onOpenMeet = { [weak self] url in
+            guard let self = self else { return false }
+            let started = self.meetingController.engine.startCall(url: url, title: "Meeting Call", scratchpadModel: self.scratchpad)
+            if started {
+                self.meetingController.startCall(title: "Meeting Call")
+            }
+            return started
+        }
+        
+        // Restore context when an in-app meeting call ends
+        meetingController.engine.onCallEnded = { [weak self] in
+            guard let self = self else { return }
+            if self.activeContextFeature == .meetingFlight {
+                self.closeDropShelfAndRestoreContext()
+            }
+        }
         
         pomodoro.$completedSessionsCount
             .dropFirst()
@@ -405,6 +446,9 @@ public final class NotchModel: ObservableObject {
     public func openFeature(_ tab: MorphTab) {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = tab
+            if tab != .home {
+                lastUsedFeatureTab = tab
+            }
             activeContextFeature = nil
             isExpanded = true
         }
@@ -419,6 +463,12 @@ public final class NotchModel: ObservableObject {
     }
     
     public func openContextualFeature(_ feature: ContextualFeature) {
+        if activeContextFeature == nil {
+            latestTabBeforeContextualFeature = selectedTab
+            if selectedTab != .home {
+                lastUsedFeatureTab = selectedTab
+            }
+        }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             activeContextFeature = feature
             isExpanded = true
@@ -426,9 +476,50 @@ public final class NotchModel: ObservableObject {
     }
     
     public func closeContextualFeature() {
+        closeDropShelfAndRestoreContext()
+    }
+    
+    public func closeDropShelfAndRestoreContext() {
         dropShelf.isHeldOpen = false
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+        
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             activeContextFeature = nil
+            
+            // 1. Live Contextual Awareness Priority:
+            if meetingController.isInCall || meetingController.isPreMeetingWindow {
+                activeContextFeature = .meetingFlight
+                return
+            }
+            
+            if media.isPlaying {
+                selectedTab = .music
+                return
+            }
+            
+            if pomodoro.isRunning {
+                selectedTab = .timer
+                return
+            }
+            
+            if isNotePinnedToNotch {
+                selectedTab = .notes
+                return
+            }
+            
+            if calendar.showNotchAlert {
+                selectedTab = .calendar
+                return
+            }
+            
+            // 2. Latest Feature Used / Home Page Check:
+            if let prevTab = latestTabBeforeContextualFeature {
+                selectedTab = prevTab
+            } else if let lastUsed = lastUsedFeatureTab {
+                selectedTab = lastUsed
+            } else {
+                selectedTab = .home
+            }
+            latestTabBeforeContextualFeature = nil
         }
     }
 }

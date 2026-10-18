@@ -13,9 +13,53 @@ public struct CalendarView: View {
     @State private var isSubmittingEvent: Bool = false
     @State private var showNotificationSettings: Bool = false
     @State private var deletingEventID: String? = nil
+    public var meetingController: MeetingFlightControllerModel?
+    public var onTakeCall: ((CalendarEvent) -> Void)?
     
-    public init(calendar: CalendarModel) {
+    public init(
+        calendar: CalendarModel,
+        meetingController: MeetingFlightControllerModel? = nil,
+        onTakeCall: ((CalendarEvent) -> Void)? = nil
+    ) {
         self.calendar = calendar
+        self.meetingController = meetingController
+        self.onTakeCall = onTakeCall
+    }
+    
+    private func resolvedMeetingURL(for event: CalendarEvent) -> URL? {
+        if let link = event.meetLink?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let url = URL(string: link), url.scheme != nil {
+            return url
+        }
+        if let loc = event.location {
+            let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+            let matches = detector?.matches(in: loc, options: [], range: NSRange(location: 0, length: loc.utf16.count))
+            for match in matches ?? [] {
+                if let u = match.url { return u }
+            }
+        }
+        if !event.description.isEmpty {
+            let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+            let matches = detector?.matches(in: event.description, options: [], range: NSRange(location: 0, length: event.description.utf16.count))
+            for match in matches ?? [] {
+                if let u = match.url { return u }
+            }
+        }
+        return nil
+    }
+    
+    private func triggerTakeCall(event: CalendarEvent) {
+        if let onTakeCall = onTakeCall {
+            onTakeCall(event)
+            return
+        }
+        if let controller = meetingController {
+            _ = controller.openMeetLink(event: event, inApp: true)
+            return
+        }
+        if let url = resolvedMeetingURL(for: event) {
+            calendar.engine.openMeet(link: url.absoluteString)
+        }
     }
     
     public var body: some View {
@@ -113,18 +157,23 @@ public struct CalendarView: View {
                     
                     Spacer(minLength: 2)
                     
-                    if let meet = next.meetLink {
-                        Button(action: { calendar.engine.openMeet(link: meet) }) {
-                            Text("Join")
-                                .font(.system(size: 7, weight: .bold))
-                                .foregroundColor(.black)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1.5)
-                                .background(Color.white)
-                                .clipShape(Capsule())
+                    if let callURL = resolvedMeetingURL(for: next) {
+                        let service = MeetingService.detect(url: callURL)
+                        Button(action: { triggerTakeCall(event: next) }) {
+                            HStack(spacing: 2.5) {
+                                Image(systemName: service.iconName)
+                                    .font(.system(size: 6))
+                                Text("Take Call")
+                                    .font(.system(size: 7, weight: .bold))
+                            }
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.white)
+                            .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
-                        .help("Join Google Meet Now")
+                        .help("Take \(service.rawValue) Call in Morph")
                     }
                 }
                 .padding(.horizontal, 7)
@@ -1000,14 +1049,15 @@ public struct CalendarView: View {
                 
                 Spacer()
                 
-                if let meet = event.meetLink {
+                if let callURL = resolvedMeetingURL(for: event) {
+                    let service = MeetingService.detect(url: callURL)
                     Button(action: {
-                        calendar.engine.openMeet(link: meet)
+                        triggerTakeCall(event: event)
                     }) {
                         HStack(spacing: 3) {
-                            Image(systemName: "video.fill")
+                            Image(systemName: service.iconName)
                                 .font(.system(size: 7))
-                            Text("Meet ↗")
+                            Text("Take Call")
                                 .font(.system(size: 8, weight: .bold))
                         }
                         .foregroundColor(.black)
@@ -1017,7 +1067,7 @@ public struct CalendarView: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help("Join Google Meet")
+                    .help("Take \(service.rawValue) call directly in Morph")
                 }
                 
                 // Delete event button / confirmation

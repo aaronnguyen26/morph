@@ -42,6 +42,9 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isSignedIn: Bool = false
     @Published public var selectedPlaylist: YTMPlaylist? = nil
     @Published public var rightDeckSection: YTMRightDeckSection = .home
+    @Published public var previousRightDeckSection: YTMRightDeckSection = .home
+    private var lastPreviousClickTime: Date?
+    private var lastSeekToZeroTime: Date?
     @Published public var isSearchingPlaylists: Bool = false
     @Published public var playlistSearchQuery: String = ""
     @Published public var isSearchingSongs: Bool = false
@@ -72,6 +75,8 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var searchResults: [YTMSearchResult] = []
     @Published public var isSearchingCatalog: Bool = false
     @Published public var catalogSearchError: String? = nil
+    @Published public var isWaitingForBrowserSignIn: Bool = false
+    @Published public var browserAuthStatusMessage: String? = nil
     private var searchTask: Task<Void, Never>?
     private var trackLoadTask: Task<Void, Never>?
     
@@ -153,7 +158,19 @@ public final class MediaControllerModel: ObservableObject {
                     self.artistName = data.artist.isEmpty ? "YouTube Music" : data.artist
                     self.albumArtURL = data.albumArtURL
                     self.isPlaying = data.isPlaying
-                    self.currentTime = data.currentTime
+                    if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.8 {
+                        // In-flight seek-to-zero lockout: protect against stale updates
+                        if data.currentTime > 3.0 && data.title == self.trackTitle {
+                            // ignore stale pre-seek currentTime
+                        } else {
+                            self.currentTime = data.currentTime
+                            if data.currentTime <= 1.0 {
+                                self.lastSeekToZeroTime = nil
+                            }
+                        }
+                    } else {
+                        self.currentTime = data.currentTime
+                    }
                     self.duration = data.duration
                     self.volume = data.volume
                     self.isMuted = data.isMuted
@@ -259,35 +276,29 @@ public final class MediaControllerModel: ObservableObject {
     
     public func play() {
         isPlaying = true
-        if isDirectEngineActive {
+        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
             engine.play()
-        } else if isBrowserConnected {
-            executeBrowserPlay()
-            Self.postSystemMediaKey(key: 16)
         } else {
-            // Kick off playback in direct engine and browser
-            engine.play()
             executeBrowserPlay()
-            Self.postSystemMediaKey(key: 16)
         }
     }
     
     public func pause() {
         isPlaying = false
-        engine.pause()
-        executeBrowserPause()
-        if !isDirectEngineActive && isBrowserConnected {
-            Self.postSystemMediaKey(key: 16)
+        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
+            engine.pause()
+        } else {
+            executeBrowserPause()
         }
     }
     
     public func stop() {
         isPlaying = false
         currentTime = 0
-        engine.stop()
-        executeBrowserStop()
-        if !isDirectEngineActive && isBrowserConnected {
-            Self.postSystemMediaKey(key: 16)
+        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
+            engine.stop()
+        } else {
+            executeBrowserStop()
         }
     }
     
@@ -300,9 +311,15 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func nextTrack() {
+        if isDirectEngineActive {
+            engine.nextTrack()
+            return
+        }
+        
         // Continuous Playback: If we have an active playlist or queue, advance to next track
         if let sel = selectedPlaylist, !sel.tracks.isEmpty {
-            if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying }) {
+            let activeId = activeTrackId(in: sel.tracks)
+            if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
                 let nextIdx = currentIdx + 1
                 if nextIdx < sel.tracks.count {
                     let nextItem = sel.tracks[nextIdx]
@@ -316,7 +333,8 @@ public final class MediaControllerModel: ObservableObject {
                 }
             }
         } else if !playlist.isEmpty {
-            if let currentIdx = playlist.firstIndex(where: { $0.isPlaying }) {
+            let activeId = activeTrackId(in: playlist)
+            if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
                 let nextIdx = currentIdx + 1
                 if nextIdx < playlist.count {
                     let nextItem = playlist[nextIdx]
@@ -330,28 +348,80 @@ public final class MediaControllerModel: ObservableObject {
             }
         }
 
-        if isDirectEngineActive {
+        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
             engine.nextTrack()
-        } else if isBrowserConnected {
-            executeBrowserNextTrack()
-            Self.postSystemMediaKey(key: 19)
         } else {
-            engine.nextTrack()
             executeBrowserNextTrack()
-            Self.postSystemMediaKey(key: 19)
         }
     }
     
     public func previousTrack() {
-        if isDirectEngineActive {
-            engine.previousTrack()
-        } else if isBrowserConnected {
-            executeBrowserPreviousTrack()
-            Self.postSystemMediaKey(key: 20)
+        let now = Date()
+        let isRapidClick = (lastPreviousClickTime != nil && now.timeIntervalSince(lastPreviousClickTime!) < 2.0)
+        lastPreviousClickTime = now
+        
+        // If track has been playing for more than 3 seconds and this is not an intentional double-click skip, restart current track
+        if !isRapidClick && currentTime > 3.0 {
+            currentTime = 0.0
+            lastSeekToZeroTime = now
+            seek(to: 0.0)
+            return
+        }
+        
+        // Continuous Playback / Direct Queue Backward Advance:
+        if let sel = selectedPlaylist, !sel.tracks.isEmpty {
+            let activeId = activeTrackId(in: sel.tracks)
+            if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
+                let prevIdx = currentIdx - 1
+                if prevIdx >= 0 {
+                    let prevItem = sel.tracks[prevIdx]
+                    playSongInSelectedPlaylist(prevItem)
+                    return
+                } else if repeatMode == .all {
+                    let lastItem = sel.tracks[sel.tracks.count - 1]
+                    playSongInSelectedPlaylist(lastItem)
+                    return
+                }
+            }
+        } else if !playlist.isEmpty {
+            let activeId = activeTrackId(in: playlist)
+            if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
+                let prevIdx = currentIdx - 1
+                if prevIdx >= 0 {
+                    let prevItem = playlist[prevIdx]
+                    markPlaying(prevItem)
+                    if isDirectEngineActive {
+                        if let qIdx = Int(prevItem.id) {
+                            engine.playQueueIndex(qIdx)
+                        } else {
+                            engine.playQueueIndex(prevIdx)
+                        }
+                    } else {
+                        playQueueTrack(prevItem)
+                    }
+                    return
+                } else if repeatMode == .all {
+                    let lastIdx = playlist.count - 1
+                    let lastItem = playlist[lastIdx]
+                    markPlaying(lastItem)
+                    if isDirectEngineActive {
+                        if let qIdx = Int(lastItem.id) {
+                            engine.playQueueIndex(qIdx)
+                        } else {
+                            engine.playQueueIndex(lastIdx)
+                        }
+                    } else {
+                        playQueueTrack(lastItem)
+                    }
+                    return
+                }
+            }
+        }
+
+        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
+            engine.previousTrack(forcePreviousTrack: isRapidClick || currentTime <= 3.0)
         } else {
-            engine.previousTrack()
             executeBrowserPreviousTrack()
-            Self.postSystemMediaKey(key: 20)
             currentTime = 0
         }
     }
@@ -441,6 +511,7 @@ public final class MediaControllerModel: ObservableObject {
             if !existingActive.artist.isEmpty {
                 artistName = existingActive.artist
             }
+            isPlaying = true
         }
         
         selectedPlaylist = p
@@ -505,6 +576,11 @@ public final class MediaControllerModel: ObservableObject {
         selectedPlaylist = nil
         isSearchingSongs = false
         songSearchQuery = ""
+        if rightDeckSection == .queue {
+            rightDeckSection = (previousRightDeckSection == .queue) ? .home : previousRightDeckSection
+        } else {
+            rightDeckSection = .playlists
+        }
     }
     
     public func openPlaylistsSection() {
@@ -518,7 +594,16 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func openQueueSection() {
+        if rightDeckSection != .queue {
+            previousRightDeckSection = rightDeckSection
+        }
+        selectedPlaylist = nowPlayingQueuePlaylist
         rightDeckSection = .queue
+    }
+    
+    public func backFromQueue() {
+        selectedPlaylist = nil
+        rightDeckSection = (previousRightDeckSection == .queue) ? .home : previousRightDeckSection
     }
     
     public func openHubHome() {
@@ -544,6 +629,9 @@ public final class MediaControllerModel: ObservableObject {
         }
         currentTime = 0
         isPlaying = true
+        for i in 0..<playlist.count {
+            playlist[i].isPlaying = (playlist[i].id == item.id || (playlist[i].title == item.title && playlist[i].artist == item.artist))
+        }
         syncPlayingTrackWithPlaylists()
     }
     
@@ -585,9 +673,11 @@ public final class MediaControllerModel: ObservableObject {
         let currentTitleClean = Self.normalizeTitle(trackTitle)
         let currentArtistClean = artistName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
-        // Active queue item videoId (if available)
+        // Active queue item videoId (if available and matching current trackTitle)
         let activeQueueVideoId: String? = {
-            if let qItem = playlist.first(where: { $0.isPlaying }), let vid = qItem.videoId, !vid.isEmpty {
+            if let qItem = playlist.first(where: { $0.isPlaying }),
+               let vid = qItem.videoId, !vid.isEmpty,
+               (currentTitleClean.isEmpty || Self.normalizeTitle(qItem.title) == currentTitleClean) {
                 return vid
             }
             return nil
@@ -699,12 +789,16 @@ public final class MediaControllerModel: ObservableObject {
     public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
         markPlaying(item)
         
-        if selectedPlaylist?.id == "pl_queue" {
-            // Live queue: item.id holds the exact DOM queue index string from extraction
+        if selectedPlaylist?.id == "pl_queue" || rightDeckSection == .queue {
+            // Live queue: play by exact queue index or fallback to direct videoId
             if let idx = Int(item.id) {
                 engine.playQueueIndex(idx)
-            } else if let matchIdx = selectedPlaylist?.tracks.firstIndex(where: { $0.id == item.id }) {
+            } else if let matchIdx = effectivePlaylist.firstIndex(where: { $0.id == item.id }) {
                 engine.playQueueIndex(matchIdx)
+            } else if let matchIdx = playlist.firstIndex(where: { $0.id == item.id || ($0.title == item.title && $0.artist == item.artist) }) {
+                engine.playQueueIndex(matchIdx)
+            } else if let vid = item.videoId, !vid.isEmpty {
+                engine.play(videoId: vid)
             } else {
                 playSearch("\(item.title) \(item.artist)")
             }
@@ -872,8 +966,36 @@ public final class MediaControllerModel: ObservableObject {
         engine.toggleRepeat()
     }
     
+    // MARK: - Browser-Based Authentication & Tab Management
+    public func openSignIn() {
+        isWaitingForBrowserSignIn = true
+        browserAuthStatusMessage = "Opened YouTube Music sign-in tab in your browser. Once signed in, you can close that tab and play directly from Morph."
+        engine.openSignInInBrowser()
+    }
+    
+    public func openInBrowser() {
+        engine.openYouTubeMusicInBrowser()
+    }
+    
+    public func syncSessionFromBrowser() {
+        browserAuthStatusMessage = "Syncing session from browser tab..."
+        engine.syncSessionFromBrowser()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+            if self?.engine.isSignedIn == true {
+                self?.browserAuthStatusMessage = "Connected! You can now close your browser tab."
+                self?.isWaitingForBrowserSignIn = false
+            } else {
+                self?.browserAuthStatusMessage = "No active session detected. Please sign in via the browser tab first."
+            }
+        }
+    }
+    
     public func openPlayerWindow() {
-        engine.showPlayerWindow()
+        if !isSignedIn {
+            openSignIn()
+        } else {
+            openInBrowser()
+        }
     }
     
     // MARK: - Ambient Visualizer
@@ -896,12 +1018,12 @@ public final class MediaControllerModel: ObservableObject {
     
     // MARK: - Fallback Browser AppleScript Bridge (When external browser is used)
     private func startBrowserPolling() {
-        browserPollTimer = Timer.publish(every: 3.5, on: .main, in: .common)
+        browserPollTimer = Timer.publish(every: 8.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task {
-                    // Only poll external browser if direct engine is idle
-                    if let self = self, !self.engine.trackData.isPlaying {
+                    // Only poll external browser if direct engine is idle and not connected
+                    if let self = self, !self.isTestingEnvironment, !self.engine.trackData.isPlaying, !self.isDirectEngineConnected {
                         await self.pollBrowserState()
                     }
                 }

@@ -82,13 +82,18 @@ public final class DropShelfModel: ObservableObject {
     @Published public var activeDraggedItem: DropShelfItem? = nil
     @Published public var lastActionMessage: String?
     
-    // Hold Mode Options
     @Published public var holdShelfOnDrop: Bool
     @Published public var holdFilesAfterDrag: Bool
     @Published public var isHeldOpen: Bool = false
     
+    // Callbacks for NotchModel context synchronization
+    public var onItemExported: ((DropShelfItem) -> Void)?
+    public var onItemRemoved: ((DropShelfItem) -> Void)?
+    public var onShelfEmptied: (() -> Void)?
+    
     private var globalMouseUpMonitor: Any?
     private var localMouseUpMonitor: Any?
+    private var dragPollingTask: Task<Void, Never>?
     private var dragTimeoutTask: Task<Void, Never>?
     
     private static let holdShelfKey = "com.morph.dropshelf.holdShelfOnDrop"
@@ -113,8 +118,8 @@ public final class DropShelfModel: ObservableObject {
     ) {
         self.stagedItems = items
         let defaults = UserDefaults.standard
-        self.holdShelfOnDrop = holdShelfOnDrop ?? (defaults.object(forKey: Self.holdShelfKey) as? Bool ?? true)
-        self.holdFilesAfterDrag = holdFilesAfterDrag ?? (defaults.object(forKey: Self.holdFilesKey) as? Bool ?? true)
+        self.holdShelfOnDrop = holdShelfOnDrop ?? (defaults.object(forKey: Self.holdShelfKey) as? Bool ?? false)
+        self.holdFilesAfterDrag = holdFilesAfterDrag ?? (defaults.object(forKey: Self.holdFilesKey) as? Bool ?? false)
     }
     
     public func toggleHoldMode() {
@@ -171,26 +176,34 @@ public final class DropShelfModel: ObservableObject {
     }
     
     public func removeItem(id: UUID) {
+        let removed = stagedItems.first(where: { $0.id == id })
         stagedItems.removeAll { $0.id == id }
         if stagedItems.isEmpty {
             isHeldOpen = false
             lastActionMessage = "Shelf cleared"
+            onShelfEmptied?()
+        }
+        if let r = removed {
+            onItemRemoved?(r)
         }
     }
     
     public func removeItem(at index: Int) {
         guard stagedItems.indices.contains(index) else { return }
-        stagedItems.remove(at: index)
+        let removed = stagedItems.remove(at: index)
         if stagedItems.isEmpty {
             isHeldOpen = false
             lastActionMessage = "Shelf cleared"
+            onShelfEmptied?()
         }
+        onItemRemoved?(removed)
     }
     
     public func clearAll() {
         stagedItems.removeAll()
         isHeldOpen = false
         lastActionMessage = "Shelf cleared"
+        onShelfEmptied?()
     }
     
     public func revealInFinder(item: DropShelfItem) {
@@ -234,12 +247,21 @@ public final class DropShelfModel: ObservableObject {
     public func endDragOut(successful: Bool = true) {
         guard isDraggingOut else { return }
         self.isDraggingOut = false
+        dragPollingTask?.cancel()
+        dragPollingTask = nil
+        
         if let item = activeDraggedItem {
-            if successful && !holdFilesAfterDrag {
-                removeItem(id: item.id)
-                self.lastActionMessage = "Exported: \(item.name)"
+            if successful {
+                if !holdFilesAfterDrag {
+                    removeItem(id: item.id)
+                    self.lastActionMessage = "Exported: \(item.name)"
+                } else {
+                    self.lastActionMessage = "Exported: \(item.name) (Held)"
+                }
+                self.isHeldOpen = false
+                onItemExported?(item)
             } else {
-                self.lastActionMessage = successful ? "Exported: \(item.name) (Held)" : "Cancelled drag"
+                self.lastActionMessage = "Cancelled drag"
             }
         }
         self.activeDraggedItem = nil
@@ -251,15 +273,30 @@ public final class DropShelfModel: ObservableObject {
         
         globalMouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.endDragOut()
+                self?.endDragOut(successful: true)
             }
         }
         
         localMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
             Task { @MainActor [weak self] in
-                self?.endDragOut()
+                self?.endDragOut(successful: true)
             }
             return event
+        }
+        
+        // Fast polling task to detect mouse button release anywhere across macOS
+        dragPollingTask = Task { [weak self] in
+            // Brief 80ms delay for the drag session to establish
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                if NSEvent.pressedMouseButtons & 1 == 0 {
+                    await MainActor.run {
+                        self?.endDragOut(successful: true)
+                    }
+                    break
+                }
+            }
         }
         
         // 15-second safety timer in case drag terminates without mouse-up event delivery
@@ -267,7 +304,7 @@ public final class DropShelfModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 15_000_000_000)
             if !Task.isCancelled {
                 await MainActor.run {
-                    self?.endDragOut()
+                    self?.endDragOut(successful: true)
                 }
             }
         }
@@ -282,6 +319,8 @@ public final class DropShelfModel: ObservableObject {
             NSEvent.removeMonitor(l)
             localMouseUpMonitor = nil
         }
+        dragPollingTask?.cancel()
+        dragPollingTask = nil
         dragTimeoutTask?.cancel()
         dragTimeoutTask = nil
     }

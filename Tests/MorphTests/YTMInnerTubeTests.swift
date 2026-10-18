@@ -476,4 +476,228 @@ final class YTMInnerTubeTests: XCTestCase {
         XCTAssertEqual(playingTracks.count, 1, "Exactly one track must be playing after auto-advance")
         XCTAssertEqual(playingTracks.first?.id, "s2")
     }
+    
+    // MARK: - Seamless Background Playback & Decoupling Tests (Zero Ghost Windows)
+    
+    @MainActor
+    func testZeroGhostWindowsOnLaunchAndHostingAttachment() {
+        let engine = YouTubeMusicEngine()
+        
+        // 1. Verify that on initialization, NO window is created or ordered back in the background
+        XCTAssertFalse(engine.isPlayerWindowVisible)
+        
+        // 2. Verify attachToHostingView attaches webView directly into Morph's UI view hierarchy
+        let mockContainer = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let hostWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
+        hostWindow.contentView = mockContainer
+        
+        engine.attachToHostingView(mockContainer)
+        XCTAssertEqual(engine.webView.superview, mockContainer)
+        XCTAssertEqual(engine.webView.window, hostWindow, "WKWebView must share Morph's active window hierarchy without creating separate ghost windows")
+    }
+    
+    @MainActor
+    func testPlayerWindowLifecycleAndBackgroundAudioPreservation() {
+        let engine = YouTubeMusicEngine()
+        let win = engine.ensurePlayerWindow()
+        
+        // Window is standard opacity when explicitly created, never an invisible 0.0 alpha ghost window
+        XCTAssertEqual(win.alphaValue, 1.0)
+        XCTAssertFalse(win.ignoresMouseEvents)
+        XCTAssertFalse(engine.isPlayerWindowVisible)
+        
+        // Simulating window close intercept
+        guard let delegate = win.delegate else {
+            XCTFail("Player window must have a delegate")
+            return
+        }
+        let shouldClose = delegate.windowShouldClose?(win) ?? true
+        XCTAssertFalse(shouldClose, "windowShouldClose intercepts close to cleanly orderOut and restore background hosting")
+        XCTAssertFalse(engine.isPlayerWindowVisible)
+    }
+    
+    @MainActor
+    func testBrowserSignInFlowAndSessionWiring() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        XCTAssertFalse(media.isWaitingForBrowserSignIn)
+        XCTAssertNil(media.browserAuthStatusMessage)
+        
+        // User clicks Sign In
+        media.openSignIn()
+        XCTAssertTrue(media.isWaitingForBrowserSignIn)
+        XCTAssertNotNil(media.browserAuthStatusMessage)
+        XCTAssertTrue(media.browserAuthStatusMessage?.contains("browser") == true)
+        
+        // User triggers session sync
+        media.syncSessionFromBrowser()
+        XCTAssertNotNil(media.browserAuthStatusMessage)
+        
+        // Browser tab can now be closed, and direct engine remains active and playable
+        media.isDirectEngineConnected = true
+        media.play()
+        XCTAssertTrue(media.isPlaying)
+    }
+    
+    @MainActor
+    func testMediaControllerPlaybackDirectEngineControl() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // Mark direct engine connected
+        media.isDirectEngineConnected = true
+        
+        media.play()
+        XCTAssertTrue(media.isPlaying)
+        
+        media.pause()
+        XCTAssertFalse(media.isPlaying)
+        
+        media.togglePlay()
+        XCTAssertTrue(media.isPlaying)
+        
+        media.stop()
+        XCTAssertFalse(media.isPlaying)
+        XCTAssertEqual(media.currentTime, 0)
+    }
+    
+    @MainActor
+    func testEngineDirectPlaybackCommandsExecution() {
+        let engine = YouTubeMusicEngine()
+        
+        // Verify all direct control methods execute without error
+        engine.play()
+        engine.pause()
+        engine.stop()
+        engine.nextTrack()
+        engine.previousTrack()
+        engine.toggleShuffle()
+        engine.toggleRepeat()
+        engine.toggleLike()
+        engine.toggleDislike()
+        engine.playQueueIndex(0)
+        engine.play(videoId: "dQw4w9WgXcQ", listId: "VLPLtest")
+        
+        XCTAssertNotNil(engine.webView)
+    }
+    
+    @MainActor
+    func testAllLeftDeckPlayerButtonsAndControls() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        media.isDirectEngineConnected = true
+        
+        // 1. Play / Pause Button
+        media.isPlaying = false
+        media.togglePlay()
+        XCTAssertTrue(media.isPlaying)
+        media.togglePlay()
+        XCTAssertFalse(media.isPlaying)
+        
+        // 2. Shuffle Button
+        XCTAssertFalse(media.isShuffle)
+        media.toggleShuffle()
+        XCTAssertTrue(media.isShuffle)
+        media.toggleShuffle()
+        XCTAssertFalse(media.isShuffle)
+        
+        // 3. Repeat Mode Button (cycles off -> all -> one -> off)
+        XCTAssertEqual(media.repeatMode, .off)
+        media.toggleRepeat()
+        XCTAssertEqual(media.repeatMode, .all)
+        media.toggleRepeat()
+        XCTAssertEqual(media.repeatMode, .one)
+        media.toggleRepeat()
+        XCTAssertEqual(media.repeatMode, .off)
+        
+        // 4. Like & Dislike Buttons (mutually exclusive)
+        XCTAssertFalse(media.isLiked)
+        XCTAssertFalse(media.isDisliked)
+        
+        media.toggleLike()
+        XCTAssertTrue(media.isLiked)
+        XCTAssertFalse(media.isDisliked)
+        
+        // Disliking while liked should clear liked
+        media.toggleDislike()
+        XCTAssertFalse(media.isLiked)
+        XCTAssertTrue(media.isDisliked)
+        
+        // Disliking again toggles off
+        media.toggleDislike()
+        XCTAssertFalse(media.isLiked)
+        XCTAssertFalse(media.isDisliked)
+        
+        // 5. Stop Button
+        media.isPlaying = true
+        media.currentTime = 45.0
+        media.stop()
+        XCTAssertFalse(media.isPlaying)
+        XCTAssertEqual(media.currentTime, 0.0)
+        
+        // 6. Mute Toggle & Volume Slider
+        media.volume = 0.8
+        media.isMuted = false
+        media.toggleMute()
+        XCTAssertTrue(media.isMuted)
+        XCTAssertTrue(media.showVolumeHUD)
+        
+        // Setting positive volume automatically unmutes
+        media.setVolume(0.5)
+        XCTAssertFalse(media.isMuted)
+        XCTAssertEqual(media.volume, 0.5, accuracy: 0.01)
+        
+        // Clamping bounds
+        media.setVolume(1.5)
+        XCTAssertEqual(media.volume, 1.0)
+        media.setVolume(-0.5)
+        XCTAssertEqual(media.volume, 0.0)
+        
+        // 7. Timeline Scrubber Seek
+        media.duration = 200.0
+        media.seek(to: 0.25)
+        XCTAssertEqual(media.currentTime, 50.0, accuracy: 0.01)
+        XCTAssertEqual(media.progress, 0.25, accuracy: 0.01)
+        
+        media.seek(to: 1.5) // Clamps to 1.0
+        XCTAssertEqual(media.currentTime, 200.0, accuracy: 0.01)
+        
+        // 8. Next Track & Previous Track in Active Playlist
+        let item1 = YTMPlaylistItem(id: "1", title: "Song One", artist: "Artist", isPlaying: true, videoId: "v1")
+        let item2 = YTMPlaylistItem(id: "2", title: "Song Two", artist: "Artist", isPlaying: false, videoId: "v2")
+        let item3 = YTMPlaylistItem(id: "3", title: "Song Three", artist: "Artist", isPlaying: false, videoId: "v3")
+        let testPl = YTMPlaylist(id: "pl_test", title: "Test Playlist", subtitle: "Test", thumbnailURL: nil, trackCount: 3, tracks: [item1, item2, item3], browseId: nil)
+        
+        media.selectPlaylist(testPl)
+        XCTAssertEqual(media.selectedPlaylist?.tracks[0].isPlaying, true)
+        
+        // Skip Next Track
+        media.nextTrack()
+        XCTAssertEqual(media.trackTitle, "Song Two")
+        XCTAssertEqual(media.selectedPlaylist?.tracks[1].isPlaying, true)
+        XCTAssertEqual(media.selectedPlaylist?.tracks[0].isPlaying, false)
+        
+        // Skip Next Track again
+        media.nextTrack()
+        XCTAssertEqual(media.trackTitle, "Song Three")
+        XCTAssertEqual(media.selectedPlaylist?.tracks[2].isPlaying, true)
+        
+        // Previous Track when song has played > 3 seconds restarts the current song
+        media.currentTime = 10.0
+        media.previousTrack()
+        XCTAssertEqual(media.currentTime, 0.0)
+        XCTAssertEqual(media.trackTitle, "Song Three")
+        
+        // Previous Track when song is at <= 3 seconds skips to previous song
+        media.currentTime = 1.0
+        media.previousTrack()
+        XCTAssertEqual(media.trackTitle, "Song Two")
+        XCTAssertEqual(media.selectedPlaylist?.tracks[1].isPlaying, true)
+        
+        // 9. Web View Button (openPlayerWindow)
+        media.openPlayerWindow()
+        // Must execute cleanly without error
+    }
 }
+

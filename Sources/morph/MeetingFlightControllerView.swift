@@ -15,9 +15,9 @@ public struct MeetingFlightControllerView: View {
             // Header Bar
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
-                    Image(systemName: controller.isInCall ? "video.fill" : "video.badge.waveform.fill")
+                    Image(systemName: controller.isInCall ? controller.activeService.iconName : "video.badge.waveform.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(controller.isInCall ? .green : .cyan)
+                        .foregroundColor(controller.isInCall ? controller.activeService.badgeColor : .cyan)
                     
                     Text("Meeting Flight Controller")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -28,13 +28,13 @@ public struct MeetingFlightControllerView: View {
                             Circle()
                                 .fill(Color.green)
                                 .frame(width: 6, height: 6)
-                            Text("LIVE")
+                            Text(controller.activeService.rawValue.uppercased())
                                 .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                                .foregroundColor(.green)
+                                .foregroundColor(controller.activeService.badgeColor)
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.green.opacity(0.15))
+                        .background(Color.white.opacity(0.10))
                         .clipShape(Capsule())
                     } else if controller.isPreMeetingWindow {
                         Text("PRE-FLIGHT")
@@ -85,10 +85,16 @@ public struct MeetingFlightControllerView: View {
             // Left Pane: Call Telemetry & Controls
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(controller.activeCallTitle ?? "Active Meeting")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Image(systemName: controller.activeService.iconName)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(controller.activeService.badgeColor)
+                        
+                        Text(controller.activeCallTitle ?? "Active Meeting")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
                     
                     HStack(spacing: 6) {
                         Text(controller.formattedCallDuration)
@@ -103,25 +109,47 @@ public struct MeetingFlightControllerView: View {
                 
                 Spacer(minLength: 0)
                 
-                // Mute and End Call Controls
-                HStack(spacing: 8) {
+                // Call Management Controls
+                HStack(spacing: 7) {
+                    // Mute Toggle
                     Button(action: {
                         controller.toggleMute()
                     }) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 4) {
                             Image(systemName: controller.isMuted ? "mic.slash.fill" : "mic.fill")
                                 .font(.system(size: 9.5, weight: .bold))
                             Text(controller.isMuted ? "Unmute" : "Mute")
                                 .font(.system(size: 10, weight: .bold))
                         }
                         .foregroundColor(controller.isMuted ? .white : .black)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 5)
                         .background(controller.isMuted ? Color.red.opacity(0.85) : Color.white)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .help("Mute / Unmute Microphone")
                     
+                    // Show In-App Meeting Window Stage
+                    Button(action: {
+                        controller.engine.showMeetingWindow(scratchpadModel: model.scratchpad)
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "macwindow")
+                                .font(.system(size: 9))
+                            Text("Stage")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show Floating Meeting Window")
+                    
+                    // Direct End Call
                     Button(action: {
                         controller.endCall()
                     }) {
@@ -131,13 +159,14 @@ public struct MeetingFlightControllerView: View {
                             Text("End Call")
                                 .font(.system(size: 10, weight: .semibold))
                         }
-                        .foregroundColor(Color.white.opacity(0.85))
-                        .padding(.horizontal, 10)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.12))
+                        .background(Color.red.opacity(0.85))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .help("Hang up and close call window")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -228,6 +257,12 @@ public struct MeetingFlightControllerView: View {
     // MARK: - 2. Pre-Meeting Readiness View
     private func preMeetingReadinessView(event: CalendarEvent) -> some View {
         let minutesUntil = Int(ceil(max(0, event.startTime.timeIntervalSince(Date())) / 60))
+        let detectedService: MeetingService = {
+            if let url = controller.resolvedMeetingURL(for: event) {
+                return MeetingService.detect(url: url)
+            }
+            return .genericWeb
+        }()
         
         return HStack(spacing: 12) {
             // Meeting Info Card
@@ -241,11 +276,18 @@ public struct MeetingFlightControllerView: View {
                         .background(Color.white)
                         .clipShape(Capsule())
                     
-                    if let link = controller.resolvedMeetingURL(for: event) {
-                        Text(link.host ?? "Online Meeting")
-                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.6))
+                    HStack(spacing: 3.5) {
+                        Image(systemName: detectedService.iconName)
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundColor(detectedService.badgeColor)
+                        Text(detectedService.rawValue)
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.85))
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
                 }
                 
                 Text(event.title)
@@ -273,19 +315,21 @@ public struct MeetingFlightControllerView: View {
             )
             
             // 1-Click Launch Button Card
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
+                // Primary In-Morph Call Button
                 Button(action: {
-                    _ = controller.openMeetLink(event: event)
+                    _ = controller.openMeetLink(event: event, inApp: true, scratchpad: model.scratchpad)
                 }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "video.fill")
-                            .font(.system(size: 12, weight: .bold))
-                        Text("Join Meet")
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    HStack(spacing: 5) {
+                        Image(systemName: detectedService.iconName)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.black)
+                        Text("Take Call")
+                            .font(.system(size: 12.5, weight: .heavy, design: .rounded))
                     }
                     .foregroundColor(.black)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                     .background(
                         LinearGradient(
                             colors: [Color.white, Color(white: 0.9)],
@@ -294,21 +338,26 @@ public struct MeetingFlightControllerView: View {
                         )
                     )
                     .clipShape(Capsule())
-                    .shadow(color: Color.white.opacity(0.3), radius: 8)
+                    .shadow(color: Color.white.opacity(0.25), radius: 6)
                 }
                 .buttonStyle(.plain)
-                .help("Launch meeting video link")
+                .help("Take call directly in Morph with Zoom/Meet stage")
                 
+                // Secondary External Browser Fallback
                 Button(action: {
-                    controller.startCall(title: event.title)
+                    _ = controller.openMeetLink(event: event, inApp: false)
                 }) {
-                    Text("Start Call Timer")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.75))
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 7))
+                        Text("Open in Browser")
+                            .font(.system(size: 9, weight: .medium))
+                    }
+                    .foregroundColor(Color.white.opacity(0.6))
                 }
                 .buttonStyle(.plain)
             }
-            .frame(width: 160)
+            .frame(width: 150)
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -329,28 +378,52 @@ public struct MeetingFlightControllerView: View {
                 Text("No Calls in Progress")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
-                Text("Flight controller automatically monitors upcoming video syncs and native meeting apps.")
+                Text("Morph integrates Zoom & Google Meet directly into the island with live duration and notes.")
                     .font(.system(size: 10, weight: .regular))
                     .foregroundColor(Color.white.opacity(0.5))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             
-            Button(action: {
-                controller.startCall(title: "Ad-hoc Meeting")
-            }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("Start Meeting")
-                        .font(.system(size: 10.5, weight: .bold))
+            // Instant Meeting Triggers
+            HStack(spacing: 6) {
+                Button(action: {
+                    controller.startInstantCall(service: .googleMeet, scratchpad: model.scratchpad)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.green)
+                        Text("Google Meet")
+                            .font(.system(size: 9.5, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
                 }
-                .foregroundColor(.black)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Color.white)
-                .clipShape(Capsule())
+                .buttonStyle(.plain)
+                .help("Start instant Google Meet in Morph")
+                
+                Button(action: {
+                    controller.startInstantCall(service: .zoom, scratchpad: model.scratchpad)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.bubble.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.blue)
+                        Text("Zoom")
+                            .font(.system(size: 9.5, weight: .bold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Start instant Zoom meeting in Morph")
             }
-            .buttonStyle(.plain)
         }
         .padding(12)
         .background(
@@ -390,16 +463,23 @@ public struct CompactMeetingWingLeft: View {
                     Circle()
                         .fill(Color.green)
                         .frame(width: 6, height: 6)
-                    Image(systemName: "video.fill")
+                    Image(systemName: controller.activeService.iconName)
                         .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(.green)
+                        .foregroundColor(controller.activeService.badgeColor)
                     Text(controller.formattedCallDuration)
                         .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                         .foregroundColor(.white)
                 } else if let upcoming = controller.upcomingMeeting {
-                    Image(systemName: "video.badge.waveform.fill")
+                    let svc: MeetingService = {
+                        if let url = controller.resolvedMeetingURL(for: upcoming) {
+                            return MeetingService.detect(url: url)
+                        }
+                        return .genericWeb
+                    }()
+                    
+                    Image(systemName: svc.iconName)
                         .font(.system(size: 9.5, weight: .bold))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(svc.badgeColor)
                     
                     let mins = Int(ceil(max(0, upcoming.startTime.timeIntervalSince(Date())) / 60))
                     Text(mins == 0 ? "Call now" : "In \(mins)m")
@@ -433,6 +513,7 @@ public struct CompactMeetingWingRight: View {
     public var body: some View {
         HStack(spacing: 5) {
             if controller.isInCall {
+                // Mic Mute Toggle
                 Button(action: {
                     controller.toggleMute()
                 }) {
@@ -444,15 +525,29 @@ public struct CompactMeetingWingRight: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help(controller.isMuted ? "Unmute Microphone" : "Mute Microphone")
+                .help(controller.isMuted ? "Unmute Microphone (⌥Space)" : "Mute Microphone (⌥Space)")
+                
+                // Red End Call Button
+                Button(action: {
+                    controller.endCall()
+                }) {
+                    Image(systemName: "phone.down.fill")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Color.red.opacity(0.85))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Leave Call & Close (⌘⇧E)")
             } else if let upcoming = controller.upcomingMeeting {
                 Button(action: {
-                    _ = controller.openMeetLink(event: upcoming)
+                    _ = controller.openMeetLink(event: upcoming, inApp: true, scratchpad: model.scratchpad)
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "video.fill")
                             .font(.system(size: 7))
-                        Text("Join")
+                        Text("Take Call")
                             .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                     }
                     .foregroundColor(.black)
@@ -462,7 +557,7 @@ public struct CompactMeetingWingRight: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("1-Click Join Meeting")
+                .help("Take call directly in Morph")
             }
             
             Button(action: {

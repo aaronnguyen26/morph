@@ -43,9 +43,11 @@ public final class MeetingFlightControllerModel: ObservableObject {
     @Published public var isMuted: Bool = false
     @Published public var quickNotes: String = ""
     @Published public var detectedAppName: String?
+    @Published public var activeService: MeetingService = .genericWeb
     
     public var detector: MeetingAppDetector
     public var urlOpener: ((URL) -> Bool)?
+    public let engine: InAppMeetingEngine
     
     private var timerCancellable: AnyCancellable?
     private var scanCancellable: AnyCancellable?
@@ -57,14 +59,60 @@ public final class MeetingFlightControllerModel: ObservableObject {
     
     public init(
         detector: MeetingAppDetector = DefaultMeetingAppDetector(),
-        urlOpener: ((URL) -> Bool)? = nil
+        urlOpener: ((URL) -> Bool)? = nil,
+        engine: InAppMeetingEngine? = nil
     ) {
         self.detector = detector
         self.urlOpener = urlOpener
+        self.engine = engine ?? (Self.isTestingEnvironment ? InAppMeetingEngine() : InAppMeetingEngine.shared)
+        
+        setupEngineObservers()
         
         if !Self.isTestingEnvironment {
             startPeriodicCallTimer()
             startPeriodicAppScanning()
+        }
+    }
+    
+    private func setupEngineObservers() {
+        engine.$isInCall
+            .sink { [weak self] inCall in
+                guard let self = self else { return }
+                if self.isInCall != inCall {
+                    self.isInCall = inCall
+                    if !inCall {
+                        self.callStartedAt = nil
+                        self.activeCallDuration = 0
+                        self.formattedCallDuration = "00:00"
+                        self.activeCallTitle = nil
+                    }
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$formattedCallDuration
+            .sink { [weak self] duration in
+                guard let self = self, self.engine.isInCall else { return }
+                self.formattedCallDuration = duration
+            }
+            .store(in: &cancellables)
+            
+        engine.$activeService
+            .assign(to: \.activeService, on: self)
+            .store(in: &cancellables)
+            
+        engine.$isMuted
+            .assign(to: \.isMuted, on: self)
+            .store(in: &cancellables)
+            
+        engine.onCallEnded = { [weak self] in
+            guard let self = self else { return }
+            self.isInCall = false
+            self.callStartedAt = nil
+            self.activeCallDuration = 0
+            self.formattedCallDuration = "00:00"
+            self.activeCallTitle = nil
+            self.isMuted = false
         }
     }
     
@@ -124,7 +172,7 @@ public final class MeetingFlightControllerModel: ObservableObject {
             }
         }
         
-        // Also fallback to any valid URL if string contains https://
+        // Fallback to any valid HTTP/HTTPS URL
         if let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
            url.scheme == "http" || url.scheme == "https" {
             return url
@@ -150,24 +198,37 @@ public final class MeetingFlightControllerModel: ObservableObject {
     // MARK: - Actions
     
     @discardableResult
-    public func openMeetLink(event: CalendarEvent? = nil) -> Bool {
+    public func openMeetLink(event: CalendarEvent? = nil, inApp: Bool = true, scratchpad: ScratchpadModel? = nil) -> Bool {
         let targetEvent = event ?? upcomingMeeting
         guard let targetEvent = targetEvent,
               let url = resolvedMeetingURL(for: targetEvent) else {
             return false
         }
         
-        let opened: Bool
+        self.activeService = MeetingService.detect(url: url)
+        
         if let customOpener = urlOpener {
-            opened = customOpener(url)
-        } else {
-            opened = NSWorkspace.shared.open(url)
+            let opened = customOpener(url)
+            if opened {
+                startCall(title: targetEvent.title)
+            }
+            return opened
         }
         
-        if opened {
-            startCall(title: targetEvent.title)
+        if inApp {
+            // Direct In-Morph Call Stage for Zoom & Google Meet
+            let started = engine.startCall(url: url, title: targetEvent.title, scratchpadModel: scratchpad)
+            if started {
+                startCall(title: targetEvent.title)
+            }
+            return started
+        } else {
+            let opened = NSWorkspace.shared.open(url)
+            if opened {
+                startCall(title: targetEvent.title)
+            }
+            return opened
         }
-        return opened
     }
     
     public func startCall(title: String? = nil, startTime: Date = Date()) {
@@ -186,10 +247,18 @@ public final class MeetingFlightControllerModel: ObservableObject {
         self.formattedCallDuration = "00:00"
         self.activeCallTitle = nil
         self.isMuted = false
+        
+        // Cleanly close in-app meeting stage and stop WebRTC camera/mic
+        if engine.isInCall {
+            engine.leaveAndCloseCall()
+        }
     }
     
     public func toggleMute() {
         self.isMuted.toggle()
+        if engine.isInCall {
+            engine.toggleMute()
+        }
     }
     
     public func tickCallTimer(seconds: TimeInterval = 1) {
@@ -229,6 +298,30 @@ public final class MeetingFlightControllerModel: ObservableObject {
         
         scratchpad.text += snippet
         quickNotes = ""
+    }
+    
+    public func startInstantCall(service: MeetingService, scratchpad: ScratchpadModel? = nil) {
+        let url: URL
+        switch service {
+        case .googleMeet:
+            url = URL(string: "https://meet.google.com/new")!
+        case .zoom:
+            url = URL(string: "https://zoom.us/start/videomeeting")!
+        default:
+            url = URL(string: "https://meet.google.com/new")!
+        }
+        
+        openMeetLink(
+            event: CalendarEvent(
+                id: "instant_\(UUID().uuidString)",
+                title: "\(service.rawValue) Instant Call",
+                startTime: Date(),
+                endTime: Date().addingTimeInterval(3600),
+                meetLink: url.absoluteString
+            ),
+            inApp: true,
+            scratchpad: scratchpad
+        )
     }
     
     // MARK: - Timers

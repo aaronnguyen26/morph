@@ -199,23 +199,43 @@ public struct MediaView: View {
             .buttonStyle(.plain)
             .help(media.isDisliked ? "Disliked" : "Dislike Track")
             
-            Button(action: {
-                media.openPlayerWindow()
-            }) {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 8))
-                    Text("Web View")
-                        .font(.system(size: 8.5, weight: .medium))
+            if !media.isSignedIn {
+                Button(action: {
+                    media.openSignIn()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "safari")
+                            .font(.system(size: 8))
+                        Text("Sign In")
+                            .font(.system(size: 8.5, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.14))
+                    .clipShape(Capsule())
                 }
-                .foregroundColor(Color.white.opacity(0.85))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.white.opacity(0.08))
-                .clipShape(Capsule())
+                .buttonStyle(.plain)
+                .help("Sign in to YouTube Music via your browser")
+            } else {
+                Button(action: {
+                    media.openInBrowser()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 8))
+                        Text("Browser")
+                            .font(.system(size: 8.5, weight: .medium))
+                    }
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Open YouTube Music in System Browser")
             }
-            .buttonStyle(.plain)
-            .help("Open YouTube Music Web Window")
         }
     }
     
@@ -477,13 +497,10 @@ public struct MediaView: View {
         .padding(.bottom, 2)
     }
     
-    // MARK: - Hub Home Deck (Vibe Chips + Playlists Shelf + Up Next)
+    // MARK: - Hub Home Deck (Playlists Shelf + Up Next)
     private var hubHomeDeck: some View {
         ScrollView(.vertical, showsIndicators: true) {
             LazyVStack(alignment: .leading, spacing: 8) {
-                // Quick Vibe Chips
-                quickVibeChipsRow
-                
                 // Playlists Section Shelf
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -548,46 +565,6 @@ public struct MediaView: View {
         .frame(maxHeight: 140)
     }
     
-    // Quick Vibe Mood Chips (Energize, Relax, Focus, Workout, Chill)
-    private var quickVibeChipsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                let vibes: [(String, String, String)] = [
-                    ("⚡", "Energize", "energize"),
-                    ("🧘", "Relax", "relax"),
-                    ("🎯", "Focus", "focus"),
-                    ("🏃", "Workout", "workout"),
-                    ("☕", "Chill", "chill")
-                ]
-                ForEach(vibes, id: \.1) { emoji, name, query in
-                    Button(action: {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                            media.searchYouTubeMusic(for: query)
-                            media.rightDeckSection = .search
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Text(emoji)
-                                .font(.system(size: 8))
-                            Text(name)
-                                .font(.system(size: 8, weight: .semibold))
-                        }
-                        .foregroundColor(Color.white.opacity(0.85))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Capsule())
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-    
     // MARK: - Hub Dedicated Search Deck
     private var hubSearchDeck: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -625,27 +602,38 @@ public struct MediaView: View {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 16))
                         .foregroundColor(Color.white.opacity(0.35))
-                    Text(media.isSignedIn ? "No Custom Playlists Found" : "No YouTube Music Playlists Found")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.85))
+                    Text(media.isSignedIn ? "No Custom Playlists Found" : "Connect YouTube Music")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.9))
                     Text(media.libraryError
                          ?? (media.isSignedIn
                              ? "You are signed in! Create playlists on YouTube Music or click Sync to refresh."
-                             : "Sign in once to YouTube Music to access all your playlists and music."))
+                             : "Sign in to YouTube Music via your browser. Once signed in, you can close that browser tab and stream music directly inside Morph."))
                         .font(.system(size: 8, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .foregroundColor(Color.white.opacity(0.5))
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 10)
+                    
+                    if let statusMsg = media.browserAuthStatusMessage {
+                        Text(statusMsg)
+                            .font(.system(size: 7.5, weight: .medium))
+                            .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.6))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
                     
                     HStack(spacing: 6) {
                         if !media.isSignedIn {
                             Button(action: {
-                                media.openPlayerWindow()
+                                media.openSignIn()
                             }) {
                                 HStack(spacing: 3) {
-                                    Image(systemName: "person.crop.circle.badge.plus")
+                                    Image(systemName: "safari")
                                         .font(.system(size: 8.5))
-                                    Text("Sign In")
+                                    Text("Sign In in Browser")
                                         .font(.system(size: 8.5, weight: .bold))
                                 }
                                 .foregroundColor(.white)
@@ -655,24 +643,43 @@ public struct MediaView: View {
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
-                        }
-                        
-                        Button(action: {
-                            media.refreshPlaylists()
-                        }) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 8))
-                                Text("Sync Library")
-                                    .font(.system(size: 8.5, weight: .medium))
+                            .help("Opens Google / YouTube Music sign-in tab in your browser")
+                            
+                            Button(action: {
+                                media.syncSessionFromBrowser()
+                            }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.system(size: 8))
+                                    Text("Sync Session")
+                                        .font(.system(size: 8.5, weight: .medium))
+                                }
+                                .foregroundColor(Color.white.opacity(0.85))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3.5)
+                                .background(Color.white.opacity(0.08))
+                                .clipShape(Capsule())
                             }
-                            .foregroundColor(media.isSignedIn ? .white : Color.white.opacity(0.8))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(media.isSignedIn ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
-                            .clipShape(Capsule())
+                            .buttonStyle(.plain)
+                            .help("Detects signed-in YouTube Music tab in Chrome/Safari and syncs session")
+                        } else {
+                            Button(action: {
+                                media.refreshPlaylists()
+                            }) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 8))
+                                    Text("Sync Library")
+                                        .font(.system(size: 8.5, weight: .medium))
+                                }
+                                .foregroundColor(media.isSignedIn ? .white : Color.white.opacity(0.8))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3.5)
+                                .background(media.isSignedIn ? Color.white.opacity(0.16) : Color.white.opacity(0.08))
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                     .padding(.top, 2)
                     
@@ -1157,10 +1164,10 @@ public struct MediaView: View {
                         
                         if !media.isSignedIn {
                             Button(action: {
-                                media.openPlayerWindow()
+                                media.openSignIn()
                             }) {
                                 HStack(spacing: 3) {
-                                    Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 8))
+                                    Image(systemName: "safari").font(.system(size: 8))
                                     Text("Sign In").font(.system(size: 8.5, weight: .semibold))
                                 }
                                 .foregroundColor(.black)
@@ -1170,6 +1177,7 @@ public struct MediaView: View {
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
+                            .help("Sign in to YouTube Music via browser tab")
                         }
                     }
                 }
@@ -1181,16 +1189,20 @@ public struct MediaView: View {
     
     private func playlistDetailHeaderRow(playlist: YTMPlaylist) -> some View {
         HStack(spacing: 5) {
-            // Back to Playlists Button
+            // Back Button
             Button(action: {
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                    media.backToPlaylists()
+                    if media.rightDeckSection == .queue || playlist.id == "pl_queue" {
+                        media.backFromQueue()
+                    } else {
+                        media.backToPlaylists()
+                    }
                 }
             }) {
                 HStack(spacing: 2) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 8, weight: .bold))
-                    Text("Playlists")
+                    Text(media.rightDeckSection == .queue || playlist.id == "pl_queue" ? "Back" : "Playlists")
                         .font(.system(size: 8.5, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -1200,7 +1212,7 @@ public struct MediaView: View {
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .help("Back to Playlist Selection")
+            .help(media.rightDeckSection == .queue || playlist.id == "pl_queue" ? "Back to Previous View" : "Back to Playlist Selection")
             
             Text(playlist.title)
                 .font(.system(size: 9, weight: .heavy, design: .rounded))

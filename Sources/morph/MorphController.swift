@@ -4,9 +4,11 @@ import Combine
 
 @MainActor
 public final class MorphController: NSObject {
+    public private(set) static weak var shared: MorphController?
+    
     public let model: NotchModel
     public private(set) var panel: NotchPanel!
-    private var hostingView: PassthroughHostingView<MorphIslandView>!
+    public private(set) var hostingView: PassthroughHostingView<MorphIslandView>!
     public private(set) var collapseWorkItem: DispatchWorkItem?
     private var shrinkWorkItem: DispatchWorkItem?
     private var cancellables = Set<AnyCancellable>()
@@ -16,6 +18,7 @@ public final class MorphController: NSObject {
     public init(model: NotchModel = NotchModel()) {
         self.model = model
         super.init()
+        Self.shared = self
         setupPanel()
         setupObservers()
         setupMouseMonitors()
@@ -122,6 +125,7 @@ public final class MorphController: NSObject {
             ShortcutManager.shared.handleKeyEvent(event)
         }
         if !MorphEnvironment.isTestingEnvironment {
+            YouTubeMusicEngine.shared.attachToHostingView(self.hostingView)
             self.panel.orderFrontRegardless()
         }
     }
@@ -135,12 +139,15 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
         
-        // Auto-sync calendar whenever the user returns to Morph from an external app (e.g. Chrome Google sign-in)
+        // Auto-sync calendar and YouTube Music whenever the user returns to Morph from an external app (e.g. browser sign-in)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     self.model.calendar.syncWithSystemCalendar()
+                    if !self.model.media.isSignedIn {
+                        YouTubeMusicEngine.shared.syncSessionFromBrowser()
+                    }
                 }
             }
             .store(in: &cancellables)

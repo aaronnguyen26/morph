@@ -121,19 +121,33 @@ public struct HomeView: View {
                 .buttonStyle(.plain)
                 .help("Open Notes (⌘4)")
                 
-                // Calendar Feature Pill
+                // Calendar / Meeting Feature Pill
                 Button(action: {
-                    model.openFeature(.calendar)
+                    if model.meetingController.isInCall || model.meetingController.isPreMeetingWindow {
+                        model.openContextualFeature(.meetingFlight)
+                    } else {
+                        model.openFeature(.calendar)
+                    }
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "calendar")
-                            .font(.system(size: 8.5))
-                            .foregroundColor(.white)
-                        if let next = model.calendar.nextUpcomingEvent, next.isStartingSoon {
-                            Text("In \(next.minutesUntilStart)m")
+                        if model.meetingController.isInCall {
+                            Image(systemName: model.meetingController.activeService.iconName)
+                                .font(.system(size: 8.5))
+                                .foregroundColor(model.meetingController.activeService.badgeColor)
+                            Text("In Call (\(model.meetingController.formattedCallDuration))")
+                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                        } else if let next = model.calendar.nextUpcomingEvent, next.isStartingSoon {
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 8.5))
+                                .foregroundColor(.cyan)
+                            Text("Call in \(next.minutesUntilStart)m")
                                 .font(.system(size: 9.5, weight: .bold, design: .rounded))
                                 .foregroundColor(.cyan)
                         } else {
+                            Image(systemName: "calendar")
+                                .font(.system(size: 8.5))
+                                .foregroundColor(.white)
                             Text("Calendar")
                                 .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                         }
@@ -142,18 +156,27 @@ public struct HomeView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        model.calendar.showNotchAlert
-                            ? Color.cyan.opacity(0.18)
-                            : Color.white.opacity(0.08)
+                        model.meetingController.isInCall
+                            ? Color.white.opacity(0.18)
+                            : (model.calendar.showNotchAlert || model.meetingController.isPreMeetingWindow
+                                ? Color.cyan.opacity(0.18)
+                                : Color.white.opacity(0.08))
                     )
                     .clipShape(Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(model.calendar.showNotchAlert ? Color.cyan.opacity(0.3) : Color.white.opacity(0.14), lineWidth: 0.5)
+                            .stroke(
+                                model.meetingController.isInCall
+                                    ? Color.green.opacity(0.4)
+                                    : (model.calendar.showNotchAlert || model.meetingController.isPreMeetingWindow
+                                        ? Color.cyan.opacity(0.3)
+                                        : Color.white.opacity(0.14)),
+                                lineWidth: 0.5
+                            )
                     )
                 }
                 .buttonStyle(.plain)
-                .help("Open Calendar (⌘6)")
+                .help(model.meetingController.isInCall ? "Open Meeting Cockpit" : "Open Calendar (⌘6)")
                 
                 // Profile Feature Pill
                 Button(action: {

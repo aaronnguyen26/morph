@@ -373,7 +373,7 @@ public struct MorphIslandView: View {
                         ScratchpadView(scratchpad: model.scratchpad)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .calendar:
-                        CalendarView(calendar: model.calendar)
+                        CalendarView(calendar: model.calendar, meetingController: model.meetingController)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .profile:
                         ProfileView(model: model)
