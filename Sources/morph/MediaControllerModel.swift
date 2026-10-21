@@ -501,6 +501,11 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func selectPlaylist(_ pl: YTMPlaylist) {
+        // The live queue belongs to the Queue tab, never to the Playlists tab.
+        if pl.id == "pl_queue" || pl.kind == .queue {
+            openQueueSection()
+            return
+        }
         var p = pl
         p.tracks = YTMPlaylistItem.deduplicate(p.tracks)
         
@@ -593,7 +598,27 @@ public final class MediaControllerModel: ObservableObject {
         songSearchQuery = ""
     }
     
+    /// Switches the right deck tab, clearing any container opened in another tab so each tab shows only its own content.
+    public func switchRightDeck(to section: YTMRightDeckSection) {
+        switch section {
+        case .home: openHubHome()
+        case .playlists: openPlaylistsSection()
+        case .queue: openQueueSection()
+        case .search:
+            trackLoadTask?.cancel()
+            isLoadingTracks = false
+            tracksError = nil
+            selectedPlaylist = nil
+            rightDeckSection = .search
+        }
+    }
+    
     public func openQueueSection() {
+        trackLoadTask?.cancel()
+        isLoadingTracks = false
+        tracksError = nil
+        isSearchingSongs = false
+        songSearchQuery = ""
         if rightDeckSection != .queue {
             previousRightDeckSection = rightDeckSection
         }

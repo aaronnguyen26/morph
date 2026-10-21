@@ -472,10 +472,7 @@ public struct MediaView: View {
                     let isSelected = (media.rightDeckSection == section && (section != .playlists || media.selectedPlaylist == nil))
                     Button(action: {
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            if section == .playlists {
-                                media.selectedPlaylist = nil
-                            }
-                            media.rightDeckSection = section
+                            media.switchRightDeck(to: section)
                         }
                     }) {
                         HStack(spacing: 3) {
@@ -943,7 +940,7 @@ public struct MediaView: View {
     private var nowPlayingQueueCardRow: some View {
         Button(action: {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                media.selectPlaylist(media.nowPlayingQueuePlaylist)
+                media.openQueueSection()
             }
         }) {
             HStack(spacing: 8) {
