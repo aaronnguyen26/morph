@@ -3,7 +3,6 @@ import Combine
 
 public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     case home = "Home"
-    case quickPicks = "Picks"
     case playlists = "Playlists"
     case queue = "Queue"
     case search = "Search"
@@ -14,7 +13,6 @@ public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     public var iconName: String {
         switch self {
         case .home: return "house.fill"
-        case .quickPicks: return "sparkles"
         case .playlists: return "music.note.list"
         case .queue: return "list.bullet"
         case .search: return "magnifyingglass"
@@ -622,10 +620,7 @@ public final class MediaControllerModel: ObservableObject {
         selectedPlaylist = nil
         isSearchingSongs = false
         songSearchQuery = ""
-        if rightDeckSection != .quickPicks {
-            previousRightDeckSection = rightDeckSection
-        }
-        rightDeckSection = .quickPicks
+        rightDeckSection = .home
         if quickPicks.isEmpty {
             refreshQuickPicks()
         }
@@ -675,7 +670,6 @@ public final class MediaControllerModel: ObservableObject {
     public func switchRightDeck(to section: YTMRightDeckSection) {
         switch section {
         case .home: openHubHome()
-        case .quickPicks: openQuickPicksSection()
         case .playlists: openPlaylistsSection()
         case .queue: openQueueSection()
         case .search:
