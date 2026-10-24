@@ -285,6 +285,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var isLoadingLibrary: Bool = false
     private var lastLibrarySync: Date?
     
+    @Published public var quickPicks: [YTMPlaylistItem] = []
+    @Published public var isLoadingQuickPicks: Bool = false
+    @Published public var quickPicksError: String? = nil
+    private var lastQuickPicksSync: Date?
+    
     public var lastEvaluatedScript: String?
     public var onEvaluate: ((String) -> Void)?
     
@@ -303,6 +308,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     public override init() {
         super.init()
+        self.quickPicks = YTMParser.defaultQuickPicks
         setupWebView()
     }
     
@@ -510,6 +516,31 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             self.userPlaylists = parsedPlaylists
         }
         
+        if let rawPicks = body["quickPicks"] as? [[String: Any]], !rawPicks.isEmpty {
+            var parsedPicks: [YTMPlaylistItem] = []
+            for (idx, item) in rawPicks.enumerated() {
+                let pTitle = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !pTitle.isEmpty else { continue }
+                let pArtist = (item["artist"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let pDuration = (item["duration"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let pVideoId = item["videoId"] as? String
+                let pThumb = item["thumbnailURL"] as? String
+                let pId = (item["id"] as? String) ?? (pVideoId ?? "qp_\(idx)")
+                parsedPicks.append(YTMPlaylistItem(
+                    id: pId,
+                    title: pTitle,
+                    artist: pArtist,
+                    duration: pDuration,
+                    videoId: pVideoId,
+                    thumbnailURL: pThumb
+                ))
+            }
+            if !parsedPicks.isEmpty {
+                self.quickPicks = YTMPlaylistItem.deduplicate(parsedPicks)
+                self.lastQuickPicksSync = Date()
+            }
+        }
+        
         let previousSignedIn = self.isSignedIn
         self.isSignedIn = signedIn
         
@@ -531,9 +562,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             isSignedIn: signedIn
         )
         
-        // Auto-sync playlists immediately when transitioning from not signed in to signed in
+        // Auto-sync playlists and quick picks immediately when transitioning from not signed in to signed in
         if signedIn && !previousSignedIn {
             fetchRealUserPlaylists()
+            fetchQuickPicks()
         }
         
         if !title.isEmpty && title != "YouTube Music" {
@@ -570,6 +602,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     // Don't re-sync on every watch-page navigation; only when empty or stale (> 5 min).
                     if self.userPlaylists.isEmpty || Date().timeIntervalSince(self.lastLibrarySync ?? .distantPast) > 300 {
                         self.fetchRealUserPlaylists()
+                    }
+                    if self.quickPicks.isEmpty || Date().timeIntervalSince(self.lastQuickPicksSync ?? .distantPast) > 300 {
+                        self.fetchQuickPicks()
                     }
                 }
             }
@@ -1262,6 +1297,34 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
         } catch {
             libraryError = error.localizedDescription
+        }
+    }
+    
+    // MARK: Quick Picks
+    public func fetchQuickPicks() {
+        Task { @MainActor in
+            await self.refreshQuickPicks()
+        }
+    }
+    
+    public func refreshQuickPicks() async {
+        isLoadingQuickPicks = true
+        quickPicksError = nil
+        defer { isLoadingQuickPicks = false }
+        do {
+            let doc = try await innerTube("browse", body: ["browseId": "FEmusic_home"])
+            let parsed = YTMParser.parseQuickPicks(doc)
+            if !parsed.isEmpty {
+                self.quickPicks = parsed
+                self.lastQuickPicksSync = Date()
+            } else if self.quickPicks.isEmpty {
+                self.quickPicks = YTMParser.defaultQuickPicks
+            }
+        } catch {
+            self.quickPicksError = error.localizedDescription
+            if self.quickPicks.isEmpty {
+                self.quickPicks = YTMParser.defaultQuickPicks
+            }
         }
     }
     
@@ -2165,7 +2228,50 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     // (Page shelves / search-result cards are deliberately NOT scraped: they used to leak
                     // artist radios and recommendations into the user's playlist list.)
 
-                    // 3. Ensure Liked Music if link is present
+                    // 3. Quick Picks extraction from Home feed
+                    var quickPicks = [];
+                    try {
+                        var shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
+                        for (var s = 0; s < shelves.length; s++) {
+                            var sh = shelves[s];
+                            var shTitleEl = sh.querySelector('yt-formatted-string.title') || sh.querySelector('.title') || sh.querySelector('h2');
+                            var shTitle = shTitleEl ? (shTitleEl.innerText || shTitleEl.textContent || '').toLowerCase() : '';
+                            if (shTitle.indexOf('quick pick') !== -1 || shTitle.indexOf('listen again') !== -1 || shTitle.indexOf('start radio') !== -1 || (s === 0 && window.location.pathname === '/')) {
+                                var items = sh.querySelectorAll('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
+                                for (var itIdx = 0; itIdx < Math.min(items.length, 25); itIdx++) {
+                                    var itEl = items[itIdx];
+                                    var tEl = itEl.querySelector('.title a') || itEl.querySelector('.title') || itEl.querySelector('yt-formatted-string.title');
+                                    var aEl = itEl.querySelector('.subtitle a') || itEl.querySelector('.byline a') || itEl.querySelector('.subtitle') || itEl.querySelector('.byline');
+                                    var dEl = itEl.querySelector('.fixed-column') || itEl.querySelector('.duration');
+                                    var itTitle = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
+                                    var itArtist = aEl ? (aEl.innerText || aEl.textContent || '').trim() : '';
+                                    var itDur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
+                                    var linkEl = itEl.querySelector('a[href*="watch?v="]');
+                                    var vId = '';
+                                    if (linkEl) {
+                                        var href = linkEl.getAttribute('href') || '';
+                                        var vMatch = href.match(/[?&]v=([^&]+)/);
+                                        if (vMatch) vId = vMatch[1];
+                                    }
+                                    var imgEl = itEl.querySelector('img');
+                                    var thumb = imgEl ? imgEl.src : null;
+                                    if (itTitle) {
+                                        quickPicks.push({
+                                            id: vId ? vId : ('qp_' + itIdx),
+                                            title: itTitle,
+                                            artist: itArtist,
+                                            duration: itDur,
+                                            videoId: vId ? vId : null,
+                                            thumbnailURL: thumb
+                                        });
+                                    }
+                                }
+                                if (quickPicks.length > 0) break;
+                            }
+                        }
+                    } catch(qpe) {}
+
+                    // 4. Ensure Liked Music if link is present
                     if (!seenPlaylists['LM']) {
                         var lEl = document.querySelector('a[href*="list=LM"]');
                         if (lEl) {
@@ -2180,7 +2286,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                     }
                     
-                    // 4. User Signed-In State Detection
+                    // 5. User Signed-In State Detection
                     var isSignedIn = false;
                     try {
                         if (window.ytcfg && typeof window.ytcfg.get === 'function') {
@@ -2214,6 +2320,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     repeatMode: repeatMode,
                     queue: queue,
                     playlists: playlists,
+                    quickPicks: quickPicks,
                     isSignedIn: isSignedIn
                 };
             }

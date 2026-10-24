@@ -432,6 +432,8 @@ public struct MediaView: View {
                 switch media.rightDeckSection {
                 case .home:
                     hubHomeDeck
+                case .quickPicks:
+                    quickPicksDeck
                 case .playlists:
                     playlistsSelectionDeck
                 case .queue:
@@ -452,19 +454,19 @@ public struct MediaView: View {
     
     // MARK: - YouTube Music Hub Top Bar
     private var hubTopNavigationBar: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             // YTM Brand Icon & Badge
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 Image(systemName: "play.circle.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.red)
                 Text("Music")
-                    .font(.system(size: 9.5, weight: .heavy, design: .rounded))
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
             }
-            .padding(.trailing, 2)
+            .padding(.trailing, 1)
             
-            Spacer()
+            Spacer(minLength: 2)
             
             // Section Switcher Pills
             HStack(spacing: 2) {
@@ -475,14 +477,14 @@ public struct MediaView: View {
                             media.switchRightDeck(to: section)
                         }
                     }) {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 2.5) {
                             Image(systemName: section.iconName)
-                                .font(.system(size: 7.5, weight: .bold))
+                                .font(.system(size: 7, weight: .bold))
                             Text(section.title)
-                                .font(.system(size: 8, weight: isSelected ? .bold : .medium))
+                                .font(.system(size: 7.5, weight: isSelected ? .bold : .medium))
                         }
                         .foregroundColor(isSelected ? .black : Color.white.opacity(0.65))
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 5)
                         .padding(.vertical, 2.5)
                         .background(isSelected ? Color.white : Color.white.opacity(0.06))
                         .clipShape(Capsule())
@@ -494,72 +496,388 @@ public struct MediaView: View {
         .padding(.bottom, 2)
     }
     
-    // MARK: - Hub Home Deck (Playlists Shelf + Up Next)
+    // MARK: - Hub Home Deck (Quick Picks + Playlists Shelf + Up Next)
     private var hubHomeDeck: some View {
         ScrollView(.vertical, showsIndicators: true) {
-            LazyVStack(alignment: .leading, spacing: 8) {
-                // Playlists Section Shelf
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("PLAYLISTS")
-                            .font(.system(size: 7.5, weight: .heavy, design: .rounded))
-                            .tracking(0.6)
-                            .foregroundColor(Color.white.opacity(0.45))
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                                media.openPlaylistsSection()
-                            }
-                        }) {
-                            HStack(spacing: 2) {
-                                Text("See All (\(media.filteredPlaylists.count))")
-                                    .font(.system(size: 7.5, weight: .bold))
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 6.5, weight: .bold))
-                            }
-                            .foregroundColor(Color.white.opacity(0.55))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    
-                    if media.isLoadingPlaylists {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 12, height: 12)
-                                .colorScheme(.dark)
-                            Text("Loading your library...")
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.5))
-                        }
-                        .padding(.vertical, 6)
-                    } else if media.filteredPlaylists.isEmpty {
-                        Text("No playlists found yet. Sign in or click Sync.")
-                            .font(.system(size: 8, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.4))
-                            .padding(.vertical, 4)
-                    } else {
-                        ForEach(media.filteredPlaylists.prefix(3)) { playlist in
-                            playlistCardRow(playlist: playlist)
-                        }
-                    }
-                }
-                
-                // Up Next / Live Queue Card
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("UP NEXT")
-                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
-                        .tracking(0.6)
-                        .foregroundColor(Color.white.opacity(0.45))
-                    
-                    nowPlayingQueueCardRow
-                }
+            LazyVStack(alignment: .leading, spacing: 7) {
+                homeQuickPicksShelf
+                homePlaylistsShelf
+                homeUpNextShelf
             }
             .padding(.trailing, 2)
         }
         .frame(maxHeight: 140)
+    }
+    
+    // 1. Quick Picks Shelf (Algorithmic Recommendations)
+    private var homeQuickPicksShelf: some View {
+        VStack(alignment: .leading, spacing: 3.5) {
+            HStack {
+                HStack(spacing: 3) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.75))
+                    Text("QUICK PICKS")
+                        .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                        .tracking(0.6)
+                        .foregroundColor(Color.white.opacity(0.55))
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                        media.openQuickPicksSection()
+                    }
+                }) {
+                    HStack(spacing: 2) {
+                        Text("See All (\(media.quickPicks.count))")
+                            .font(.system(size: 7.5, weight: .bold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 6.5, weight: .bold))
+                    }
+                    .foregroundColor(Color.white.opacity(0.55))
+                }
+                .buttonStyle(.plain)
+            }
+            
+            if media.isLoadingQuickPicks && media.quickPicks.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.45)
+                        .frame(width: 10, height: 10)
+                        .colorScheme(.dark)
+                    Text("Curating your quick picks...")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.5))
+                }
+                .padding(.vertical, 4)
+            } else if media.quickPicks.isEmpty {
+                Text("No quick picks yet. Listen to music or click Picks.")
+                    .font(.system(size: 8, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .padding(.vertical, 3)
+            } else {
+                ForEach(media.quickPicks.prefix(2)) { track in
+                    quickPickCardRow(track: track)
+                }
+            }
+        }
+    }
+    
+    // 2. Playlists Section Shelf
+    private var homePlaylistsShelf: some View {
+        VStack(alignment: .leading, spacing: 3.5) {
+            HStack {
+                Text("PLAYLISTS")
+                    .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                    .tracking(0.6)
+                    .foregroundColor(Color.white.opacity(0.45))
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                        media.openPlaylistsSection()
+                    }
+                }) {
+                    HStack(spacing: 2) {
+                        Text("See All (\(media.filteredPlaylists.count))")
+                            .font(.system(size: 7.5, weight: .bold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 6.5, weight: .bold))
+                    }
+                    .foregroundColor(Color.white.opacity(0.55))
+                }
+                .buttonStyle(.plain)
+            }
+            
+            if media.isLoadingPlaylists {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 12, height: 12)
+                        .colorScheme(.dark)
+                    Text("Loading your library...")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.5))
+                }
+                .padding(.vertical, 4)
+            } else if media.filteredPlaylists.isEmpty {
+                Text("No playlists found yet. Sign in or click Sync.")
+                    .font(.system(size: 8, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .padding(.vertical, 3)
+            } else {
+                ForEach(media.filteredPlaylists.prefix(2)) { playlist in
+                    playlistCardRow(playlist: playlist)
+                }
+            }
+        }
+    }
+    
+    // 3. Up Next / Live Queue Card
+    private var homeUpNextShelf: some View {
+        VStack(alignment: .leading, spacing: 3.5) {
+            Text("UP NEXT")
+                .font(.system(size: 7.5, weight: .heavy, design: .rounded))
+                .tracking(0.6)
+                .foregroundColor(Color.white.opacity(0.45))
+            
+            nowPlayingQueueCardRow
+        }
+    }
+    
+    // Quick Pick Mini Card Row for Home Feed
+    private func quickPickCardRow(track: YTMPlaylistItem) -> some View {
+        let isCurrent = media.isSongCurrent(track, in: media.quickPicks)
+        let isPaused = media.isSongPausedCurrent(track, in: media.quickPicks)
+        let isActive = isCurrent || isPaused
+        let titleWeight: Font.Weight = isActive ? .bold : .semibold
+        let titleColor = isActive ? Color.white : Color.white.opacity(0.9)
+        let artistColor = isActive ? Color.white.opacity(0.7) : Color.white.opacity(0.45)
+        let bgOpacity: Double = isCurrent ? 0.12 : (isPaused ? 0.08 : 0.035)
+        let strokeColor = isCurrent ? Color.white.opacity(0.18) : (isPaused ? Color.white.opacity(0.12) : Color.white.opacity(0.06))
+        
+        return Button(action: {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                media.playQuickPick(track, startRadio: true)
+            }
+        }) {
+            HStack(spacing: 7) {
+                // Thumbnail Squircle
+                artworkThumb(url: track.thumbnailURL, size: 22, fallbackIcon: "music.note")
+                
+                // Track metadata
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.title)
+                        .font(.system(size: 9, weight: titleWeight, design: .rounded))
+                        .foregroundColor(titleColor)
+                        .lineLimit(1)
+                    
+                    Text(track.artist.isEmpty ? "Recommended track" : track.artist)
+                        .font(.system(size: 7.5, weight: .regular))
+                        .foregroundColor(artistColor)
+                        .lineLimit(1)
+                }
+                
+                Spacer(minLength: 4)
+                
+                // Active indicator or Radio action icon
+                if isCurrent {
+                    HStack(alignment: .bottom, spacing: 1.2) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 0.5)
+                                .fill(Color.white)
+                                .frame(width: 1.6, height: max(2, 7 * media.visualizerBars[i]))
+                        }
+                    }
+                    .frame(width: 12, height: 8, alignment: .bottom)
+                } else if isPaused {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 7))
+                        .foregroundColor(Color.white.opacity(0.85))
+                } else {
+                    HStack(spacing: 3) {
+                        if !track.duration.isEmpty {
+                            Text(track.duration)
+                                .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.35))
+                        }
+                        
+                        Image(systemName: "radiowaves.right")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.45))
+                    }
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3.5)
+            .background(Color.white.opacity(bgOpacity))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(strokeColor, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Start radio with \(track.title)")
+    }
+    
+    // MARK: - Dedicated Quick Picks Deck
+    private var quickPicksDeck: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            // Header Row
+            HStack(spacing: 5) {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                    Text("Quick Picks")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                
+                Text("• Start radio from your algorithm")
+                    .font(.system(size: 7.5, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .lineLimit(1)
+                
+                Spacer(minLength: 4)
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        media.refreshQuickPicks()
+                    }
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .frame(width: 18, height: 18)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Refresh Quick Picks recommendations")
+            }
+            .padding(.horizontal, 2)
+            
+            // List of Quick Picks
+            if media.isLoadingQuickPicks && media.quickPicks.isEmpty {
+                VStack(spacing: 6) {
+                    Spacer(minLength: 12)
+                    ProgressView()
+                        .scaleEffect(0.65)
+                        .colorScheme(.dark)
+                    Text("Loading your algorithmic recommendations...")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.6))
+                    Spacer(minLength: 12)
+                }
+                .frame(maxWidth: .infinity, maxHeight: 138)
+            } else if media.quickPicks.isEmpty {
+                VStack(spacing: 6) {
+                    Spacer(minLength: 12)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14))
+                        .foregroundColor(Color.white.opacity(0.35))
+                    Text("No recommendations found")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.8))
+                    Text("Listen to music to seed your algorithm or click Refresh.")
+                        .font(.system(size: 7.5, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                    Button(action: { media.refreshQuickPicks() }) {
+                        Text("Refresh Picks")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 12)
+                }
+                .frame(maxWidth: .infinity, maxHeight: 138)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 3) {
+                        ForEach(media.quickPicks) { track in
+                            quickPickDetailedRow(track: track)
+                        }
+                    }
+                    .padding(.trailing, 2)
+                }
+                .frame(maxHeight: 138)
+            }
+        }
+    }
+    
+    private func quickPickDetailedRow(track: YTMPlaylistItem) -> some View {
+        let isCurrent = media.isSongCurrent(track, in: media.quickPicks)
+        let isPaused = media.isSongPausedCurrent(track, in: media.quickPicks)
+        let isActive = isCurrent || isPaused
+        let titleWeight: Font.Weight = isActive ? .bold : .medium
+        let titleColor = isActive ? Color.white : Color.white.opacity(0.9)
+        let artistColor = isActive ? Color.white.opacity(0.7) : Color.white.opacity(0.45)
+        let durationColor = isActive ? Color.white.opacity(0.8) : Color.white.opacity(0.35)
+        let bgOpacity: Double = isCurrent ? 0.14 : (isPaused ? 0.08 : 0.03)
+        let strokeColor = isCurrent ? Color.white.opacity(0.2) : (isPaused ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
+        
+        return Button(action: {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                media.playQuickPick(track, startRadio: true)
+            }
+        }) {
+            HStack(spacing: 7) {
+                // Artwork thumbnail with squircle
+                artworkThumb(url: track.thumbnailURL, size: 24, fallbackIcon: "music.note")
+                
+                // Track metadata
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(track.title)
+                        .font(.system(size: 9.5, weight: titleWeight, design: .rounded))
+                        .foregroundColor(titleColor)
+                        .lineLimit(1)
+                    
+                    Text(track.artist.isEmpty ? "YouTube Music" : track.artist)
+                        .font(.system(size: 8, weight: .regular))
+                        .foregroundColor(artistColor)
+                        .lineLimit(1)
+                }
+                
+                Spacer(minLength: 4)
+                
+                // Duration
+                if !track.duration.isEmpty {
+                    Text(track.duration)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(durationColor)
+                }
+                
+                // Active visualizer or Start Radio action pill
+                if isCurrent {
+                    HStack(alignment: .bottom, spacing: 1.2) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 0.5)
+                                .fill(Color.white)
+                                .frame(width: 1.8, height: max(2, 8 * media.visualizerBars[i]))
+                        }
+                    }
+                    .frame(width: 14, height: 10, alignment: .bottom)
+                    .padding(.horizontal, 2)
+                } else if isPaused {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.horizontal, 2)
+                } else {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "radiowaves.right")
+                            .font(.system(size: 7, weight: .bold))
+                        Text("Radio")
+                            .font(.system(size: 7.5, weight: .semibold))
+                    }
+                    .foregroundColor(Color.white.opacity(0.7))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.06))
+                    .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3.5)
+            .background(Color.white.opacity(bgOpacity))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(strokeColor, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Start algorithm radio based on \(track.title)")
     }
     
     // MARK: - Hub Dedicated Search Deck

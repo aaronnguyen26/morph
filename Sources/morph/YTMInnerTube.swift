@@ -171,9 +171,13 @@ public enum YTMParser {
     static func videoId(of item: [String: Any]) -> String? {
         if let v = dict(item["playlistItemData"])?["videoId"] as? String, !v.isEmpty { return v }
         if let overlay = dict(item["overlay"]),
-           let v = firstString(in: overlay, key: "videoId") { return v }
+           let v = firstString(in: overlay, key: "videoId"), !v.isEmpty { return v }
         if let r = runs(flexText(item, 0)).first,
-           let v = dict(dict(r["navigationEndpoint"])?["watchEndpoint"])?["videoId"] as? String { return v }
+           let v = dict(dict(r["navigationEndpoint"])?["watchEndpoint"])?["videoId"] as? String, !v.isEmpty { return v }
+        if let v = dict(dict(item["navigationEndpoint"])?["watchEndpoint"])?["videoId"] as? String, !v.isEmpty { return v }
+        if let v = dict(dict(item["playNavigationEndpoint"])?["watchEndpoint"])?["videoId"] as? String, !v.isEmpty { return v }
+        if let v = dict(dict(item["onTap"])?["watchEndpoint"])?["videoId"] as? String, !v.isEmpty { return v }
+        if let v = firstString(in: item, key: "videoId"), !v.isEmpty { return v }
         return nil
     }
     
@@ -386,5 +390,156 @@ public enum YTMParser {
             idx += 1
         }
         return results
+    }
+    
+    // MARK: - Quick Picks (Home Algorithmic Recommendations)
+    
+    static func cardTrack(from card: [String: Any], index: Int) -> YTMPlaylistItem? {
+        guard let vid = videoId(of: card) else { return nil }
+        let title = text(card["title"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
+        let subtitle = text(card["subtitle"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        var artist = ""
+        var duration = ""
+        for seg in segments(subtitle) {
+            if isDuration(seg) { duration = seg; continue }
+            if typeWords.contains(seg.lowercased()) { continue }
+            if isPlayCount(seg) { continue }
+            if artist.isEmpty { artist = seg }
+        }
+        let thumb = thumbnail(card["thumbnailRenderer"]) ?? thumbnail(card["thumbnail"])
+        return YTMPlaylistItem(
+            id: "\(vid)#\(index)",
+            title: title,
+            artist: artist.isEmpty ? subtitle : artist,
+            duration: duration,
+            isPlaying: false,
+            videoId: vid,
+            thumbnailURL: thumb
+        )
+    }
+    
+    /// Parses the YouTube Music Home feed (`FEmusic_home`) and extracts the algorithmic Quick Picks shelf.
+    public static func parseQuickPicks(_ doc: [String: Any]) -> [YTMPlaylistItem] {
+        var candidateShelves: [[String: Any]] = []
+        candidateShelves += collect(doc, key: "musicCarouselShelfRenderer")
+        candidateShelves += collect(doc, key: "musicShelfRenderer")
+        
+        let priorityKeywords = [
+            "quick pick", "listen again", "start radio", "mixed for you",
+            "mixed for", "forgotten favorite", "recommend", "picks",
+            "similar to", "deep cuts", "from your library"
+        ]
+        
+        func extractTracks(from shelf: [String: Any]) -> [YTMPlaylistItem] {
+            var tracks: [YTMPlaylistItem] = []
+            var idx = 0
+            for item in collect(shelf, key: "musicResponsiveListItemRenderer") {
+                if let t = track(from: item, index: idx) {
+                    tracks.append(t)
+                    idx += 1
+                }
+            }
+            if tracks.isEmpty {
+                for card in collect(shelf, key: "musicTwoRowItemRenderer") {
+                    if let t = cardTrack(from: card, index: idx) {
+                        tracks.append(t)
+                        idx += 1
+                    }
+                }
+            }
+            return tracks
+        }
+        
+        // 1. Check matching priority shelves first
+        for shelf in candidateShelves {
+            let headerText = (text(shelf["header"]) + " " + text(shelf["title"])).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if priorityKeywords.contains(where: { headerText.contains($0) }) {
+                let tracks = extractTracks(from: shelf)
+                if !tracks.isEmpty {
+                    return YTMPlaylistItem.deduplicate(tracks)
+                }
+            }
+        }
+        
+        // 2. Fallback: First shelf with at least 2 playable songs
+        for shelf in candidateShelves {
+            let tracks = extractTracks(from: shelf)
+            if tracks.count >= 2 {
+                return YTMPlaylistItem.deduplicate(tracks)
+            }
+        }
+        
+        return []
+    }
+    
+    /// Curated algorithmic starting picks for instant offline playback & guest experience.
+    public static var defaultQuickPicks: [YTMPlaylistItem] {
+        return [
+            YTMPlaylistItem(
+                id: "qp_starboy",
+                title: "Starboy",
+                artist: "The Weeknd ft. Daft Punk",
+                duration: "3:50",
+                videoId: "34Na4j8AVgA",
+                thumbnailURL: "https://i.ytimg.com/vi/34Na4j8AVgA/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_midnight_city",
+                title: "Midnight City",
+                artist: "M83",
+                duration: "4:04",
+                videoId: "dX3k_QDnzHE",
+                thumbnailURL: "https://i.ytimg.com/vi/dX3k_QDnzHE/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_resonance",
+                title: "Resonance",
+                artist: "HOME",
+                duration: "3:32",
+                videoId: "8GW6sLrK40k",
+                thumbnailURL: "https://i.ytimg.com/vi/8GW6sLrK40k/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_after_dark",
+                title: "After Dark",
+                artist: "Mr.Kitty",
+                duration: "4:18",
+                videoId: "waAlgFq9Xq8",
+                thumbnailURL: "https://i.ytimg.com/vi/waAlgFq9Xq8/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_nightcall",
+                title: "Nightcall",
+                artist: "Kavinsky",
+                duration: "4:19",
+                videoId: "MV_3Dpw-BRY",
+                thumbnailURL: "https://i.ytimg.com/vi/MV_3Dpw-BRY/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_something_about_us",
+                title: "Something About Us",
+                artist: "Daft Punk",
+                duration: "3:52",
+                videoId: "em0MknB6wFo",
+                thumbnailURL: "https://i.ytimg.com/vi/em0MknB6wFo/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_blinding_lights",
+                title: "Blinding Lights",
+                artist: "The Weeknd",
+                duration: "3:20",
+                videoId: "4NRXx6U8ABQ",
+                thumbnailURL: "https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg"
+            ),
+            YTMPlaylistItem(
+                id: "qp_get_lucky",
+                title: "Get Lucky",
+                artist: "Daft Punk ft. Pharrell Williams",
+                duration: "4:08",
+                videoId: "5NV6Rdv1a3I",
+                thumbnailURL: "https://i.ytimg.com/vi/5NV6Rdv1a3I/hqdefault.jpg"
+            )
+        ]
     }
 }

@@ -3,6 +3,7 @@ import Combine
 
 public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     case home = "Home"
+    case quickPicks = "Picks"
     case playlists = "Playlists"
     case queue = "Queue"
     case search = "Search"
@@ -13,6 +14,7 @@ public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     public var iconName: String {
         switch self {
         case .home: return "house.fill"
+        case .quickPicks: return "sparkles"
         case .playlists: return "music.note.list"
         case .queue: return "list.bullet"
         case .search: return "magnifyingglass"
@@ -39,6 +41,9 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isBrowserConnected: Bool = false
     @Published public var playlist: [YTMPlaylistItem] = []
     @Published public var playlists: [YTMPlaylist] = []
+    @Published public var quickPicks: [YTMPlaylistItem] = []
+    @Published public var isLoadingQuickPicks: Bool = false
+    @Published public var quickPicksError: String? = nil
     @Published public var isSignedIn: Bool = false
     @Published public var selectedPlaylist: YTMPlaylist? = nil
     @Published public var rightDeckSection: YTMRightDeckSection = .home
@@ -83,6 +88,7 @@ public final class MediaControllerModel: ObservableObject {
     public init(engine: YouTubeMusicEngine = YouTubeMusicEngine.shared) {
         self.engine = engine
         self.playlists = []
+        self.quickPicks = engine.quickPicks.isEmpty ? YTMParser.defaultQuickPicks : engine.quickPicks
         
         setupEngineObservers()
         if !isTestingEnvironment {
@@ -212,8 +218,13 @@ public final class MediaControllerModel: ObservableObject {
                 guard let self = self else { return }
                 let prev = self.isSignedIn
                 self.isSignedIn = signedIn
-                if signedIn && !prev && self.playlists.isEmpty {
-                    self.refreshPlaylists()
+                if signedIn && !prev {
+                    if self.playlists.isEmpty {
+                        self.refreshPlaylists()
+                    }
+                    if self.quickPicks.isEmpty {
+                        self.refreshQuickPicks()
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -224,6 +235,22 @@ public final class MediaControllerModel: ObservableObject {
                 self.mergePlaylists(enginePlaylists)
             }
             .store(in: &cancellables)
+            
+        engine.$quickPicks
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] picks in
+                guard let self = self else { return }
+                if !picks.isEmpty {
+                    self.quickPicks = picks
+                } else if self.quickPicks.isEmpty {
+                    self.quickPicks = YTMParser.defaultQuickPicks
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$isLoadingQuickPicks
+            .receive(on: DispatchQueue.main)
+            .assign(to: &$isLoadingQuickPicks)
         
         engine.$libraryError
             .sink { [weak self] err in self?.libraryError = err }
@@ -588,6 +615,52 @@ public final class MediaControllerModel: ObservableObject {
         }
     }
     
+    public func openQuickPicksSection() {
+        trackLoadTask?.cancel()
+        isLoadingTracks = false
+        tracksError = nil
+        selectedPlaylist = nil
+        isSearchingSongs = false
+        songSearchQuery = ""
+        if rightDeckSection != .quickPicks {
+            previousRightDeckSection = rightDeckSection
+        }
+        rightDeckSection = .quickPicks
+        if quickPicks.isEmpty {
+            refreshQuickPicks()
+        }
+    }
+    
+    public func refreshQuickPicks() {
+        Task { @MainActor in
+            await engine.refreshQuickPicks()
+        }
+    }
+    
+    public func playQuickPick(_ track: YTMPlaylistItem, startRadio: Bool = true) {
+        guard let vid = track.videoId, !vid.isEmpty else {
+            let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+            if !query.isEmpty {
+                playSearch(query)
+            }
+            return
+        }
+        trackTitle = track.title
+        artistName = track.artist.isEmpty ? "YouTube Music" : track.artist
+        albumArtURL = track.thumbnailURL
+        isPlaying = true
+        currentTime = 0
+        duration = 0
+        
+        for i in 0..<quickPicks.count {
+            quickPicks[i].isPlaying = (quickPicks[i].id == track.id || quickPicks[i].videoId == vid)
+        }
+        
+        let radioListId = startRadio ? "RDAMVM\(vid)" : nil
+        engine.play(videoId: vid, listId: radioListId)
+        syncPlayingTrackWithPlaylists()
+    }
+    
     public func openPlaylistsSection() {
         trackLoadTask?.cancel()
         isLoadingTracks = false
@@ -602,6 +675,7 @@ public final class MediaControllerModel: ObservableObject {
     public func switchRightDeck(to section: YTMRightDeckSection) {
         switch section {
         case .home: openHubHome()
+        case .quickPicks: openQuickPicksSection()
         case .playlists: openPlaylistsSection()
         case .queue: openQueueSection()
         case .search:
@@ -806,6 +880,17 @@ public final class MediaControllerModel: ObservableObject {
                     if !matchQ.artist.isEmpty && (self.artistName.isEmpty || self.artistName == "YouTube Music") {
                         self.artistName = matchQ.artist
                     }
+                }
+            }
+        }
+        
+        // 3. Sync quickPicks
+        if !quickPicks.isEmpty {
+            let activeQPId = activeTrackId(in: quickPicks)
+            for i in 0..<quickPicks.count {
+                let shouldBePlaying = isPlaying && (quickPicks[i].id == activeQPId)
+                if quickPicks[i].isPlaying != shouldBePlaying {
+                    quickPicks[i].isPlaying = shouldBePlaying
                 }
             }
         }
