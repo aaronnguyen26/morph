@@ -423,9 +423,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == kHandlerName, let body = message.body as? [String: Any] else { return }
         
-        Task { @MainActor in
-            self.parseIncomingPayload(body)
-        }
+        self.parseIncomingPayload(body)
     }
     
     public func parseIncomingPayload(_ body: [String: Any]) {
@@ -2400,8 +2398,26 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 };
             }
             
-            window.morphSendUpdate = function() {
+            var _morphLastSendTime = 0;
+            var _morphSendPendingTimeout = null;
+            
+            window.morphSendUpdate = function(force) {
                 try {
+                    var now = Date.now();
+                    if (!force && (now - _morphLastSendTime) < 350) {
+                        if (!_morphSendPendingTimeout) {
+                            _morphSendPendingTimeout = setTimeout(function() {
+                                _morphSendPendingTimeout = null;
+                                window.morphSendUpdate(false);
+                            }, 350 - (now - _morphLastSendTime));
+                        }
+                        return;
+                    }
+                    if (_morphSendPendingTimeout) {
+                        clearTimeout(_morphSendPendingTimeout);
+                        _morphSendPendingTimeout = null;
+                    }
+                    _morphLastSendTime = now;
                     var data = getTrackInfo();
                     window.webkit.messageHandlers.\(kHandlerName).postMessage(data);
                 } catch(e) {}
@@ -2542,13 +2558,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
                             dismissModalsAndEnableAutoplay();
-                            window.morphSendUpdate();
+                            window.morphSendUpdate(evt === 'play' || evt === 'pause' || evt === 'ended');
                         });
                     });
                     
                     // Auto-advance or seamless repeat when current track ends
                     v.addEventListener('ended', function() {
-                        window.morphSendUpdate();
+                        window.morphSendUpdate(true);
                         if (window._morphTargetRepeatMode === 'one' || v.loop) {
                             try {
                                 v.currentTime = 0;
@@ -2584,26 +2600,31 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 }
             }
             
+            var _morphMutationTimeout = null;
             var observer = new MutationObserver(function() {
                 attachVideoListeners();
-                window.morphSendUpdate();
+                if (!_morphMutationTimeout) {
+                    _morphMutationTimeout = setTimeout(function() {
+                        _morphMutationTimeout = null;
+                        window.morphSendUpdate(false);
+                    }, 400);
+                }
             });
             
-            observer.observe(document.documentElement, {
+            observer.observe(document.body || document.documentElement, {
                 childList: true,
-                subtree: true,
-                attributes: true
+                subtree: true
             });
             
             document.addEventListener('DOMContentLoaded', function() {
                 attachVideoListeners();
-                window.morphSendUpdate();
+                window.morphSendUpdate(true);
             });
             
             setInterval(function() {
                 attachVideoListeners();
-                window.morphSendUpdate();
-            }, 800);
+                window.morphSendUpdate(false);
+            }, 1000);
         })();
         """
     }

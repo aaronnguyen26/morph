@@ -58,6 +58,8 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var showRepeatHUD: Bool = false
     private var repeatHUDWorkItem: DispatchWorkItem?
     private var repeatModeLockoutUntil: Date?
+    private var lastProcessedQueueIds: [String] = []
+    private var lastProcessedTrackSignature: String = ""
     
     // Ambient 3-bar equalizer heights (0.15 ... 1.0)
     @Published public var visualizerBars: [CGFloat] = [0.18, 0.18, 0.18]
@@ -209,12 +211,12 @@ public final class MediaControllerModel: ObservableObject {
                     }
                     self.duration = data.duration
                     // Auto-correct YouTube Music player if web player drifted from the correlated volume
-                    if abs(data.volume - self.volume) > 0.05 {
+                    if abs(data.volume - self.volume) > 0.08 && !self.isTestingEnvironment && self.duration > 0 {
                         if self.isDirectEngineActive {
                             self.engine.setVolume(self.volume)
                         }
                     }
-                    if data.isMuted != self.isMuted {
+                    if data.isMuted != self.isMuted && !self.isTestingEnvironment && self.duration > 0 {
                         if self.isDirectEngineActive {
                             self.engine.setMuted(self.isMuted)
                         }
@@ -227,10 +229,22 @@ public final class MediaControllerModel: ObservableObject {
                     } else {
                         self.repeatMode = data.repeatMode
                     }
-                    self.playlist = YTMPlaylistItem.deduplicate(data.queue)
+                    
+                    let newQueueIds = data.queue.map(\.id)
+                    let queueChanged = (newQueueIds != self.lastProcessedQueueIds)
+                    if queueChanged {
+                        self.lastProcessedQueueIds = newQueueIds
+                        self.playlist = YTMPlaylistItem.deduplicate(data.queue)
+                    }
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
-                    self.syncPlayingTrackWithPlaylists()
+                    
+                    let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
+                    let trackChanged = (currentSignature != self.lastProcessedTrackSignature)
+                    if queueChanged || trackChanged {
+                        self.lastProcessedTrackSignature = currentSignature
+                        self.syncPlayingTrackWithPlaylists()
+                    }
                 }
                 
                 let prevSignedIn = self.isSignedIn
@@ -845,32 +859,37 @@ public final class MediaControllerModel: ObservableObject {
     
     // MARK: - Track Normalization and Active Track Resolution
     
+    private nonisolated(unsafe) static let titleNormalizationCache = NSCache<NSString, NSString>()
+    
+    private nonisolated static let clutterRegex: NSRegularExpression = {
+        let pattern = #"\((?:official\s+(?:music\s+|lyric\s+)?video|official\s+audio|visualizer|lyrics?|audio)\)|\[(?:official\s+(?:music\s+|lyric\s+)?video|official\s+audio|visualizer|lyrics?|audio)\]|official\s+(?:music\s+)?video|official\s+audio|lyric\s+video"#
+        return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }()
+    
+    private nonisolated static let trimCharacterSet: CharacterSet = {
+        CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: " -–—\"'()[]"))
+    }()
+
     /// Cleans clutter like "(Official Music Video)", "[Audio]", etc. from track titles
     /// so left and right side titles match cleanly.
     nonisolated public static func normalizeTitle(_ raw: String) -> String {
-        var title = raw.lowercased()
-        let removablePatterns = [
-            "\\(official video\\)",
-            "\\(official music video\\)",
-            "\\(official lyric video\\)",
-            "\\(official audio\\)",
-            "\\(audio\\)",
-            "\\(visualizer\\)",
-            "\\(lyrics\\)",
-            "\\[official video\\]",
-            "\\[official music video\\]",
-            "\\[official audio\\]",
-            "\\[audio\\]",
-            "\\[lyrics\\]",
-            "official music video",
-            "official video",
-            "official audio",
-            "lyric video"
-        ]
-        for pattern in removablePatterns {
-            title = title.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        let nsRaw = raw as NSString
+        if let cached = titleNormalizationCache.object(forKey: nsRaw) {
+            return cached as String
         }
-        return title.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: " -–—\"'()[]")))
+        
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            titleNormalizationCache.setObject("" as NSString, forKey: nsRaw)
+            return ""
+        }
+        
+        let range = NSRange(location: 0, length: nsRaw.length)
+        let cleaned = clutterRegex.stringByReplacingMatches(in: raw, options: [], range: range, withTemplate: "")
+        let result = cleaned.trimmingCharacters(in: trimCharacterSet).lowercased()
+        
+        titleNormalizationCache.setObject(result as NSString, forKey: nsRaw)
+        return result
     }
     
     /// Resolves the single active track ID inside a given list of tracks.
