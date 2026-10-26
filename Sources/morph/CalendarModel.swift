@@ -7,7 +7,7 @@ import UserNotifications
 public final class CalendarModel: ObservableObject {
     @Published public var selectedDate: Date = Date() {
         didSet {
-            if eventKitEngine.isAuthorized {
+            if isMacCalendarSyncEnabled && eventKitEngine.isAuthorized {
                 _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
                 mergeAllEvents()
             }
@@ -29,6 +29,11 @@ public final class CalendarModel: ObservableObject {
     @Published public var notificationLeadMinutes: Int = 10 {
         didSet {
             UserDefaults.standard.set(notificationLeadMinutes, forKey: "com.morph.calendar.lead_minutes")
+        }
+    }
+    @Published public var isMacCalendarSyncEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isMacCalendarSyncEnabled, forKey: "com.morph.calendar.enable_mac_calendar")
         }
     }
     private var sentNotificationEventIDs = Set<String>()
@@ -93,6 +98,11 @@ public final class CalendarModel: ObservableObject {
                 self.notificationLeadMinutes = savedLead
             }
         }
+        if UserDefaults.standard.object(forKey: "com.morph.calendar.enable_mac_calendar") != nil {
+            self.isMacCalendarSyncEnabled = UserDefaults.standard.bool(forKey: "com.morph.calendar.enable_mac_calendar")
+        } else {
+            self.isMacCalendarSyncEnabled = false
+        }
         
         setupEngineObservers()
         startAlertWatcher()
@@ -103,12 +113,12 @@ public final class CalendarModel: ObservableObject {
                 self.configuredUserEmail = "minh7898888@gmail.com"
                 self.isSignedIn = true
             }
-            if self.eventKitEngine.isAuthorized {
+            if self.isMacCalendarSyncEnabled && self.eventKitEngine.isAuthorized {
                 _ = self.eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
                 mergeAllEvents()
             }
             Task {
-                await syncWithSystemCalendarAsync()
+                await syncGoogleCalendarAndApiAsync()
             }
         }
     }
@@ -284,10 +294,10 @@ public final class CalendarModel: ObservableObject {
         engine.configureAccount(email: clean)
         mergeAllEvents()
         
-        // Seamlessly sync with native macOS Calendar (which connects to the user's Google Calendar)
+        // Seamlessly sync Google Calendar API and accounts without prompting for Apple Calendar
         if !Self.isTestingEnvironment {
             Task {
-                await syncWithSystemCalendarAsync()
+                await syncGoogleCalendarAndApiAsync()
             }
         }
     }
@@ -456,7 +466,7 @@ public final class CalendarModel: ObservableObject {
     
     public func syncWithGoogle() {
         engine.refresh()
-        if eventKitEngine.isAuthorized {
+        if isMacCalendarSyncEnabled && eventKitEngine.isAuthorized {
             _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
             mergeAllEvents()
         }
@@ -485,23 +495,48 @@ public final class CalendarModel: ObservableObject {
         // 1. Open Google sign-in in user's default browser (or active browser)
         engine.openGoogleSignInInBrowser()
         
-        // 2. Automatically request and sync native macOS Calendar authorization & Google API bridge
+        // 2. Automatically sync Google API bridge and Chrome accounts without touching Mac Calendar
         Task {
-            await syncWithSystemCalendarAsync()
+            await syncGoogleCalendarAndApiAsync()
         }
     }
     
-    public func syncWithSystemCalendar() {
+    /// Syncs with the native macOS system calendar ONLY if explicitly enabled or requested by the user.
+    /// By default (`requestPermissionIfNeeded: false`), this never prompts macOS TCC permission dialogs.
+    public func syncWithSystemCalendar(requestPermissionIfNeeded: Bool = false) {
         Task {
-            await syncWithSystemCalendarAsync()
+            await syncWithSystemCalendarAsync(requestPermissionIfNeeded: requestPermissionIfNeeded)
         }
     }
     
-    public func syncWithSystemCalendarAsync() async {
-        let granted = await eventKitEngine.requestAccess()
-        if granted {
+    public func syncWithSystemCalendarAsync(requestPermissionIfNeeded: Bool = false) async {
+        if requestPermissionIfNeeded {
+            self.isMacCalendarSyncEnabled = true
+            let granted = await eventKitEngine.requestAccess()
+            if granted {
+                _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
+                self.isSignedIn = true
+                mergeAllEvents()
+            }
+        } else if isMacCalendarSyncEnabled && eventKitEngine.isAuthorized {
             _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
-            self.isSignedIn = true
+            mergeAllEvents()
+        }
+        
+        // Sync Google Calendar API events and Chrome accounts
+        await syncGoogleCalendarAndApiAsync()
+    }
+    
+    /// User-initiated action to explicitly request access to macOS Apple Calendar
+    public func requestMacCalendarAccess() {
+        syncWithSystemCalendar(requestPermissionIfNeeded: true)
+    }
+    
+    /// Syncs Google Calendar via API Bridge and Chrome browser session.
+    /// This NEVER prompts for macOS Apple Calendar (EventKit) permissions.
+    public func syncGoogleCalendarAndApiAsync() async {
+        if isMacCalendarSyncEnabled && eventKitEngine.isAuthorized {
+            _ = eventKitEngine.fetchEvents(for: selectedDate, matchingEmail: configuredUserEmail)
             mergeAllEvents()
         }
         
@@ -644,8 +679,9 @@ public final class CalendarModel: ObservableObject {
             }
         }
         
-        // 2. Also save to EventKit if authorized (and not running in automated tests)
+        // 2. Also save to EventKit if authorized and explicitly enabled (and not running in automated tests)
         if !Self.isTestingEnvironment,
+           isMacCalendarSyncEnabled,
            eventKitEngine.isAuthorized,
            let created = eventKitEngine.createEvent(
             title: title,
@@ -691,8 +727,8 @@ public final class CalendarModel: ObservableObject {
             }
         }
         
-        // 4. Dispatch deletion to EventKit if authorized
-        if !Self.isTestingEnvironment && eventKitEngine.isAuthorized {
+        // 4. Dispatch deletion to EventKit if authorized and explicitly enabled
+        if !Self.isTestingEnvironment && isMacCalendarSyncEnabled && eventKitEngine.isAuthorized {
             eventKitEngine.deleteEvent(id: id, matchingEmail: configuredUserEmail)
             eventKitEngine.deleteEvent(id: rawId, matchingEmail: configuredUserEmail)
         }

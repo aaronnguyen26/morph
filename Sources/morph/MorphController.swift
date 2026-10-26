@@ -139,12 +139,12 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
         
-        // Auto-sync calendar and YouTube Music whenever the user returns to Morph from an external app (e.g. browser sign-in)
+        // Auto-sync calendar (Google) and YouTube Music whenever the user returns to Morph from an external app (e.g. browser sign-in)
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
-                    self.model.calendar.syncWithSystemCalendar()
+                    self.model.calendar.syncWithGoogle()
                     if !self.model.media.isSignedIn {
                         YouTubeMusicEngine.shared.syncSessionFromBrowser()
                     }
