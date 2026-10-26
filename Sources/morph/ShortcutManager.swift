@@ -164,6 +164,11 @@ public final class ShortcutManager: NSObject {
         likeItem.target = self
         controlsMenu.addItem(likeItem)
         
+        let repeatItem = NSMenuItem(title: "Toggle Repeat Mode", action: #selector(toggleRepeat), keyEquivalent: "r")
+        repeatItem.keyEquivalentModifierMask = [.command, .shift]
+        repeatItem.target = self
+        controlsMenu.addItem(repeatItem)
+        
         let muteItem = NSMenuItem(title: "Mute / Unmute", action: #selector(toggleMute), keyEquivalent: "u")
         muteItem.target = self
         controlsMenu.addItem(muteItem)
@@ -299,7 +304,11 @@ public final class ShortcutManager: NSObject {
                     copyAllNotes()
                     return true
                 case "r":
-                    resetTimer()
+                    if model.selectedTab == .music {
+                        toggleRepeat()
+                    } else {
+                        resetTimer()
+                    }
                     return true
                 case "s":
                     skipTimer()
@@ -368,7 +377,11 @@ public final class ShortcutManager: NSObject {
                 togglePin()
                 return true
             case "r":
-                refreshProfile()
+                if model.selectedTab == .music {
+                    toggleRepeat()
+                } else {
+                    refreshProfile()
+                }
                 return true
             case "h":
                 hideApp()
@@ -619,6 +632,12 @@ public final class ShortcutManager: NSObject {
         guard let model = model else { return }
         model.media.toggleMute()
         lastTriggeredShortcut = model.media.isMuted ? "⌘U Muted" : "⌘U Unmuted"
+    }
+    
+    @objc public func toggleRepeat() {
+        guard let model = model else { return }
+        model.media.toggleRepeat()
+        lastTriggeredShortcut = "⌘R \(model.media.repeatMode.hudTitle)"
     }
     
     // Timer Controls

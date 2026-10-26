@@ -55,6 +55,10 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var showVolumeHUD: Bool = false
     private var volumeHUDWorkItem: DispatchWorkItem?
     
+    @Published public var showRepeatHUD: Bool = false
+    private var repeatHUDWorkItem: DispatchWorkItem?
+    private var repeatModeLockoutUntil: Date?
+    
     // Ambient 3-bar equalizer heights (0.15 ... 1.0)
     @Published public var visualizerBars: [CGFloat] = [0.18, 0.18, 0.18]
     
@@ -126,12 +130,22 @@ public final class MediaControllerModel: ObservableObject {
                         if self.currentTime < self.duration {
                             self.currentTime += 1
                         } else {
-                            self.nextTrack()
+                            if self.repeatMode == .one {
+                                self.currentTime = 0
+                            } else {
+                                self.nextTrack()
+                            }
                         }
                     } else if self.isDirectEngineConnected {
                         // Watchdog auto-advance: if playback finishes and engine is at duration end
                         if self.duration > 0 && self.currentTime >= (self.duration - 0.5) {
-                            self.nextTrack()
+                            if self.repeatMode == .one {
+                                // Smoothly loop single track back to start
+                                self.currentTime = 0
+                                self.seek(to: 0)
+                            } else {
+                                self.nextTrack()
+                            }
                         }
                     }
                 }
@@ -208,7 +222,11 @@ public final class MediaControllerModel: ObservableObject {
                     self.isLiked = data.isLiked
                     self.isDisliked = data.isDisliked
                     self.isShuffle = data.isShuffle
-                    self.repeatMode = data.repeatMode
+                    if let lockout = self.repeatModeLockoutUntil, Date() < lockout {
+                        // Preserve optimistic repeatMode state
+                    } else {
+                        self.repeatMode = data.repeatMode
+                    }
                     self.playlist = YTMPlaylistItem.deduplicate(data.queue)
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
@@ -368,6 +386,30 @@ public final class MediaControllerModel: ObservableObject {
     
     public func nextTrack() {
         if isDirectEngineActive {
+            if repeatMode == .all {
+                if let sel = selectedPlaylist, !sel.tracks.isEmpty {
+                    let activeId = activeTrackId(in: sel.tracks)
+                    if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }),
+                       currentIdx == sel.tracks.count - 1 {
+                        let firstItem = sel.tracks[0]
+                        playSongInSelectedPlaylist(firstItem)
+                        return
+                    }
+                } else if !playlist.isEmpty {
+                    let activeId = activeTrackId(in: playlist)
+                    if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }),
+                       currentIdx == playlist.count - 1 {
+                        let firstItem = playlist[0]
+                        markPlaying(firstItem)
+                        if let qIdx = Int(firstItem.id) {
+                            engine.playQueueIndex(qIdx)
+                        } else {
+                            engine.playQueueIndex(0)
+                        }
+                        return
+                    }
+                }
+            }
             engine.nextTrack()
             return
         }
@@ -510,6 +552,18 @@ public final class MediaControllerModel: ObservableObject {
             }
         }
         volumeHUDWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+    
+    public func triggerRepeatHUD() {
+        showRepeatHUD = true
+        repeatHUDWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.showRepeatHUD = false
+            }
+        }
+        repeatHUDWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
     }
     
@@ -1119,16 +1173,19 @@ public final class MediaControllerModel: ObservableObject {
         engine.toggleShuffle()
     }
     
-    public func toggleRepeat() {
-        switch repeatMode {
-        case .off:
-            repeatMode = .all
-        case .all:
-            repeatMode = .one
-        case .one:
-            repeatMode = .off
+    public func setRepeatMode(_ newMode: YTMRepeatMode) {
+        repeatMode = newMode
+        repeatModeLockoutUntil = Date().addingTimeInterval(1.5)
+        triggerRepeatHUD()
+        if isDirectEngineActive || isDirectEngineConnected {
+            engine.setRepeatMode(newMode)
+        } else {
+            executeBrowserRepeat(newMode)
         }
-        engine.toggleRepeat()
+    }
+    
+    public func toggleRepeat() {
+        setRepeatMode(repeatMode.next)
     }
     
     // MARK: - Browser-Based Authentication & Tab Management
@@ -1446,6 +1503,24 @@ public final class MediaControllerModel: ObservableObject {
                     if (URL of t) contains "music.youtube.com" then
                         try
                             execute t javascript "var v = document.querySelector('video'); if (v) { v.muted = \(muted); }"
+                        end try
+                    end if
+                end repeat
+            end repeat
+        end tell
+        """
+        runScriptAsync(script)
+    }
+    
+    private func executeBrowserRepeat(_ mode: YTMRepeatMode) {
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        let script = """
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "(function() { var v = document.querySelector('video'); if (v) { v.loop = (\(mode == .one)); } var btn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat'); if (btn) { var inner = btn.querySelector('button, #button'); (inner || btn).click(); } })();"
                         end try
                     end if
                 end repeat

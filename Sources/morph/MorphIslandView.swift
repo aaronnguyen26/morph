@@ -763,6 +763,21 @@ private struct CompactMediaWingRight: View {
                 .background(Color.white.opacity(0.18))
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
+            } else if media.showRepeatHUD {
+                // Sleek Notch Repeat HUD Pill
+                HStack(spacing: 3.5) {
+                    Image(systemName: media.repeatMode.iconName)
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(media.repeatMode == .off ? Color.white.opacity(0.5) : Color.white)
+                    Text(media.repeatMode.hudTitle)
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.95))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(media.repeatMode == .off ? Color.white.opacity(0.12) : Color.white.opacity(0.22))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
             } else {
                 // Live Synchronous Equalizer
                 HStack(alignment: .bottom, spacing: 2) {
@@ -895,6 +910,20 @@ private struct CompactDualWingRight: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(Color.white.opacity(0.18))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
+            } else if media.showRepeatHUD {
+                HStack(spacing: 3) {
+                    Image(systemName: media.repeatMode.iconName)
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(media.repeatMode == .off ? Color.white.opacity(0.5) : Color.white)
+                    Text(media.repeatMode.hudTitle)
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.95))
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(media.repeatMode == .off ? Color.white.opacity(0.12) : Color.white.opacity(0.22))
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
             } else {

@@ -352,7 +352,9 @@ public struct MediaView: View {
             .help("Next Track (⌘] or ⌘→)")
             
             Button(action: {
-                media.toggleRepeat()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    media.toggleRepeat()
+                }
             }) {
                 Image(systemName: media.repeatMode.iconName)
                     .font(.system(size: 9, weight: .bold))
