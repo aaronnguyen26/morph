@@ -59,6 +59,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var visualizerBars: [CGFloat] = [0.18, 0.18, 0.18]
     
     public let engine: YouTubeMusicEngine
+    public let systemAudio: SystemAudioServiceProtocol
     
     private var isTestingEnvironment: Bool {
         return MorphEnvironment.isTestingEnvironment
@@ -83,16 +84,33 @@ public final class MediaControllerModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var trackLoadTask: Task<Void, Never>?
     
-    public init(engine: YouTubeMusicEngine = YouTubeMusicEngine.shared) {
+    public init(
+        engine: YouTubeMusicEngine = YouTubeMusicEngine.shared,
+        systemAudio: SystemAudioServiceProtocol = MorphEnvironment.isTestingEnvironment ? MockSystemAudioService() : SystemAudioService.shared
+    ) {
         self.engine = engine
+        self.systemAudio = systemAudio
         self.playlists = []
         self.quickPicks = engine.quickPicks.isEmpty ? YTMParser.defaultQuickPicks : engine.quickPicks
         
+        let initialVol = systemAudio.getVolume()
+        let initialMuted = systemAudio.getMuted()
+        self.volume = max(0.0, min(1.0, initialVol))
+        self.isMuted = initialMuted
+        
         setupEngineObservers()
+        setupSystemAudioObserver()
         if !isTestingEnvironment {
             startVisualizer()
             startPlaybackTicker()
             startBrowserPolling()
+            systemAudio.startMonitoring()
+            if isDirectEngineActive {
+                engine.setVolume(self.volume)
+                if self.isMuted {
+                    engine.setMuted(true)
+                }
+            }
         }
     }
     
@@ -176,8 +194,17 @@ public final class MediaControllerModel: ObservableObject {
                         self.currentTime = data.currentTime
                     }
                     self.duration = data.duration
-                    self.volume = data.volume
-                    self.isMuted = data.isMuted
+                    // Auto-correct YouTube Music player if web player drifted from the correlated volume
+                    if abs(data.volume - self.volume) > 0.05 {
+                        if self.isDirectEngineActive {
+                            self.engine.setVolume(self.volume)
+                        }
+                    }
+                    if data.isMuted != self.isMuted {
+                        if self.isDirectEngineActive {
+                            self.engine.setMuted(self.isMuted)
+                        }
+                    }
                     self.isLiked = data.isLiked
                     self.isDisliked = data.isDisliked
                     self.isShuffle = data.isShuffle
@@ -303,6 +330,10 @@ public final class MediaControllerModel: ObservableObject {
         isPlaying = true
         if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
             engine.play()
+            engine.setVolume(volume)
+            if isMuted {
+                engine.setMuted(true)
+            }
         } else {
             executeBrowserPlay()
         }
@@ -486,20 +517,50 @@ public final class MediaControllerModel: ObservableObject {
         volume = max(0, min(1, newVol))
         if volume > 0 && isMuted {
             isMuted = false
+            systemAudio.setMuted(false)
         }
         if isDirectEngineActive {
             engine.setVolume(volume)
         }
         executeBrowserVolume(volume)
+        systemAudio.setSystemVolume(volume)
         triggerVolumeHUD()
     }
     
     public func toggleMute() {
         isMuted.toggle()
         if isDirectEngineActive {
-            engine.toggleMute()
+            engine.setMuted(isMuted)
         }
         executeBrowserMute(isMuted)
+        systemAudio.setMuted(isMuted)
+        triggerVolumeHUD()
+    }
+    
+    // MARK: - Laptop System Audio Correlation
+    private func setupSystemAudioObserver() {
+        systemAudio.onVolumeChanged = { [weak self] newVolume, isMuted in
+            self?.handleSystemVolumeChanged(volume: newVolume, isMuted: isMuted)
+        }
+    }
+    
+    public func handleSystemVolumeChanged(volume newVol: Double, isMuted newMuted: Bool) {
+        let clamped = max(0, min(1, newVol))
+        let volChanged = abs(self.volume - clamped) > 0.005
+        let muteChanged = self.isMuted != newMuted
+        
+        guard volChanged || muteChanged else { return }
+        
+        self.volume = clamped
+        self.isMuted = newMuted
+        
+        // Auto-correct YouTube Music player
+        if isDirectEngineActive {
+            engine.setVolume(clamped)
+            engine.setMuted(newMuted)
+        }
+        executeBrowserVolume(clamped)
+        executeBrowserMute(newMuted)
         triggerVolumeHUD()
     }
     

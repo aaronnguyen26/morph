@@ -1047,6 +1047,30 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
+    public func setMuted(_ muted: Bool) {
+        let script = """
+        (function() {
+            var shouldMute = \(muted);
+            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            if (p) {
+                if (shouldMute && typeof p.mute === 'function') {
+                    p.mute();
+                } else if (!shouldMute && typeof p.unMute === 'function') {
+                    p.unMute();
+                }
+            }
+            var v = document.querySelector('video');
+            if (v) {
+                v.muted = shouldMute;
+            }
+            if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate();
+            }
+        })();
+        """
+        evaluate(script)
+    }
+    
     public func toggleShuffle() {
         let script = """
         (function() {
