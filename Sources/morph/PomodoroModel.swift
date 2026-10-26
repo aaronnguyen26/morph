@@ -23,6 +23,22 @@ public enum PomodoroMode: String, CaseIterable, Identifiable {
         case .longBreak: return "leaf.fill"
         }
     }
+    
+    public var preferenceKey: String {
+        switch self {
+        case .work: return "MorphPomodoroWorkDuration"
+        case .shortBreak: return "MorphPomodoroShortBreakDuration"
+        case .longBreak: return "MorphPomodoroLongBreakDuration"
+        }
+    }
+    
+    public var defaultPresets: [Int] {
+        switch self {
+        case .work: return [25, 45, 50, 60]
+        case .shortBreak: return [3, 5, 10, 15]
+        case .longBreak: return [15, 20, 30, 45]
+        }
+    }
 }
 
 @MainActor
@@ -33,6 +49,7 @@ public final class PomodoroModel: ObservableObject {
     @Published public var isRunning: Bool = false
     @Published public var isCompleted: Bool = false
     @Published public var completedSessionsCount: Int = 0
+    @Published public var preferredDurations: [PomodoroMode: TimeInterval] = [:]
     
     private var timerCancellable: AnyCancellable?
     private let userDefaults = UserDefaults.standard
@@ -55,6 +72,54 @@ public final class PomodoroModel: ObservableObject {
     public var progress: Double {
         guard totalDuration > 0 else { return 0 }
         return max(0, min(1, 1.0 - (timeRemaining / totalDuration)))
+    }
+    
+    public var currentMinutes: Int {
+        return max(1, Int(round(totalDuration / 60.0)))
+    }
+    
+    public var remainingMinutes: Int {
+        return max(0, Int(ceil(timeRemaining / 60.0)))
+    }
+    
+    public var currentPresets: [Int] {
+        return mode.defaultPresets
+    }
+    
+    public func preferredDuration(for targetMode: PomodoroMode) -> TimeInterval {
+        if let custom = preferredDurations[targetMode], custom > 0 {
+            return custom
+        }
+        let saved = userDefaults.double(forKey: targetMode.preferenceKey)
+        if saved > 0 {
+            preferredDurations[targetMode] = saved
+            return saved
+        }
+        return targetMode.defaultDuration
+    }
+    
+    public func setPreferredDuration(minutes: Int, for targetMode: PomodoroMode) {
+        let clampedMinutes = max(1, min(180, minutes))
+        let duration = TimeInterval(clampedMinutes * 60)
+        preferredDurations[targetMode] = duration
+        userDefaults.set(duration, forKey: targetMode.preferenceKey)
+        
+        if mode == targetMode {
+            setCustomDuration(minutes: clampedMinutes, saveAsPreference: false)
+        }
+    }
+    
+    public func restoreDefaultDuration(for targetMode: PomodoroMode) {
+        userDefaults.removeObject(forKey: targetMode.preferenceKey)
+        preferredDurations[targetMode] = targetMode.defaultDuration
+        if mode == targetMode {
+            setCustomDuration(minutes: Int(targetMode.defaultDuration / 60), saveAsPreference: false)
+        }
+    }
+    
+    public func isUsingCustomPreference(for targetMode: PomodoroMode) -> Bool {
+        let currentPref = preferredDuration(for: targetMode)
+        return abs(currentPref - targetMode.defaultDuration) > 1.0
     }
     
     public func start() {
@@ -97,17 +162,37 @@ public final class PomodoroModel: ObservableObject {
     public func switchMode(_ newMode: PomodoroMode) {
         pause()
         mode = newMode
-        totalDuration = newMode.defaultDuration
+        totalDuration = preferredDuration(for: newMode)
         timeRemaining = totalDuration
         isCompleted = false
         saveState()
     }
     
-    public func setCustomDuration(minutes: Int) {
+    public func setCustomDuration(minutes: Int, saveAsPreference: Bool = true) {
+        let clamped = max(1, min(180, minutes))
         pause()
-        totalDuration = TimeInterval(minutes * 60)
+        totalDuration = TimeInterval(clamped * 60)
         timeRemaining = totalDuration
         isCompleted = false
+        if saveAsPreference {
+            preferredDurations[mode] = totalDuration
+            userDefaults.set(totalDuration, forKey: mode.preferenceKey)
+        }
+        saveState()
+    }
+    
+    public func adjustTime(deltaMinutes: Int) {
+        let deltaSeconds = TimeInterval(deltaMinutes * 60)
+        let newRemaining = timeRemaining + deltaSeconds
+        // Clamp remaining time between 10 seconds and 3 hours
+        let clampedRemaining = max(10, min(180 * 60, newRemaining))
+        timeRemaining = clampedRemaining
+        if timeRemaining > totalDuration {
+            totalDuration = timeRemaining
+        }
+        if isCompleted && timeRemaining > 0 {
+            isCompleted = false
+        }
         saveState()
     }
     
@@ -134,16 +219,28 @@ public final class PomodoroModel: ObservableObject {
     }
     
     private func restoreState() {
+        // Load per-mode preferences
+        for m in PomodoroMode.allCases {
+            let saved = userDefaults.double(forKey: m.preferenceKey)
+            if saved > 0 {
+                preferredDurations[m] = saved
+            } else {
+                preferredDurations[m] = m.defaultDuration
+            }
+        }
+        
         if let savedMode = userDefaults.string(forKey: kModeKey),
            let parsedMode = PomodoroMode(rawValue: savedMode) {
             self.mode = parsedMode
         }
+        
         let savedDuration = userDefaults.double(forKey: kTotalDurationKey)
         if savedDuration > 0 {
             self.totalDuration = savedDuration
         } else {
-            self.totalDuration = self.mode.defaultDuration
+            self.totalDuration = self.preferredDuration(for: self.mode)
         }
+        
         let savedRemaining = userDefaults.double(forKey: kTimeRemainingKey)
         if savedRemaining > 0 && savedRemaining <= self.totalDuration {
             self.timeRemaining = savedRemaining
