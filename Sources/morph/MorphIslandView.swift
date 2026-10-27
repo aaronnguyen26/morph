@@ -763,6 +763,24 @@ private struct CompactMediaWingRight: View {
                 .background(Color.white.opacity(0.18))
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
+            } else if media.showOfflineHUD {
+                // Sleek Notch Offline HUD Pill
+                HStack(spacing: 3) {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
+                    Text(media.offlineHUDMessage.isEmpty ? "Offline • Downloads Opened" : media.offlineHUDMessage)
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.95))
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color(red: 0.22, green: 0.14, blue: 0.04))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule().stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.5)
+                )
+                .transition(.scale.combined(with: .opacity))
             } else if media.showRepeatHUD {
                 // Sleek Notch Repeat HUD Pill
                 HStack(spacing: 3.5) {
@@ -911,6 +929,24 @@ private struct CompactDualWingRight: View {
                 .padding(.vertical, 2)
                 .background(Color.white.opacity(0.18))
                 .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
+            } else if media.showOfflineHUD {
+                // Sleek Notch Offline HUD Pill
+                HStack(spacing: 3) {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
+                    Text(media.offlineHUDMessage.isEmpty ? "Offline • Downloads Opened" : media.offlineHUDMessage)
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.95))
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color(red: 0.22, green: 0.14, blue: 0.04))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule().stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.5)
+                )
                 .transition(.scale.combined(with: .opacity))
             } else if media.showRepeatHUD {
                 HStack(spacing: 3) {

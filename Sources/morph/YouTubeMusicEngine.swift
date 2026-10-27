@@ -297,6 +297,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var connectionState: String = "Connecting..."
     @Published public var canGoBack: Bool = false
     @Published public var canGoForward: Bool = false
+    @Published public var isOffline: Bool = false
     @Published public var libraryError: String? = nil
     @Published public var isLoadingLibrary: Bool = false
     private var lastLibrarySync: Date?
@@ -597,6 +598,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         updateNavigationState()
         self.connectionState = "YouTube Music Loaded"
         injectPeriodicObserver()
+        self.isOffline = false
         
         // Ensure cookies are synchronized and flushed to persistent store
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { _ in }
@@ -627,7 +629,24 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         updateNavigationState()
-        self.connectionState = "Load failed: \(error.localizedDescription)"
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && (nsError.code == NSURLErrorNotConnectedToInternet || nsError.code == NSURLErrorCannotFindHost || nsError.code == NSURLErrorNetworkConnectionLost) {
+            self.isOffline = true
+            self.connectionState = "Offline: No internet connection"
+        } else {
+            self.connectionState = "Load failed: \(error.localizedDescription)"
+        }
+    }
+    
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        updateNavigationState()
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && (nsError.code == NSURLErrorNotConnectedToInternet || nsError.code == NSURLErrorCannotFindHost || nsError.code == NSURLErrorNetworkConnectionLost) {
+            self.isOffline = true
+            self.connectionState = "Offline: No internet connection"
+        } else {
+            self.connectionState = "Load failed: \(error.localizedDescription)"
+        }
     }
     
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {

@@ -37,6 +37,10 @@ public struct MediaView: View {
     // MARK: - Left Deck (Now Playing Engine)
     private var nowPlayingDeck: some View {
         VStack(alignment: .leading, spacing: 7) {
+            if media.isOffline {
+                offlineNoticeBanner
+            }
+            
             albumArtAndMetadataRow
             
             if isSearching {
@@ -47,6 +51,55 @@ public struct MediaView: View {
             transportControlsRow
             volumeControlRow
         }
+    }
+    
+    // Offline Notice Banner
+    private var offlineNoticeBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
+            
+            VStack(alignment: .leading, spacing: 1) {
+                Text("No Internet Connection")
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(Color(red: 1.0, green: 0.85, blue: 0.4))
+                    .lineLimit(1)
+                Text("Streaming paused • Switched to Downloads")
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .lineLimit(1)
+            }
+            
+            Spacer(minLength: 2)
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    media.openDownloadsSection()
+                }
+            }) {
+                HStack(spacing: 2) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 7))
+                    Text("Downloads")
+                        .font(.system(size: 7.5, weight: .bold))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2.5)
+                .background(Color(red: 1.0, green: 0.78, blue: 0.28))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4.5)
+        .background(Color(red: 0.18, green: 0.12, blue: 0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.8)
+        )
     }
     
     // Song Search Bar
@@ -438,6 +491,8 @@ public struct MediaView: View {
                     playlistsSelectionDeck
                 case .queue:
                     playlistDetailDeck(playlist: media.nowPlayingQueuePlaylist)
+                case .downloads:
+                    downloadsDeck
                 case .search:
                     hubSearchDeck
                 }
@@ -464,6 +519,23 @@ public struct MediaView: View {
                     .font(.system(size: 9, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
+                
+                if media.isOffline {
+                    HStack(spacing: 2) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 6.5, weight: .bold))
+                        Text("OFFLINE")
+                            .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                    }
+                    .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
+                    .background(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.18))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.5)
+                    )
+                }
             }
             .fixedSize(horizontal: true, vertical: false)
             .padding(.trailing, 2)
@@ -675,6 +747,201 @@ public struct MediaView: View {
         }
         .buttonStyle(.plain)
         .help("Start algorithm radio based on \(track.title)")
+    }
+    
+    // MARK: - Downloads & Offline Deck
+    private var downloadsDeck: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            // Header Row
+            HStack(spacing: 4) {
+                HStack(spacing: 3.5) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.55))
+                    Text("Downloads & Offline")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                }
+                
+                Text("• \(media.downloadedTracks.count) tracks ready")
+                    .font(.system(size: 7.5, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .lineLimit(1)
+                
+                Spacer(minLength: 4)
+                
+                Button(action: {
+                    media.openDownloadsFolder()
+                }) {
+                    HStack(spacing: 2.5) {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 7))
+                        Text("Open Folder")
+                            .font(.system(size: 7.5, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Open Downloads folder in Finder")
+            }
+            
+            // Reassurance / Zero-Latency Banner
+            HStack(spacing: 5) {
+                Image(systemName: media.isOffline ? "wifi.slash" : "bolt.shield.fill")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(media.isOffline ? Color(red: 1.0, green: 0.72, blue: 0.2) : Color(red: 0.35, green: 0.85, blue: 0.55))
+                
+                Text(media.isOffline 
+                    ? "Morph is offline • Zero-latency local audio engine • No lag from re-clicking"
+                    : "Offline audio cache • Instant playback without buffering")
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.72))
+                    .lineLimit(1)
+                
+                Spacer(minLength: 2)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.white.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+            )
+            
+            if media.downloadedTracks.isEmpty {
+                VStack(spacing: 6) {
+                    Spacer(minLength: 12)
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 14))
+                        .foregroundColor(Color.white.opacity(0.35))
+                    Text("No downloaded songs yet")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.8))
+                    Text("Place audio files in ~/Downloads or ~/Music to play them offline.")
+                        .font(.system(size: 7.5, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.45))
+                        .multilineTextAlignment(.center)
+                    Button(action: { media.openDownloadsFolder() }) {
+                        Text("Open Downloads Folder")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 12)
+                }
+                .frame(maxWidth: .infinity, maxHeight: 138)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 3) {
+                        ForEach(media.downloadedTracks) { track in
+                            downloadedTrackRow(track: track)
+                        }
+                    }
+                    .padding(.trailing, 2)
+                }
+                .frame(maxHeight: 138)
+            }
+        }
+    }
+    
+    private func downloadedTrackRow(track: YTMPlaylistItem) -> some View {
+        let isCurrent = media.isPlaying && media.trackTitle == track.title
+        let isPaused = !media.isPlaying && media.trackTitle == track.title && media.currentTime > 0
+        let isActive = isCurrent || isPaused
+        let titleWeight: Font.Weight = isActive ? .bold : .medium
+        let titleColor = isActive ? Color.white : Color.white.opacity(0.9)
+        let artistColor = isActive ? Color.white.opacity(0.7) : Color.white.opacity(0.45)
+        let durationColor = isActive ? Color.white.opacity(0.8) : Color.white.opacity(0.35)
+        let bgOpacity: Double = isCurrent ? 0.14 : (isPaused ? 0.08 : 0.03)
+        let strokeColor = isCurrent ? Color(red: 0.35, green: 0.85, blue: 0.55).opacity(0.3) : (isPaused ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
+        
+        return Button(action: {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                media.playDownloadedTrack(track)
+            }
+        }) {
+            HStack(spacing: 7) {
+                // Artwork thumbnail with download badge
+                ZStack(alignment: .bottomTrailing) {
+                    artworkThumb(url: track.thumbnailURL, size: 24, fallbackIcon: "music.note")
+                    
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 7))
+                        .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.55))
+                        .background(Color.black.clipShape(Circle()))
+                        .offset(x: 2, y: 2)
+                }
+                
+                // Track metadata
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 3) {
+                        Text(track.title)
+                            .font(.system(size: 9.5, weight: titleWeight, design: .rounded))
+                            .foregroundColor(titleColor)
+                            .lineLimit(1)
+                        
+                        Text("DOWNLOADED")
+                            .font(.system(size: 6, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.55))
+                            .padding(.horizontal, 3)
+                            .padding(.vertical, 1)
+                            .background(Color(red: 0.35, green: 0.85, blue: 0.55).opacity(0.14))
+                            .clipShape(Capsule())
+                    }
+                    
+                    Text(track.artist.isEmpty ? "Offline Library" : track.artist)
+                        .font(.system(size: 8, weight: .regular))
+                        .foregroundColor(artistColor)
+                        .lineLimit(1)
+                }
+                
+                Spacer(minLength: 4)
+                
+                // Duration
+                if !track.duration.isEmpty {
+                    Text(track.duration)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(durationColor)
+                }
+                
+                // Active visualizer or play status
+                if isCurrent {
+                    HStack(alignment: .bottom, spacing: 1.2) {
+                        ForEach(0..<3, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 0.5)
+                                .fill(Color(red: 0.35, green: 0.85, blue: 0.55))
+                                .frame(width: 1.8, height: max(2, 8 * media.visualizerBars[i]))
+                        }
+                    }
+                    .frame(width: 14, height: 10, alignment: .bottom)
+                    .padding(.horizontal, 2)
+                } else if isPaused {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(Color.white.opacity(0.75))
+                        .padding(.horizontal, 2)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(bgOpacity))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(strokeColor, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
     }
     
     // MARK: - Hub Dedicated Search Deck
