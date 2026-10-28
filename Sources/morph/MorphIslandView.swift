@@ -186,6 +186,12 @@ public struct MorphIslandView: View {
         Color.clear
             .frame(width: model.idleWidth, height: model.idleHeight)
             .contentShape(Rectangle())
+            .onTapGesture {
+                model.syncExpandedFeatureWithActiveContext()
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                    model.isExpanded = true
+                }
+            }
     }
     
     // MARK: - 2. Compact Active Notch View (Independent Dynamic Island HUD)
@@ -200,6 +206,7 @@ public struct MorphIslandView: View {
                 // Center: Hardware camera notch blind spot (zero elements behind camera!)
                 Color.clear
                     .frame(width: model.idleWidth, height: model.idleHeight)
+                    .contentShape(Rectangle())
                 
                 // Right Wing: Outside camera notch, 100% visible
                 rightCompactWing
@@ -218,6 +225,12 @@ public struct MorphIslandView: View {
         }
         .frame(width: model.compactWidth, height: model.compactHeight)
         .contentShape(Rectangle())
+        .onTapGesture {
+            model.syncExpandedFeatureWithActiveContext()
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                model.isExpanded = true
+            }
+        }
     }
     
     // MARK: - Independent Left Compact Wing

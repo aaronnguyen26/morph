@@ -32,6 +32,7 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
         }
         let options: NSTrackingArea.Options = [
             .mouseEnteredAndExited,
+            .mouseMoved,
             .activeAlways,
             .inVisibleRect
         ]
@@ -46,6 +47,14 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
             onMouseEnter?()
         }
         super.mouseEntered(with: event)
+    }
+    
+    public override func mouseMoved(with event: NSEvent) {
+        if !isMouseInside {
+            isMouseInside = true
+            onMouseEnter?()
+        }
+        super.mouseMoved(with: event)
     }
     
     public override func mouseExited(with event: NSEvent) {

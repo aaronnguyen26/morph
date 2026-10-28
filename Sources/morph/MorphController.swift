@@ -14,6 +14,7 @@ public final class MorphController: NSObject {
     private var cancellables = Set<AnyCancellable>()
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var mousePollTimer: Timer?
     
     public init(model: NotchModel = NotchModel()) {
         self.model = model
@@ -317,15 +318,28 @@ public final class MorphController: NSObject {
     
     private func setupMouseMonitors() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.checkMousePosition(NSEvent.mouseLocation)
-            }
+        
+        // 1. High-frequency 50ms (20Hz) active mouse location poller.
+        // Direct main thread read from macOS WindowServer via RunLoop.common.
+        // Guarantees immediate, rock-solid hover detection across all windows and displays,
+        // completely bypassing macOS background event monitor throttling.
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.checkMousePosition(NSEvent.mouseLocation)
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            Task { @MainActor [weak self] in
-                self?.checkMousePosition(NSEvent.mouseLocation)
-            }
+        RunLoop.main.add(timer, forMode: .common)
+        self.mousePollTimer = timer
+        
+        // 2. Global event monitor for mouse moves and drags
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
+            guard let self = self else { return }
+            self.checkMousePosition(NSEvent.mouseLocation)
+        }
+        
+        // 3. Local event monitor for inside-window movements
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
+            guard let self = self else { return event }
+            self.checkMousePosition(NSEvent.mouseLocation)
             return event
         }
     }
@@ -341,9 +355,9 @@ public final class MorphController: NSObject {
     
     public func isMouseInsideMorphUI(_ mouseLoc: NSPoint) -> Bool {
         let baseRect = activeUIRect()
-        let hPadding: CGFloat = model.isExpanded ? 10 : 8
-        let bottomPadding: CGFloat = model.isExpanded ? 12 : 8
-        let topPadding: CGFloat = 6
+        let hPadding: CGFloat = model.isExpanded ? 16 : 14
+        let bottomPadding: CGFloat = model.isExpanded ? 16 : 14
+        let topPadding: CGFloat = 10
         
         let sensitiveRect = NSRect(
             x: baseRect.origin.x - hPadding,
@@ -477,6 +491,8 @@ public final class MorphController: NSObject {
             NSEvent.removeMonitor(lm)
             localMonitor = nil
         }
+        mousePollTimer?.invalidate()
+        mousePollTimer = nil
         DistributedNotificationCenter.default().removeObserver(self)
         panel?.orderOut(nil)
     }

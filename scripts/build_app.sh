@@ -67,7 +67,7 @@ EOF
 echo "🔏 Signing Morph.app bundle..."
 find "$APP_DIR" -name ".DS_Store" -delete 2>/dev/null || true
 dot_clean "$APP_DIR" 2>/dev/null || true
-xattr -rc "$APP_DIR" 2>/dev/null || true
+xattr -cr "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "✅ Morph.app built successfully at: $APP_DIR"

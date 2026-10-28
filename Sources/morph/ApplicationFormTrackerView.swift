@@ -455,6 +455,7 @@ public struct CompactFormTrackerWingLeft: View {
                 }
             }
             .padding(.leading, 10)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Form detected. Click to expand Form Tracker.")
@@ -501,6 +502,7 @@ public struct CompactFormTrackerWingRight: View {
                     .clipShape(Circle())
             }
             .padding(.trailing, 8)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Click to expand Form Tracker")

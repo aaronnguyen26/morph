@@ -802,17 +802,22 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
     /// Reads the active form URL and page title directly from Polar Chromium host session binary data
     public static func readPolarSessionForm() -> (url: String, title: String)? {
         let base = ("~/Library/Application Support/com.polar.browser.host" as NSString).expandingTildeInPath
-        guard let enumerator = FileManager.default.enumerator(atPath: base) else { return nil }
+        let possibleDirs = [
+            (base as NSString).appendingPathComponent("Default/Sessions"),
+            (base as NSString).appendingPathComponent("Sessions")
+        ]
         
         var sessionFiles: [(path: String, mtime: Date)] = []
-        while let file = enumerator.nextObject() as? String {
-            if file.contains("Sessions/Session_") {
-                let fullPath = (base as NSString).appendingPathComponent(file)
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: fullPath),
-                   let mtime = attrs[.modificationDate] as? Date {
-                    // Only consider sessions modified in the last 2 hours
-                    if abs(mtime.timeIntervalSinceNow) < 7200 {
-                        sessionFiles.append((fullPath, mtime))
+        for dir in possibleDirs {
+            if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
+                for file in files where file.hasPrefix("Session_") {
+                    let fullPath = (dir as NSString).appendingPathComponent(file)
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: fullPath),
+                       let mtime = attrs[.modificationDate] as? Date {
+                        // Only consider sessions modified in the last 2 hours
+                        if abs(mtime.timeIntervalSinceNow) < 7200 {
+                            sessionFiles.append((fullPath, mtime))
+                        }
                     }
                 }
             }
@@ -1917,8 +1922,8 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     }
     
     private func setupAXSync() {
-        // Fast 0.5s poll to sync focused element value, selections, and live browser input changes
-        axSyncTimer = Timer.publish(every: 0.5, on: .main, in: .common)
+        // Lightweight 1.5s poll to sync focused element value and live browser input changes without CPU load
+        axSyncTimer = Timer.publish(every: 1.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -2376,6 +2381,7 @@ public final class ApplicationFormModel: ObservableObject {
     private var workspaceNotificationObserver: NSObjectProtocol?
     private var workspaceLaunchObserver: NSObjectProtocol?
     private var workspaceUnhideObserver: NSObjectProtocol?
+    private var isAppleScriptSyncRunning: Bool = false
     
     public init(
         detector: ApplicationFormDetectorProtocol = DefaultApplicationFormDetector(),
@@ -2669,12 +2675,25 @@ public final class ApplicationFormModel: ObservableObject {
             }
         }
         
-        // 3. Fallback for scriptable browsers (Safari, Chrome) via AppleScript DOM extraction
-        for app in targetApps {
-            let bid = app.bundleIdentifier ?? ""
-            if let pairs = FormInputAutoTracker.extractInputsViaAppleScript(bundleID: bid), !pairs.isEmpty {
-                for pair in pairs {
-                    applyExtractedInput(label: pair.label, value: pair.value)
+        // 3. Fallback for scriptable browsers (Safari, Chrome) via AppleScript DOM extraction on background queue
+        if !isAppleScriptSyncRunning {
+            isAppleScriptSyncRunning = true
+            let bundleIDs = targetApps.compactMap { $0.bundleIdentifier }
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                defer {
+                    Task { @MainActor [weak self] in
+                        self?.isAppleScriptSyncRunning = false
+                    }
+                }
+                for bid in bundleIDs {
+                    if let pairs = FormInputAutoTracker.extractInputsViaAppleScript(bundleID: bid), !pairs.isEmpty {
+                        Task { @MainActor [weak self] in
+                            guard let self = self else { return }
+                            for pair in pairs {
+                                self.applyExtractedInput(label: pair.label, value: pair.value)
+                            }
+                        }
+                    }
                 }
             }
         }
