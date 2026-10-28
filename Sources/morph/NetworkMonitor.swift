@@ -7,6 +7,7 @@ public final class NetworkMonitor: ObservableObject {
     public static let shared = NetworkMonitor()
     
     @Published public private(set) var isConnected: Bool = true
+    @Published public private(set) var isWifiConnected: Bool = true
     @Published public private(set) var isExpensive: Bool = false
     @Published public private(set) var isConstrained: Bool = false
     
@@ -15,6 +16,7 @@ public final class NetworkMonitor: ObservableObject {
         didSet {
             if let override = overrideIsConnected {
                 self.isConnected = override
+                self.isWifiConnected = override
             }
         }
     }
@@ -36,8 +38,11 @@ public final class NetworkMonitor: ObservableObject {
                 guard let self = self else { return }
                 if let override = self.overrideIsConnected {
                     self.isConnected = override
+                    self.isWifiConnected = override
                 } else {
-                    self.isConnected = (path.status == .satisfied)
+                    let satisfied = (path.status == .satisfied)
+                    self.isConnected = satisfied
+                    self.isWifiConnected = satisfied && path.usesInterfaceType(.wifi)
                     self.isExpensive = path.isExpensive
                     self.isConstrained = path.isConstrained
                 }
@@ -55,5 +60,6 @@ public final class NetworkMonitor: ObservableObject {
     public func setConnectedForTesting(_ connected: Bool) {
         self.overrideIsConnected = connected
         self.isConnected = connected
+        self.isWifiConnected = connected
     }
 }

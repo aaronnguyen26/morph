@@ -43,11 +43,13 @@ public enum CompactHUDMode: String, Equatable {
     case calendarAlert
     case meetingFlight
     case dropShelfActive
+    case formTrackerActive
 }
 
 public enum ContextualFeature: String, Identifiable, Equatable {
     case meetingFlight = "Meeting Cockpit"
     case dropShelf = "Drop Shelf"
+    case formTracker = "Application Form Tracker"
     
     public var id: String { rawValue }
 }
@@ -78,6 +80,7 @@ public final class NotchModel: ObservableObject {
     public let supabase: SupabaseService
     public let dropShelf: DropShelfModel
     public let meetingController: MeetingFlightControllerModel
+    public let formTracker: ApplicationFormModel
     
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
@@ -91,7 +94,8 @@ public final class NotchModel: ObservableObject {
         calendar: CalendarModel = CalendarModel(),
         supabase: SupabaseService = .shared,
         dropShelf: DropShelfModel = DropShelfModel(),
-        meetingController: MeetingFlightControllerModel = MeetingFlightControllerModel()
+        meetingController: MeetingFlightControllerModel = MeetingFlightControllerModel(),
+        formTracker: ApplicationFormModel = ApplicationFormModel()
     ) {
         self.pomodoro = pomodoro
         self.media = media
@@ -100,6 +104,7 @@ public final class NotchModel: ObservableObject {
         self.supabase = supabase
         self.dropShelf = dropShelf
         self.meetingController = meetingController
+        self.formTracker = formTracker
         
         detectScreenNotch()
         observeSubmodels()
@@ -116,9 +121,10 @@ public final class NotchModel: ObservableObject {
         let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "com.morph.has_completed_profile_onboarding")
         let isAuthenticated = supabase.currentUser.isAuthenticated
         
-        // Auto-propagate user email to Google Calendar immediately
+        // Auto-propagate user email to Google Calendar & Form Tracker immediately
         if isAuthenticated {
             calendar.configureUser(email: supabase.currentUser.email)
+            formTracker.setRecipientEmail(supabase.currentUser.email)
         }
         
         // Guard against automatically mutating test state unless explicitly requested
@@ -138,6 +144,7 @@ public final class NotchModel: ObservableObject {
         UserDefaults.standard.set(true, forKey: "com.morph.has_completed_profile_onboarding")
         if supabase.currentUser.isAuthenticated {
             calendar.configureUser(email: supabase.currentUser.email)
+            formTracker.setRecipientEmail(supabase.currentUser.email)
         }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             self.selectedTab = .home
@@ -172,6 +179,7 @@ public final class NotchModel: ObservableObject {
         )
         if profile.isAuthenticated {
             calendar.configureUser(email: profile.email)
+            formTracker.setRecipientEmail(profile.email)
         }
         return isFirstTime
     }
@@ -205,6 +213,11 @@ public final class NotchModel: ObservableObject {
         
         if meetingController.isInCall || meetingController.isPreMeetingWindow {
             return .meetingFlight
+        }
+        
+        // Priority 3: Form Tracker (Strictly context-aware: only when an application form is currently detected)
+        if formTracker.isFormDetected {
+            return .formTrackerActive
         }
         
         if isNotePinnedToNotch {
@@ -254,6 +267,8 @@ public final class NotchModel: ObservableObject {
             return max(idleWidth + 280, 480)
         case .dropShelfActive:
             return max(idleWidth + 240, 440)
+        case .formTrackerActive:
+            return max(idleWidth + 280, 480)
         }
     }
     
@@ -263,7 +278,7 @@ public final class NotchModel: ObservableObject {
         case .notesPinned:
             return max(idleHeight + 24, 56)
         case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAlert,
-             .meetingFlight, .dropShelfActive:
+             .meetingFlight, .dropShelfActive, .formTrackerActive:
             return idleHeight
         }
     }
@@ -321,6 +336,7 @@ public final class NotchModel: ObservableObject {
         supabase.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         dropShelf.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         meetingController.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        formTracker.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
         
         // Track the latest feature tab used by the user
@@ -370,6 +386,14 @@ public final class NotchModel: ObservableObject {
             }
         }
         
+        // Restore context when an application form session ends
+        formTracker.onFormClosed = { [weak self] in
+            guard let self = self else { return }
+            if self.activeContextFeature == .formTracker {
+                self.closeDropShelfAndRestoreContext()
+            }
+        }
+        
         pomodoro.$completedSessionsCount
             .dropFirst()
             .sink { [weak self] _ in
@@ -388,6 +412,7 @@ public final class NotchModel: ObservableObject {
                 let clean = email.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !clean.isEmpty && clean.contains("@") {
                     self.calendar.configureUser(email: clean)
+                    self.formTracker.setRecipientEmail(clean)
                 }
             }
             .store(in: &cancellables)
@@ -420,6 +445,8 @@ public final class NotchModel: ObservableObject {
             activeContextFeature = .meetingFlight
         case .dropShelfActive:
             activeContextFeature = .dropShelf
+        case .formTrackerActive:
+            activeContextFeature = .formTracker
         case .none:
             // Remain on current tab or home
             break
@@ -488,6 +515,11 @@ public final class NotchModel: ObservableObject {
             // 1. Live Contextual Awareness Priority:
             if meetingController.isInCall || meetingController.isPreMeetingWindow {
                 activeContextFeature = .meetingFlight
+                return
+            }
+            
+            if formTracker.isFormDetected {
+                activeContextFeature = .formTracker
                 return
             }
             

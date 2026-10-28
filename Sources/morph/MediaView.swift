@@ -23,23 +23,22 @@ public struct MediaView: View {
     }
     
     public var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             nowPlayingDeck
-                .frame(width: 272)
+                .frame(width: 262)
             
             playlistBrowserDeck
+                .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
     
     // MARK: - Left Deck (Now Playing Engine)
     private var nowPlayingDeck: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if media.isOffline {
-                offlineNoticeBanner
-            }
+        VStack(alignment: .leading, spacing: 6) {
+            nowPlayingHeaderRow
             
             albumArtAndMetadataRow
             
@@ -51,67 +50,48 @@ public struct MediaView: View {
             transportControlsRow
             volumeControlRow
         }
+        .padding(7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(white: 0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
     
-    // Offline Notice Banner
-    private var offlineNoticeBanner: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "wifi.slash")
-                .font(.system(size: 9.5, weight: .bold))
-                .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
-            
-            VStack(alignment: .leading, spacing: 1) {
-                Text("No Internet Connection")
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                    .foregroundColor(Color(red: 1.0, green: 0.85, blue: 0.4))
-                    .lineLimit(1)
-                Text("Streaming paused • Switched to Downloads")
-                    .font(.system(size: 7, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.65))
+    // Left Deck Header (Symmetrical to hubTopNavigationBar on the Right)
+    private var nowPlayingHeaderRow: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 3) {
+                Image(systemName: media.isOffline ? "wifi.slash" : "waveform")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(media.isOffline ? Color(red: 1.0, green: 0.72, blue: 0.2) : (media.isPlaying ? .white : Color.white.opacity(0.6)))
+                
+                Text(media.isOffline ? "Offline Mode" : "Now Playing")
+                    .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                    .foregroundColor(media.isOffline ? Color(red: 1.0, green: 0.85, blue: 0.4) : .white)
                     .lineLimit(1)
             }
+            .fixedSize(horizontal: true, vertical: false)
             
-            Spacer(minLength: 2)
+            Spacer(minLength: 4)
             
-            Button(action: {
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                    media.openDownloadsSection()
-                }
-            }) {
-                HStack(spacing: 2) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 7))
-                    Text("Downloads")
-                        .font(.system(size: 7.5, weight: .bold))
-                }
-                .foregroundColor(.black)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2.5)
-                .background(Color(red: 1.0, green: 0.78, blue: 0.28))
-                .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
+            trackActionPills
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4.5)
-        .background(Color(red: 0.18, green: 0.12, blue: 0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.8)
-        )
+        .padding(.bottom, 1)
     }
     
     // Song Search Bar
     private var songSearchBar: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 8.5))
+                .font(.system(size: 8))
                 .foregroundColor(Color.white.opacity(0.6))
             
             TextField("Search song or artist...", text: $searchQuery)
                 .textFieldStyle(.plain)
-                .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                .font(.system(size: 8.5, weight: .medium, design: .rounded))
                 .foregroundColor(.white)
                 .onSubmit {
                     let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,7 +105,7 @@ public struct MediaView: View {
                     searchQuery = ""
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 8.5))
+                        .font(.system(size: 8))
                         .foregroundColor(Color.white.opacity(0.5))
                 }
                 .buttonStyle(.plain)
@@ -138,57 +118,65 @@ public struct MediaView: View {
                 }
             }) {
                 Text("Search")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 7.5, weight: .bold))
                     .foregroundColor(.black)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
                     .background(Color.white)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3.5)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2.5)
         .background(Color.white.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
     
     // 1. Album Art & Metadata
     private var albumArtAndMetadataRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             albumArtSquircle
             
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(media.trackTitle.isEmpty ? "No Track Selected" : media.trackTitle)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(media.trackTitle.isEmpty ? Color.white.opacity(0.6) : .white)
                     .lineLimit(1)
                 
                 Text(media.artistName.isEmpty ? "YouTube Music" : media.artistName)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 8.5, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.6))
                     .lineLimit(1)
                 
-                trackActionPills
-                    .padding(.top, 1)
+                HStack(spacing: 3.5) {
+                    Image(systemName: media.isOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 6.5))
+                        .foregroundColor(media.isOffline ? Color(red: 1.0, green: 0.72, blue: 0.2) : Color.white.opacity(0.5))
+                    
+                    Text(media.isOffline ? "Cached Offline" : (media.isSignedIn ? "YouTube Music Premium" : "Direct Stream"))
+                        .font(.system(size: 7, weight: .medium, design: .rounded))
+                        .foregroundColor(media.isOffline ? Color(red: 1.0, green: 0.85, blue: 0.4) : Color.white.opacity(0.45))
+                        .lineLimit(1)
+                }
+                .padding(.top, 1)
             }
+            
+            Spacer(minLength: 0)
         }
     }
     
     private var albumArtSquircle: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let size: CGFloat = isSearching ? 34 : 46
+        return ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color(white: 0.12))
-                .frame(width: 56, height: 56)
+                .frame(width: size, height: size)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Color.white.opacity(0.14), lineWidth: 1)
                 )
-                .shadow(color: Color.black.opacity(0.55), radius: 5, x: 0, y: 2)
+                .shadow(color: Color.black.opacity(0.5), radius: 4, x: 0, y: 1.5)
             
             if let artURL = media.albumArtURL, let url = URL(string: artURL) {
                 AsyncImage(url: url) { phase in
@@ -197,8 +185,8 @@ public struct MediaView: View {
                         image
                             .resizable()
                             .aspectRatio(contentMode: .fill)
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .frame(width: size, height: size)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     default:
                         defaultArtPlaceholder
                     }
@@ -207,19 +195,20 @@ public struct MediaView: View {
                 defaultArtPlaceholder
             }
         }
+        .frame(width: size, height: size)
     }
     
     private var trackActionPills: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 3.5) {
             Button(action: {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                     isSearching.toggle()
                 }
             }) {
                 Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
-                    .font(.system(size: 9))
+                    .font(.system(size: 7.5))
                     .foregroundColor(isSearching ? Color.white : Color.white.opacity(0.7))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 17, height: 17)
                     .background(isSearching ? Color.white.opacity(0.25) : Color.white.opacity(0.08))
                     .clipShape(Circle())
             }
@@ -230,9 +219,9 @@ public struct MediaView: View {
                 media.toggleLike()
             }) {
                 Image(systemName: media.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 7.5))
                     .foregroundColor(media.isLiked ? Color.white : Color.white.opacity(0.55))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 17, height: 17)
                     .background(media.isLiked ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
                     .clipShape(Circle())
             }
@@ -243,9 +232,9 @@ public struct MediaView: View {
                 media.toggleDislike()
             }) {
                 Image(systemName: media.isDisliked ? "hand.thumbsdown.fill" : "hand.thumbsdown")
-                    .font(.system(size: 9.5))
+                    .font(.system(size: 7.5))
                     .foregroundColor(media.isDisliked ? Color.white : Color.white.opacity(0.55))
-                    .frame(width: 20, height: 20)
+                    .frame(width: 17, height: 17)
                     .background(media.isDisliked ? Color.white.opacity(0.2) : Color.white.opacity(0.07))
                     .clipShape(Circle())
             }
@@ -256,15 +245,15 @@ public struct MediaView: View {
                 Button(action: {
                     media.openSignIn()
                 }) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 2) {
                         Image(systemName: "safari")
-                            .font(.system(size: 8))
+                            .font(.system(size: 6.5))
                         Text("Sign In")
-                            .font(.system(size: 8.5, weight: .semibold))
+                            .font(.system(size: 7, weight: .semibold))
                     }
                     .foregroundColor(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 1.5)
                     .background(Color.white.opacity(0.14))
                     .clipShape(Capsule())
                 }
@@ -274,15 +263,15 @@ public struct MediaView: View {
                 Button(action: {
                     media.openInBrowser()
                 }) {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 2) {
                         Image(systemName: "arrow.up.right.square")
-                            .font(.system(size: 8))
+                            .font(.system(size: 6.5))
                         Text("Browser")
-                            .font(.system(size: 8.5, weight: .medium))
+                            .font(.system(size: 7, weight: .medium))
                     }
                     .foregroundColor(Color.white.opacity(0.85))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 1.5)
                     .background(Color.white.opacity(0.08))
                     .clipShape(Capsule())
                 }
@@ -294,16 +283,16 @@ public struct MediaView: View {
     
     // 2. Timeline Scrubber
     private var timelineScrubberRow: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 2) {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(Color.white.opacity(0.14))
-                        .frame(height: 4)
+                        .frame(height: 3)
                     
                     Capsule()
                         .fill(Color.white)
-                        .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(effectiveProgress))), height: 4)
+                        .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(effectiveProgress))), height: 3)
                 }
                 .contentShape(Rectangle())
                 .gesture(
@@ -320,44 +309,46 @@ public struct MediaView: View {
                         }
                 )
             }
-            .frame(height: 6)
+            .frame(height: 5)
             
             HStack {
                 Text(effectiveCurrentTime)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.5))
                 
                 Spacer()
                 
                 // Live 3-bar mini visualizer
-                HStack(alignment: .bottom, spacing: 2) {
+                HStack(alignment: .bottom, spacing: 1.5) {
                     ForEach(0..<3, id: \.self) { i in
-                        RoundedRectangle(cornerRadius: 1)
+                        RoundedRectangle(cornerRadius: 0.5)
                             .fill(Color.white.opacity(0.8))
-                            .frame(width: 2.2, height: max(2.5, 9 * media.visualizerBars[i]))
+                            .frame(width: 1.8, height: max(2, 7 * media.visualizerBars[i]))
                     }
                 }
-                .frame(height: 9, alignment: .bottom)
+                .frame(height: 7, alignment: .bottom)
                 
                 Spacer()
                 
                 Text(media.formattedDuration)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.5))
             }
         }
     }
     
-    // 3. Transport Controls
+    // 3. Transport Controls (Dead-Center Symmetrical Alignment)
     private var transportControlsRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
+            Spacer(minLength: 0)
+            
             Button(action: {
                 media.toggleShuffle()
             }) {
                 Image(systemName: "shuffle")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 8.5, weight: .bold))
                     .foregroundColor(media.isShuffle ? Color.white : Color.white.opacity(0.35))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 19, height: 19)
                     .background(media.isShuffle ? Color.white.opacity(0.2) : Color.white.opacity(0.06))
                     .clipShape(Circle())
             }
@@ -368,9 +359,9 @@ public struct MediaView: View {
                 media.previousTrack()
             }) {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundColor(Color.white.opacity(0.85))
-                    .frame(width: 24, height: 24)
+                    .frame(width: 21, height: 21)
                     .background(Color.white.opacity(0.08))
                     .clipShape(Circle())
             }
@@ -381,12 +372,12 @@ public struct MediaView: View {
                 media.togglePlay()
             }) {
                 Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 10.5, weight: .bold))
                     .foregroundColor(.black)
-                    .frame(width: 30, height: 30)
+                    .frame(width: 28, height: 28)
                     .background(Color.white)
                     .clipShape(Circle())
-                    .shadow(color: Color.white.opacity(0.25), radius: 4, x: 0, y: 1)
+                    .shadow(color: Color.white.opacity(0.25), radius: 3, x: 0, y: 1)
             }
             .buttonStyle(.plain)
             .help(media.isPlaying ? "Pause Music (⌘⏎)" : "Play Music (⌘⏎)")
@@ -395,9 +386,9 @@ public struct MediaView: View {
                 media.nextTrack()
             }) {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundColor(Color.white.opacity(0.85))
-                    .frame(width: 24, height: 24)
+                    .frame(width: 21, height: 21)
                     .background(Color.white.opacity(0.08))
                     .clipShape(Circle())
             }
@@ -410,9 +401,9 @@ public struct MediaView: View {
                 }
             }) {
                 Image(systemName: media.repeatMode.iconName)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 8.5, weight: .bold))
                     .foregroundColor(media.repeatMode != .off ? Color.white : Color.white.opacity(0.35))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 19, height: 19)
                     .background(media.repeatMode != .off ? Color.white.opacity(0.2) : Color.white.opacity(0.06))
                     .clipShape(Circle())
             }
@@ -423,27 +414,30 @@ public struct MediaView: View {
                 media.stop()
             }) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 8.5, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
                     .foregroundColor(Color.white.opacity(0.65))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 19, height: 19)
                     .background(Color.white.opacity(0.06))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Stop Playback")
+            
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
     
     // 4. Volume Control Row (Clean & Monochromatic)
     private var volumeControlRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Button(action: {
                 media.toggleMute()
             }) {
                 Image(systemName: media.isMuted ? "speaker.slash.fill" : (media.volume > 0.5 ? "speaker.wave.2.fill" : "speaker.wave.1.fill"))
-                    .font(.system(size: 10))
+                    .font(.system(size: 9))
                     .foregroundColor(media.isMuted ? Color.white.opacity(0.4) : Color.white.opacity(0.85))
-                    .frame(width: 18, height: 18)
+                    .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
             .help(media.isMuted ? "Unmute (⌘U)" : "Mute (⌘U)")
@@ -452,11 +446,11 @@ public struct MediaView: View {
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(Color.white.opacity(0.14))
-                        .frame(height: 3.5)
+                        .frame(height: 3)
                     
                     Capsule()
                         .fill(media.isMuted ? Color.white.opacity(0.3) : Color.white)
-                        .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(media.isMuted ? 0 : media.volume))), height: 3.5)
+                        .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(media.isMuted ? 0 : media.volume))), height: 3)
                 }
                 .contentShape(Rectangle())
                 .gesture(
@@ -467,17 +461,17 @@ public struct MediaView: View {
                         }
                 )
             }
-            .frame(height: 6)
+            .frame(height: 5)
             
             Text("\(Int((media.isMuted ? 0 : media.volume) * 100))%")
-                .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                .font(.system(size: 7.5, weight: .medium, design: .monospaced))
                 .foregroundColor(Color.white.opacity(0.45))
         }
     }
     
-    // MARK: - Right Deck: YouTube Music Flexible Hub (328 pt)
+    // MARK: - Right Deck: YouTube Music Flexible Hub (326 pt)
     private var playlistBrowserDeck: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             hubTopNavigationBar
             
             if media.selectedPlaylist != nil && media.rightDeckSection == .playlists {
@@ -498,38 +492,39 @@ public struct MediaView: View {
                 }
             }
         }
-        .padding(9)
+        .padding(7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(white: 0.07))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
     
     // MARK: - YouTube Music Hub Top Bar
     private var hubTopNavigationBar: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             // YTM Brand Icon & Badge
             HStack(spacing: 3) {
                 Image(systemName: "play.circle.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9.5, weight: .bold))
                     .foregroundColor(.red)
                 Text("Music")
-                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 
                 if media.isOffline {
                     HStack(spacing: 2) {
                         Image(systemName: "wifi.slash")
-                            .font(.system(size: 6.5, weight: .bold))
+                            .font(.system(size: 6, weight: .bold))
                         Text("OFFLINE")
-                            .font(.system(size: 6.5, weight: .heavy, design: .monospaced))
+                            .font(.system(size: 6, weight: .heavy, design: .monospaced))
                     }
                     .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
+                    .padding(.horizontal, 3.5)
+                    .padding(.vertical, 1)
                     .background(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.18))
                     .clipShape(Capsule())
                     .overlay(
@@ -543,25 +538,25 @@ public struct MediaView: View {
             Spacer(minLength: 4)
             
             // Section Switcher Pills
-            HStack(spacing: 3) {
-                ForEach(YTMRightDeckSection.allCases, id: \.self) { section in
+            HStack(spacing: 2.5) {
+                ForEach(media.availableRightDeckSections, id: \.self) { section in
                     let isSelected = (media.rightDeckSection == section && (section != .playlists || media.selectedPlaylist == nil))
                     Button(action: {
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                             media.switchRightDeck(to: section)
                         }
                     }) {
-                        HStack(spacing: 2.5) {
+                        HStack(spacing: 2) {
                             Image(systemName: section.iconName)
-                                .font(.system(size: 7, weight: .bold))
+                                .font(.system(size: 6.5, weight: .bold))
                             Text(section.title)
-                                .font(.system(size: 8, weight: isSelected ? .bold : .medium))
+                                .font(.system(size: 7.5, weight: isSelected ? .bold : .medium))
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
                         .foregroundColor(isSelected ? .black : Color.white.opacity(0.68))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
                         .background(isSelected ? Color.white : Color.white.opacity(0.06))
                         .clipShape(Capsule())
                     }
@@ -569,26 +564,26 @@ public struct MediaView: View {
                 }
             }
         }
-        .padding(.bottom, 2)
+        .padding(.bottom, 1)
     }
     
     // MARK: - Hub Home Deck (Algorithmic Quick Picks & Discovery)
     private var hubHomeDeck: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             // Header Row
             HStack(spacing: 4) {
-                HStack(spacing: 3.5) {
+                HStack(spacing: 3) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 8.5, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.85))
                     Text("Quick Picks")
-                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .lineLimit(1)
                 }
                 
-                Text("• Recommended for you")
-                    .font(.system(size: 7.5, weight: .regular))
+                Text("• Recommended")
+                    .font(.system(size: 7, weight: .regular))
                     .foregroundColor(Color.white.opacity(0.45))
                     .lineLimit(1)
                 
@@ -600,9 +595,9 @@ public struct MediaView: View {
                     }
                 }) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 8, weight: .bold))
+                        .font(.system(size: 7.5, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.65))
-                        .frame(width: 18, height: 18)
+                        .frame(width: 16, height: 16)
                         .background(Color.white.opacity(0.06))
                         .clipShape(Circle())
                 }
@@ -613,53 +608,53 @@ public struct MediaView: View {
             
             // List of Quick Picks
             if media.isLoadingQuickPicks && media.quickPicks.isEmpty {
-                VStack(spacing: 6) {
-                    Spacer(minLength: 12)
+                VStack(spacing: 4) {
+                    Spacer(minLength: 8)
                     ProgressView()
-                        .scaleEffect(0.65)
+                        .scaleEffect(0.6)
                         .colorScheme(.dark)
-                    Text("Loading your algorithmic recommendations...")
-                        .font(.system(size: 8.5, weight: .medium))
+                    Text("Loading recommendations...")
+                        .font(.system(size: 8, weight: .medium))
                         .foregroundColor(Color.white.opacity(0.6))
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: 138)
+                .frame(maxWidth: .infinity, maxHeight: 104)
             } else if media.quickPicks.isEmpty {
-                VStack(spacing: 6) {
-                    Spacer(minLength: 12)
+                VStack(spacing: 4) {
+                    Spacer(minLength: 8)
                     Image(systemName: "sparkles")
-                        .font(.system(size: 14))
+                        .font(.system(size: 12))
                         .foregroundColor(Color.white.opacity(0.35))
                     Text("No recommendations found")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.8))
                     Text("Listen to music to seed your algorithm or click Refresh.")
-                        .font(.system(size: 7.5, weight: .regular))
+                        .font(.system(size: 7, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.45))
                         .multilineTextAlignment(.center)
                     Button(action: { media.refreshQuickPicks() }) {
                         Text("Refresh Picks")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 7.5, weight: .bold))
                             .foregroundColor(.black)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
                             .background(Color.white)
                             .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: 138)
+                .frame(maxWidth: .infinity, maxHeight: 104)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(spacing: 3) {
+                    LazyVStack(spacing: 2.5) {
                         ForEach(media.quickPicks) { track in
                             quickPickDetailedRow(track: track)
                         }
                     }
                     .padding(.trailing, 2)
                 }
-                .frame(maxHeight: 138)
+                .frame(maxHeight: 104)
             }
         }
     }
@@ -751,105 +746,71 @@ public struct MediaView: View {
     
     // MARK: - Downloads & Offline Deck
     private var downloadsDeck: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 4) {
             // Header Row
             HStack(spacing: 4) {
-                HStack(spacing: 3.5) {
+                HStack(spacing: 3) {
                     Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.55))
-                    Text("Downloads & Offline")
-                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("YouTube Music Offline")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .lineLimit(1)
                 }
                 
-                Text("• \(media.downloadedTracks.count) tracks ready")
-                    .font(.system(size: 7.5, weight: .regular))
+                Text("• \(media.downloadedTracks.count) songs ready")
+                    .font(.system(size: 7, weight: .regular))
                     .foregroundColor(Color.white.opacity(0.45))
                     .lineLimit(1)
                 
                 Spacer(minLength: 4)
-                
-                Button(action: {
-                    media.openDownloadsFolder()
-                }) {
-                    HStack(spacing: 2.5) {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 7))
-                        Text("Open Folder")
-                            .font(.system(size: 7.5, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2.5)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Open Downloads folder in Finder")
             }
             
             // Reassurance / Zero-Latency Banner
-            HStack(spacing: 5) {
-                Image(systemName: media.isOffline ? "wifi.slash" : "bolt.shield.fill")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundColor(media.isOffline ? Color(red: 1.0, green: 0.72, blue: 0.2) : Color(red: 0.35, green: 0.85, blue: 0.55))
+            HStack(spacing: 4) {
+                Image(systemName: "bolt.shield.fill")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(.white.opacity(0.8))
                 
-                Text(media.isOffline 
-                    ? "Morph is offline • Zero-latency local audio engine • No lag from re-clicking"
-                    : "Offline audio cache • Instant playback without buffering")
+                Text("Offline Cache • Zero-latency playback from your YouTube Music")
                     .font(.system(size: 7, weight: .medium))
                     .foregroundColor(Color.white.opacity(0.72))
                     .lineLimit(1)
                 
                 Spacer(minLength: 2)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2.5)
             .background(Color.white.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
-            )
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             
             if media.downloadedTracks.isEmpty {
-                VStack(spacing: 6) {
-                    Spacer(minLength: 12)
+                VStack(spacing: 4) {
+                    Spacer(minLength: 8)
                     Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 14))
+                        .font(.system(size: 13))
                         .foregroundColor(Color.white.opacity(0.35))
-                    Text("No downloaded songs yet")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                    Text("No YouTube Music songs cached yet")
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.8))
-                    Text("Place audio files in ~/Downloads or ~/Music to play them offline.")
-                        .font(.system(size: 7.5, weight: .regular))
+                    Text("Play songs while connected to Wi-Fi to automatically cache them for offline listening.")
+                        .font(.system(size: 7, weight: .regular))
                         .foregroundColor(Color.white.opacity(0.45))
                         .multilineTextAlignment(.center)
-                    Button(action: { media.openDownloadsFolder() }) {
-                        Text("Open Downloads Folder")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.white)
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    Spacer(minLength: 12)
+                    Spacer(minLength: 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: 138)
+                .frame(maxWidth: .infinity, maxHeight: 96)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(spacing: 3) {
+                    LazyVStack(spacing: 2.5) {
                         ForEach(media.downloadedTracks) { track in
                             downloadedTrackRow(track: track)
                         }
                     }
                     .padding(.trailing, 2)
                 }
-                .frame(maxHeight: 138)
+                .frame(maxHeight: 96)
             }
         }
     }
@@ -863,44 +824,26 @@ public struct MediaView: View {
         let artistColor = isActive ? Color.white.opacity(0.7) : Color.white.opacity(0.45)
         let durationColor = isActive ? Color.white.opacity(0.8) : Color.white.opacity(0.35)
         let bgOpacity: Double = isCurrent ? 0.14 : (isPaused ? 0.08 : 0.03)
-        let strokeColor = isCurrent ? Color(red: 0.35, green: 0.85, blue: 0.55).opacity(0.3) : (isPaused ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
+        let strokeColor = isCurrent ? Color.white.opacity(0.2) : (isPaused ? Color.white.opacity(0.12) : Color.white.opacity(0.05))
         
         return Button(action: {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
                 media.playDownloadedTrack(track)
             }
         }) {
-            HStack(spacing: 7) {
-                // Artwork thumbnail with download badge
-                ZStack(alignment: .bottomTrailing) {
-                    artworkThumb(url: track.thumbnailURL, size: 24, fallbackIcon: "music.note")
-                    
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 7))
-                        .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.55))
-                        .background(Color.black.clipShape(Circle()))
-                        .offset(x: 2, y: 2)
-                }
+            HStack(spacing: 6) {
+                // Artwork thumbnail
+                artworkThumb(url: track.thumbnailURL, size: 22, fallbackIcon: "music.note")
                 
                 // Track metadata
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 3) {
-                        Text(track.title)
-                            .font(.system(size: 9.5, weight: titleWeight, design: .rounded))
-                            .foregroundColor(titleColor)
-                            .lineLimit(1)
-                        
-                        Text("DOWNLOADED")
-                            .font(.system(size: 6, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color(red: 0.35, green: 0.85, blue: 0.55))
-                            .padding(.horizontal, 3)
-                            .padding(.vertical, 1)
-                            .background(Color(red: 0.35, green: 0.85, blue: 0.55).opacity(0.14))
-                            .clipShape(Capsule())
-                    }
+                    Text(track.title)
+                        .font(.system(size: 9, weight: titleWeight, design: .rounded))
+                        .foregroundColor(titleColor)
+                        .lineLimit(1)
                     
-                    Text(track.artist.isEmpty ? "Offline Library" : track.artist)
-                        .font(.system(size: 8, weight: .regular))
+                    Text(track.artist.isEmpty ? "YouTube Music" : track.artist)
+                        .font(.system(size: 7.5, weight: .regular))
                         .foregroundColor(artistColor)
                         .lineLimit(1)
                 }
@@ -910,7 +853,7 @@ public struct MediaView: View {
                 // Duration
                 if !track.duration.isEmpty {
                     Text(track.duration)
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .font(.system(size: 7.5, weight: .medium, design: .monospaced))
                         .foregroundColor(durationColor)
                 }
                 
@@ -919,21 +862,21 @@ public struct MediaView: View {
                     HStack(alignment: .bottom, spacing: 1.2) {
                         ForEach(0..<3, id: \.self) { i in
                             RoundedRectangle(cornerRadius: 0.5)
-                                .fill(Color(red: 0.35, green: 0.85, blue: 0.55))
-                                .frame(width: 1.8, height: max(2, 8 * media.visualizerBars[i]))
+                                .fill(Color.white)
+                                .frame(width: 1.8, height: max(2, 7 * media.visualizerBars[i]))
                         }
                     }
-                    .frame(width: 14, height: 10, alignment: .bottom)
+                    .frame(width: 12, height: 8, alignment: .bottom)
                     .padding(.horizontal, 2)
                 } else if isPaused {
                     Image(systemName: "pause.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: 7.5))
                         .foregroundColor(Color.white.opacity(0.75))
                         .padding(.horizontal, 2)
                 }
             }
             .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .padding(.vertical, 3.5)
             .background(Color.white.opacity(bgOpacity))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(
@@ -974,7 +917,7 @@ public struct MediaView: View {
                         .foregroundColor(Color.white.opacity(0.6))
                     Spacer(minLength: 12)
                 }
-                .frame(maxWidth: .infinity, maxHeight: media.isSearchingPlaylists ? 116 : 138)
+                .frame(maxWidth: .infinity, maxHeight: media.isSearchingPlaylists ? 84 : 104)
             } else if media.playlists.isEmpty {
                 VStack(spacing: 6) {
                     Spacer(minLength: 10)
@@ -996,11 +939,11 @@ public struct MediaView: View {
                     if let statusMsg = media.browserAuthStatusMessage {
                         Text(statusMsg)
                             .font(.system(size: 7.5, weight: .medium))
-                            .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.6))
+                            .foregroundColor(.white)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.12))
+                            .background(Color.white.opacity(0.12))
                             .clipShape(Capsule())
                     }
                     
@@ -1064,7 +1007,7 @@ public struct MediaView: View {
                     
                     Spacer(minLength: 8)
                 }
-                .frame(maxWidth: .infinity, maxHeight: media.isSearchingPlaylists ? 116 : 138)
+                .frame(maxWidth: .infinity, maxHeight: media.isSearchingPlaylists ? 84 : 104)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(spacing: 4) {
@@ -1080,7 +1023,7 @@ public struct MediaView: View {
                     }
                     .padding(.trailing, 2)
                 }
-                .frame(maxHeight: media.isSearchingPlaylists ? 116 : 138)
+                .frame(maxHeight: media.isSearchingPlaylists ? 84 : 104)
             }
         }
     }
@@ -1238,7 +1181,7 @@ public struct MediaView: View {
             }
             .padding(.trailing, 2)
         }
-        .frame(maxHeight: 116)
+        .frame(maxHeight: 100)
     }
     
     private func searchSectionHeader(_ title: String) -> some View {
@@ -1480,7 +1423,7 @@ public struct MediaView: View {
                     .padding(.trailing, 2)
                 }
             }
-            .frame(maxHeight: media.isSearchingSongs ? 116 : 138)
+            .frame(maxHeight: media.isSearchingSongs ? 84 : 104)
         }
     }
     

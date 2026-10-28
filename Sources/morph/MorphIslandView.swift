@@ -245,6 +245,8 @@ public struct MorphIslandView: View {
             CompactMeetingWingLeft(controller: model.meetingController, model: model)
         case .dropShelfActive:
             CompactDropShelfWingLeft(shelf: model.dropShelf, model: model)
+        case .formTrackerActive:
+            CompactFormTrackerWingLeft(formTracker: model.formTracker, model: model)
         case .none:
             EmptyView()
         }
@@ -269,6 +271,8 @@ public struct MorphIslandView: View {
             CompactMeetingWingRight(controller: model.meetingController, model: model)
         case .dropShelfActive:
             CompactDropShelfWingRight(shelf: model.dropShelf, model: model)
+        case .formTrackerActive:
+            CompactFormTrackerWingRight(formTracker: model.formTracker, model: model)
         case .none:
             EmptyView()
         }
@@ -356,6 +360,9 @@ public struct MorphIslandView: View {
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .dropShelf:
                         DropShelfView(model: model)
+                            .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                    case .formTracker:
+                        ApplicationFormTrackerView(model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     }
                 } else {

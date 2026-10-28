@@ -165,12 +165,25 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
             
+        // Explicitly observe formTracker detection state to guarantee immediate panel resizing
+        model.formTracker.$isFormDetected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, !self.model.isExpanded else { return }
+                    self.resizePanelToRestingState()
+                }
+            }
+            .store(in: &cancellables)
+            
         // Observe any submodel state changes to dynamically resize the compact notch window
         model.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                guard let self = self, !self.model.isExpanded else { return }
-                self.resizePanelToRestingState()
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, !self.model.isExpanded else { return }
+                    self.resizePanelToRestingState()
+                }
             }
             .store(in: &cancellables)
         

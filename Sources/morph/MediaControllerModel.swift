@@ -101,53 +101,22 @@ public final class MediaControllerModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var trackLoadTask: Task<Void, Never>?
     
-    public static let defaultOfflineTracks: [YTMPlaylistItem] = [
-        YTMPlaylistItem(
-            id: "offline_1",
-            title: "Resonance",
-            artist: "HOME",
-            duration: "3:32",
-            isPlaying: false,
-            videoId: "8GW6sLrK40k",
-            thumbnailURL: "https://i.ytimg.com/vi/8GW6sLrK40k/hqdefault.jpg"
-        ),
-        YTMPlaylistItem(
-            id: "offline_2",
-            title: "Midnight City",
-            artist: "M83",
-            duration: "4:04",
-            isPlaying: false,
-            videoId: "dX3k_QDnzHE",
-            thumbnailURL: "https://i.ytimg.com/vi/dX3k_QDnzHE/hqdefault.jpg"
-        ),
-        YTMPlaylistItem(
-            id: "offline_3",
-            title: "Starboy",
-            artist: "The Weeknd, Daft Punk",
-            duration: "3:50",
-            isPlaying: false,
-            videoId: "34Na4j8AVgA",
-            thumbnailURL: "https://i.ytimg.com/vi/34Na4j8AVgA/hqdefault.jpg"
-        ),
-        YTMPlaylistItem(
-            id: "offline_4",
-            title: "After Dark",
-            artist: "Mr.Kitty",
-            duration: "4:18",
-            isPlaying: false,
-            videoId: "waAlgFq9Xq8",
-            thumbnailURL: "https://i.ytimg.com/vi/waAlgFq9Xq8/hqdefault.jpg"
-        ),
-        YTMPlaylistItem(
-            id: "offline_5",
-            title: "Nightcall",
-            artist: "Kavinsky",
-            duration: "4:19",
-            isPlaying: false,
-            videoId: "MV_3Dpw-BRY",
-            thumbnailURL: "https://i.ytimg.com/vi/MV_3Dpw-BRY/hqdefault.jpg"
-        )
-    ]
+    /// User-centric YouTube Music offline tracks (from the user's actual YouTube Music library and queue).
+    public static var defaultOfflineTracks: [YTMPlaylistItem] {
+        let cached = YTMUserOfflineStore.shared.getOfflineTracks()
+        return cached.isEmpty ? YTMParser.defaultQuickPicks : cached
+    }
+    
+    /// Returns the active sections visible in the right deck.
+    /// In normal online mode, shows the normal UI (Home, Playlists, Queue, Search).
+    /// When offline, focuses on the user's downloaded YouTube Music tracks.
+    public var availableRightDeckSections: [YTMRightDeckSection] {
+        if isOffline {
+            return [.downloads]
+        } else {
+            return [.home, .playlists, .queue, .search]
+        }
+    }
     
     public init(
         engine: YouTubeMusicEngine = YouTubeMusicEngine.shared,
@@ -157,10 +126,22 @@ public final class MediaControllerModel: ObservableObject {
         self.engine = engine
         self.systemAudio = systemAudio
         self.networkMonitor = networkMonitor
-        self.isOffline = !networkMonitor.isConnected
-        self.downloadedTracks = Self.defaultOfflineTracks
+        self.isOffline = !networkMonitor.isConnected || !networkMonitor.isWifiConnected
+        
+        let initialCached = YTMUserOfflineStore.shared.getOfflineTracks()
+        if !initialCached.isEmpty && !MorphEnvironment.isTestingEnvironment {
+            self.downloadedTracks = initialCached
+        } else {
+            let seed = engine.quickPicks.isEmpty ? YTMParser.defaultQuickPicks : engine.quickPicks
+            self.downloadedTracks = seed
+            if !MorphEnvironment.isTestingEnvironment {
+                YTMUserOfflineStore.shared.recordTracks(seed)
+            }
+        }
+        
         self.playlists = []
         self.quickPicks = engine.quickPicks.isEmpty ? YTMParser.defaultQuickPicks : engine.quickPicks
+        self.rightDeckSection = self.isOffline ? .downloads : .home
         
         let initialVol = systemAudio.getVolume()
         let initialMuted = systemAudio.getMuted()
@@ -170,7 +151,6 @@ public final class MediaControllerModel: ObservableObject {
         setupEngineObservers()
         setupSystemAudioObserver()
         setupNetworkObserver()
-        scanLocalDownloads()
         if !isTestingEnvironment {
             startVisualizer()
             startPlaybackTicker()
@@ -300,6 +280,7 @@ public final class MediaControllerModel: ObservableObject {
                     if queueChanged {
                         self.lastProcessedQueueIds = newQueueIds
                         self.playlist = YTMPlaylistItem.deduplicate(data.queue)
+                        YTMUserOfflineStore.shared.recordTracks(self.playlist)
                     }
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = true
@@ -309,6 +290,18 @@ public final class MediaControllerModel: ObservableObject {
                     if queueChanged || trackChanged {
                         self.lastProcessedTrackSignature = currentSignature
                         self.syncPlayingTrackWithPlaylists()
+                        
+                        let matchedVideoId = self.playlist.first(where: { $0.title == data.title })?.videoId
+                        let currentItem = YTMPlaylistItem(
+                            id: "ytm_\(data.title)_\(data.artist)",
+                            title: data.title,
+                            artist: data.artist,
+                            duration: self.formatTime(data.duration),
+                            isPlaying: data.isPlaying,
+                            videoId: matchedVideoId,
+                            thumbnailURL: data.albumArtURL
+                        )
+                        YTMUserOfflineStore.shared.recordTrack(currentItem)
                     }
                 }
                 
@@ -686,15 +679,21 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func setupNetworkObserver() {
-        Publishers.CombineLatest(networkMonitor.$isConnected, engine.$isOffline)
-            .sink { [weak self] isConnected, engineOffline in
+        Publishers.CombineLatest3(networkMonitor.$isConnected, networkMonitor.$isWifiConnected, engine.$isOffline)
+            .sink { [weak self] isConnected, isWifiConnected, engineOffline in
                 guard let self = self else { return }
-                let currentlyOffline = !isConnected || engineOffline
+                // Detect when user disconnects from Wi-Fi or loses connectivity
+                let currentlyOffline = !isConnected || !isWifiConnected || (engineOffline && !isConnected)
                 let prevOffline = self.isOffline
                 self.isOffline = currentlyOffline
                 
                 if currentlyOffline && !prevOffline {
-                    self.offlineHUDMessage = "No Internet Connection"
+                    // Refresh downloaded tracks from the user's actual YouTube Music offline store
+                    let userTracks = YTMUserOfflineStore.shared.getOfflineTracks()
+                    if !userTracks.isEmpty {
+                        self.downloadedTracks = userTracks
+                    }
+                    self.offlineHUDMessage = "Offline • Switched to YouTube Music Downloads"
                     self.showOfflineHUD = true
                     self.offlineHUDWorkItem?.cancel()
                     let work = DispatchWorkItem { [weak self] in
@@ -705,6 +704,13 @@ public final class MediaControllerModel: ObservableObject {
                     
                     if self.rightDeckSection != .downloads {
                         self.openDownloadsSection()
+                    }
+                } else if !currentlyOffline && prevOffline {
+                    // Reconnected to Wi-Fi / Online: restore normal UI immediately!
+                    self.showOfflineHUD = false
+                    self.offlineHUDWorkItem?.cancel()
+                    if self.rightDeckSection == .downloads {
+                        self.openHubHome()
                     }
                 }
             }
@@ -822,6 +828,7 @@ public final class MediaControllerModel: ObservableObject {
         if let list = page.playbackListId { updated.playbackListId = list }
         selectedPlaylist = updated
         syncPlayingTrackWithPlaylists()
+        YTMUserOfflineStore.shared.recordTracks(deduplicated)
         if updated.kind == .playlist, playlists.contains(where: { $0.id == updated.id }) {
             mergePlaylists([updated])
         }
@@ -904,7 +911,12 @@ public final class MediaControllerModel: ObservableObject {
         case .home: openHubHome()
         case .playlists: openPlaylistsSection()
         case .queue: openQueueSection()
-        case .downloads: openDownloadsSection()
+        case .downloads:
+            if isOffline {
+                openDownloadsSection()
+            } else {
+                openHubHome()
+            }
         case .search:
             trackLoadTask?.cancel()
             isLoadingTracks = false
@@ -921,6 +933,10 @@ public final class MediaControllerModel: ObservableObject {
         selectedPlaylist = nil
         isSearchingSongs = false
         songSearchQuery = ""
+        let cached = YTMUserOfflineStore.shared.getOfflineTracks()
+        if !cached.isEmpty {
+            self.downloadedTracks = cached
+        }
         rightDeckSection = .downloads
     }
     
@@ -935,7 +951,7 @@ public final class MediaControllerModel: ObservableObject {
         }
         lastOfflineClickTime = now
         
-        offlineHUDMessage = "Offline • Switched to Downloads"
+        offlineHUDMessage = "Offline • Switched to YouTube Music Downloads"
         showOfflineHUD = true
         offlineHUDWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -949,12 +965,12 @@ public final class MediaControllerModel: ObservableObject {
     
     public func playDownloadedTrack(_ item: YTMPlaylistItem) {
         trackTitle = item.title
-        artistName = item.artist.isEmpty ? "Local Download" : item.artist
+        artistName = item.artist.isEmpty ? "YouTube Music" : item.artist
         albumArtURL = item.thumbnailURL
         currentTime = 0
         duration = 210
         isPlaying = true
-        sourceName = "Offline Downloads"
+        sourceName = "YouTube Music Offline"
         
         for i in 0..<downloadedTracks.count {
             downloadedTracks[i].isPlaying = (downloadedTracks[i].id == item.id)
@@ -968,53 +984,6 @@ public final class MediaControllerModel: ObservableObject {
         let downloadsURL = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
         let targetURL = musicURL ?? downloadsURL ?? URL(fileURLWithPath: NSHomeDirectory())
         NSWorkspace.shared.open(targetURL)
-    }
-    
-    public func scanLocalDownloads() {
-        guard !MorphEnvironment.isTestingEnvironment else { return }
-        Task { [weak self] in
-            let fileManager = FileManager.default
-            var localItems: [YTMPlaylistItem] = []
-            let audioExtensions = ["mp3", "m4a", "wav", "aac", "flac"]
-            let directories = [
-                fileManager.urls(for: .musicDirectory, in: .userDomainMask).first,
-                fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ].compactMap { $0 }
-            
-            for dir in directories {
-                if let contents = try? fileManager.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-                    for url in contents {
-                        if audioExtensions.contains(url.pathExtension.lowercased()) {
-                            let fileName = url.deletingPathExtension().lastPathComponent
-                            let parts = fileName.components(separatedBy: " - ")
-                            let artist = parts.count > 1 ? parts[0] : "Local Audio"
-                            let title = parts.count > 1 ? parts[1] : fileName
-                            let item = YTMPlaylistItem(
-                                id: "local_\(url.lastPathComponent)",
-                                title: title,
-                                artist: artist,
-                                duration: "Local",
-                                isPlaying: false,
-                                videoId: nil,
-                                thumbnailURL: nil
-                            )
-                            localItems.append(item)
-                        }
-                    }
-                }
-            }
-            if !localItems.isEmpty {
-                await MainActor.run {
-                    var merged = Self.defaultOfflineTracks
-                    for itm in localItems {
-                        if !merged.contains(where: { $0.title == itm.title }) {
-                            merged.append(itm)
-                        }
-                    }
-                    self?.downloadedTracks = merged
-                }
-            }
-        }
     }
     
     public func openQueueSection() {
@@ -1062,6 +1031,7 @@ public final class MediaControllerModel: ObservableObject {
             playlist[i].isPlaying = (playlist[i].id == item.id || (playlist[i].title == item.title && playlist[i].artist == item.artist))
         }
         syncPlayingTrackWithPlaylists()
+        YTMUserOfflineStore.shared.recordTrack(item)
     }
     
     // MARK: - Track Normalization and Active Track Resolution
@@ -1237,6 +1207,14 @@ public final class MediaControllerModel: ObservableObject {
             return
         }
         if isOffline {
+            if let downloaded = downloadedTracks.first(where: {
+                $0.id == item.id ||
+                (!item.title.isEmpty && $0.title.lowercased() == item.title.lowercased() && $0.artist.lowercased() == item.artist.lowercased()) ||
+                ($0.videoId != nil && $0.videoId == item.videoId)
+            }) {
+                playDownloadedTrack(downloaded)
+                return
+            }
             triggerOfflineHandling(for: item.title)
             return
         }
@@ -1384,11 +1362,15 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func playQueueTrack(_ item: YTMPlaylistItem) {
-        if downloadedTracks.contains(where: { $0.id == item.id }) {
-            playDownloadedTrack(item)
-            return
-        }
         if isOffline {
+            if let downloaded = downloadedTracks.first(where: {
+                $0.id == item.id ||
+                (!item.title.isEmpty && $0.title.lowercased() == item.title.lowercased() && $0.artist.lowercased() == item.artist.lowercased()) ||
+                ($0.videoId != nil && $0.videoId == item.videoId)
+            }) {
+                playDownloadedTrack(downloaded)
+                return
+            }
             triggerOfflineHandling(for: item.title)
             return
         }
