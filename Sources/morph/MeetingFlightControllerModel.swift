@@ -17,13 +17,37 @@ public struct DefaultMeetingAppDetector: MeetingAppDetector {
             "com.microsoft.teams": "Microsoft Teams",
             "com.microsoft.teams2": "Microsoft Teams",
             "com.cisco.webexmeetingsapp": "Webex",
-            "Cisco-Systems.Spark": "Webex",
-            "com.tinyspeck.slackmacgap": "Slack"
+            "Cisco-Systems.Spark": "Webex"
         ]
         
+        var activeMeetingAppName: String? = nil
         for app in runningApps {
             if let bundleID = app.bundleIdentifier, let appName = knownMeetingBundleIDs[bundleID] {
-                return (true, appName)
+                activeMeetingAppName = appName
+                break
+            }
+        }
+        
+        guard let appName = activeMeetingAppName else {
+            return (false, nil)
+        }
+        
+        // Confirm there is an active meeting/call window on screen, not merely an idle launcher or background process
+        let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
+        if let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
+            for win in list {
+                let owner = (win[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+                let title = (win[kCGWindowName as String] as? String ?? "").lowercased()
+                let layer = win[kCGWindowLayer as String] as? Int ?? -1
+                let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                let w = bounds["Width"] as? Double ?? 0
+                let h = bounds["Height"] as? Double ?? 0
+                
+                if layer == 0 && w >= 300 && h >= 200 && (owner.contains("zoom") || owner.contains("teams") || owner.contains("webex")) {
+                    if (title.contains("meeting") || title.contains("call") || title.contains("conference")) && !title.contains("left") {
+                        return (true, appName)
+                    }
+                }
             }
         }
         
@@ -285,6 +309,8 @@ public final class MeetingFlightControllerModel: ObservableObject {
         self.detectedAppName = name
         if running && !isInCall {
             startCall(title: name ?? "Active Call")
+        } else if !running && isInCall && !engine.isInCall {
+            endCall()
         }
     }
     

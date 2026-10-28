@@ -189,12 +189,8 @@ public struct CalendarView: View {
             
             // Seamless Multi-Action Bar (Notification Toggle & Lead Time, Sync, Browser)
             VStack(spacing: 4) {
-                // Row 1: Account status & Instant Sync
+                // Row 1: Account status & Instant Sync (Zero status dots)
                 HStack(spacing: 5) {
-                    Circle()
-                        .fill(calendar.isSignedIn ? Color.white : Color.white.opacity(0.35))
-                        .frame(width: 4.5, height: 4.5)
-                    
                     if let email = calendar.configuredUserEmail, !email.isEmpty {
                         Text(email)
                             .font(.system(size: 8, weight: .medium))
@@ -319,11 +315,11 @@ public struct CalendarView: View {
                                 .foregroundColor(isSelected ? .black : (isToday ? .white : Color.white.opacity(0.85)))
                             
                             if hasEvents {
-                                Circle()
+                                Capsule()
                                     .fill(isSelected ? Color.black : Color.white.opacity(0.8))
-                                    .frame(width: 2.2, height: 2.2)
+                                    .frame(width: 5, height: 1.5)
                             } else {
-                                Color.clear.frame(width: 2.2, height: 2.2)
+                                Color.clear.frame(width: 5, height: 1.5)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -623,9 +619,6 @@ public struct CalendarView: View {
                     }
                 }) {
                     HStack(spacing: 3) {
-                        Circle()
-                            .fill(Color.blue.opacity(0.85))
-                            .frame(width: 4.5, height: 4.5)
                         Text(currentSummary)
                             .font(.system(size: 7, weight: .medium))
                             .lineLimit(1)
@@ -643,9 +636,6 @@ public struct CalendarView: View {
                 .help("Click to switch target Google Calendar")
             } else {
                 HStack(spacing: 3) {
-                    Circle()
-                        .fill(newEventIsAllDay ? Color.orange : Color.green.opacity(0.85))
-                        .frame(width: 4, height: 4)
                     Text(newEventIsAllDay ? "All-Day" : formatHourDisplay(newEventHour))
                         .font(.system(size: 7, weight: .bold, design: .monospaced))
                         .foregroundColor(.white.opacity(0.9))

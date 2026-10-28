@@ -471,10 +471,6 @@ public struct InAppMeetingStageView: View {
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
-                Circle()
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: 3, height: 3)
-                
                 Text(engine.activeCallTitle ?? "Live Call")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Color.white.opacity(0.85))
@@ -482,11 +478,8 @@ public struct InAppMeetingStageView: View {
             }
             .padding(.leading, 14)
             
-            // Live Duration Pill
+            // Live Duration Pill (Zero status dots)
             HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
                 Text(engine.formattedCallDuration)
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundColor(.white)

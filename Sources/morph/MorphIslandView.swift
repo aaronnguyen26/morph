@@ -181,18 +181,11 @@ public struct MorphIslandView: View {
         return didLoadAny
     }
     
-    // MARK: - 1. Idle Flush Notch View (Smooth border radius, no sharp corners)
+    // MARK: - 1. Idle Flush Notch View (Smooth border radius, no sharp corners, zero dots)
     private var idleFlushNotchView: some View {
-        HStack {
-            Spacer()
-            // Ambient micro indicator
-            Circle()
-                .fill(Color.white.opacity(0.18))
-                .frame(width: 3.5, height: 3.5)
-            Spacer()
-        }
-        .frame(width: model.idleWidth, height: model.idleHeight)
-        .contentShape(Rectangle())
+        Color.clear
+            .frame(width: model.idleWidth, height: model.idleHeight)
+            .contentShape(Rectangle())
     }
     
     // MARK: - 2. Compact Active Notch View (Independent Dynamic Island HUD)
@@ -400,29 +393,34 @@ public struct MorphIslandView: View {
     private var topNotchRow: some View {
         HStack(spacing: 0) {
             // LEFT WING (Outside Notch: 100% Visible)
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 if let contextFeature = model.activeContextFeature {
                     Button(action: {
                         model.closeContextualFeature()
                     }) {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 3.5) {
                             Image(systemName: "chevron.left")
-                                .font(.system(size: 8.5, weight: .bold))
-                            Text("Done")
-                                .font(.system(size: 9.5, weight: .bold))
+                                .font(.system(size: 9, weight: .bold))
+                            Text("Back")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3.5)
-                        .background(Color.white.opacity(0.12))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.14))
                         .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
+                        )
                     }
                     .buttonStyle(.plain)
-                    .help("Return to Morph Tab (Esc)")
+                    .fixedSize(horizontal: true, vertical: true)
+                    .help("Back to Home (Esc)")
                     
-                    Text(contextFeature.rawValue)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.85))
+                    Text(contextFeature == .formTracker ? "Form Tracker" : contextFeature.rawValue)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.70))
                         .lineLimit(1)
                 } else if model.selectedTab != .home {
                     Button(action: {
@@ -627,13 +625,6 @@ private struct CompactPomodoroWingLeft: View {
                         )
                         .rotationEffect(.degrees(-90))
                         .frame(width: 15, height: 15)
-                }
-                
-                if pomodoro.isRunning {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 3.5, height: 3.5)
-                        .opacity(0.9)
                 }
                 
                 Text(pomodoro.formattedTime)

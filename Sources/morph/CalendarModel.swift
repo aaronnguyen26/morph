@@ -623,7 +623,8 @@ public final class CalendarModel: ObservableObject {
                 startComponents.minute = startMinute
             } else {
                 let nowComponents = cal.dateComponents([.hour, .minute], from: now)
-                startComponents.hour = (nowComponents.hour ?? 12) + 1
+                let targetHour = (nowComponents.hour ?? 12) + 1
+                startComponents.hour = min(targetHour, 23)
                 startComponents.minute = 0
             }
             startComponents.second = 0

@@ -260,15 +260,12 @@ public struct ProfileView: View {
                         .stroke(Color.white.opacity(0.09), lineWidth: 0.5)
                 )
                 
-                // Google Calendar SSO Card
+                // Google Calendar SSO Card (Zero status dots)
                 VStack(spacing: 2) {
                     Text("CALENDAR SSO")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .foregroundColor(.cyan.opacity(0.8))
                     HStack(spacing: 3) {
-                        Circle()
-                            .fill(model.calendar.isSignedIn ? Color.green : Color.orange)
-                            .frame(width: 4, height: 4)
                         Text(model.calendar.isSignedIn ? "Synced" : "Pending")
                             .font(.system(size: 11, weight: .bold, design: .rounded))
                             .foregroundColor(.white)

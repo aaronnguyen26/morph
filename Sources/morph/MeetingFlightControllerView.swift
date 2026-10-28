@@ -25,9 +25,6 @@ public struct MeetingFlightControllerView: View {
                     
                     if controller.isInCall {
                         HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.green)
-                                .frame(width: 6, height: 6)
                             Text(controller.activeService.rawValue.uppercased())
                                 .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                                 .foregroundColor(controller.activeService.badgeColor)
@@ -460,9 +457,6 @@ public struct CompactMeetingWingLeft: View {
         }) {
             HStack(spacing: 6) {
                 if controller.isInCall {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
                     Image(systemName: controller.activeService.iconName)
                         .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(controller.activeService.badgeColor)

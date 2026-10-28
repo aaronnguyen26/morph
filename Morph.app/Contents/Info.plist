@@ -26,5 +26,9 @@
     <string>Morph accesses your calendar to display upcoming meetings and events directly in the Dynamic Notch.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Morph accesses your calendar to display upcoming meetings and events directly in the Dynamic Notch.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Morph interacts with web browsers to detect active forms and applications.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Morph uses accessibility to track and detect forms across desktop applications.</string>
 </dict>
 </plist>

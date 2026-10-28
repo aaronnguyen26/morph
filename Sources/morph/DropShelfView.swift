@@ -42,11 +42,6 @@ public struct DropShelfView: View {
                 
                 if let msg = shelf.lastActionMessage {
                     HStack(spacing: 4) {
-                        if shelf.isDraggingOut || shelf.isHeldOpen {
-                            Circle()
-                                .fill(Color.cyan)
-                                .frame(width: 5, height: 5)
-                        }
                         Text(msg)
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
                             .foregroundColor(shelf.isDraggingOut || shelf.isHeldOpen ? .cyan : Color.white.opacity(0.7))
@@ -448,7 +443,6 @@ public struct DropShelfCardView: View {
 public struct CompactDropShelfWingLeft: View {
     @ObservedObject var shelf: DropShelfModel
     let model: NotchModel
-    @State private var isPulsing: Bool = false
     
     public init(shelf: DropShelfModel, model: NotchModel) {
         self.shelf = shelf
@@ -461,22 +455,9 @@ public struct CompactDropShelfWingLeft: View {
         }) {
             HStack(spacing: 6) {
                 if shelf.isDraggingOverNotch {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.cyan.opacity(0.4), lineWidth: 2)
-                            .frame(width: 17, height: 17)
-                            .scaleEffect(isPulsing ? 1.25 : 0.95)
-                            .opacity(isPulsing ? 0.2 : 0.8)
-                        
-                        Image(systemName: "arrow.down.to.line.compact")
-                            .font(.system(size: 10, weight: .black))
-                            .foregroundColor(.cyan)
-                    }
-                    .onAppear {
-                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
-                            isPulsing = true
-                        }
-                    }
+                    Image(systemName: "arrow.down.to.line.compact")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.cyan)
                     
                     Text("Drop to Stash")
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))

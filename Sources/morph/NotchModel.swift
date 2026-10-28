@@ -211,11 +211,12 @@ public final class NotchModel: ObservableObject {
             return .dropShelfActive
         }
         
+        // Priority 2: Meeting Flight
         if meetingController.isInCall || meetingController.isPreMeetingWindow {
             return .meetingFlight
         }
         
-        // Priority 3: Form Tracker (Strictly context-aware: only when an application form is currently detected)
+        // Priority 3: Form Tracker (Strictly context-aware: active when an application form is detected on screen)
         if formTracker.isFormDetected {
             return .formTrackerActive
         }
@@ -503,7 +504,11 @@ public final class NotchModel: ObservableObject {
     }
     
     public func closeContextualFeature() {
-        closeDropShelfAndRestoreContext()
+        dropShelf.isHeldOpen = false
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
+            activeContextFeature = nil
+            selectedTab = .home
+        }
     }
     
     public func closeDropShelfAndRestoreContext() {

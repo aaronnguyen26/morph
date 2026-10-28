@@ -82,5 +82,8 @@ public final class NotchPanel: NSPanel {
         if self.frame != newFrame {
             self.setFrame(newFrame, display: true, animate: animate)
         }
+        if !MorphEnvironment.isTestingEnvironment {
+            self.orderFrontRegardless()
+        }
     }
 }
