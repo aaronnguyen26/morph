@@ -47,6 +47,7 @@ public struct ApplicationFormTrackerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             emailInput = formTracker.recipientEmail
+            formTracker.syncLiveFormInputValues()
         }
     }
     
@@ -165,6 +166,7 @@ public struct ApplicationFormTrackerView: View {
         
         return Button(action: {
             formTracker.selectActiveField(arrayIndex)
+            formTracker.syncLiveFormInputValues()
         }) {
             HStack(alignment: .top, spacing: 6) {
                 // Index or checkmark

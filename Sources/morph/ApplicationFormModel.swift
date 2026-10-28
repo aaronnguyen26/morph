@@ -1619,66 +1619,265 @@ public struct FormContentRetriever: Sendable {
         return .custom
     }
     
-    /// Parses generic HTML forms by finding <label> tags and inputs
+    // MARK: - Query Parameter Extraction
+    public static func extractQueryParameters(from urlString: String) -> [String: String] {
+        guard let comps = URLComponents(string: urlString), let items = comps.queryItems else {
+            guard let qIdx = urlString.firstIndex(of: "?") else { return [:] }
+            let qStr = String(urlString[urlString.index(after: qIdx)...])
+            var res: [String: String] = [:]
+            for pair in qStr.components(separatedBy: "&") {
+                let parts = pair.components(separatedBy: "=")
+                if parts.count >= 2 {
+                    let k = parts[0].removingPercentEncoding?.lowercased() ?? parts[0].lowercased()
+                    let v = parts[1...].joined(separator: "=").replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? parts[1]
+                    if !k.isEmpty && !v.isEmpty {
+                        res[k] = v
+                    }
+                }
+            }
+            return res
+        }
+        var res: [String: String] = [:]
+        for item in items {
+            if let val = item.value, !val.isEmpty {
+                let cleanKey = item.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let cleanVal = val.replacingOccurrences(of: "+", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+                res[cleanKey] = cleanVal
+            }
+        }
+        return res
+    }
+
+    /// Strips HTML tags and unescapes common entities
+    public static func cleanHTMLText(_ str: String) -> String {
+        return str.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "[\\r\\n]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Parses generic HTML forms by finding question blocks, labels, and pre-filled input values
     public static func parseGenericHTMLForm(_ html: String, url: String) -> RetrievedFormSchema? {
         let lower = html.lowercased()
-        guard lower.contains("<form") || lower.contains("<input") || lower.contains("<textarea") else {
+        guard lower.contains("<form") || lower.contains("<input") || lower.contains("<textarea") || lower.contains("role=\"listitem\"") || lower.contains("class=\"question\"") else {
             return nil
         }
         
         var fields: [FormInputField] = []
-        let labelRegex = try? NSRegularExpression(pattern: "<label[^>]*>(.*?)</label>", options: [.dotMatchesLineSeparators, .caseInsensitive])
-        if let regex = labelRegex {
-            let nsStr = html as NSString
-            let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsStr.length))
+        let ns = html as NSString
+        
+        // 1. Try finding container blocks (.question, role="listitem", .form-group, fieldset)
+        let blockPattern = "(<(?:div|fieldset)[^>]*(?:class=[\"'][^\"']*(?:question|form-group|Qr7Oae|field)[^\"']*[\"']|role=[\"']listitem[\"'])[^>]*>[\\s\\S]*?)(?=(?:<(?:div|fieldset)[^>]*(?:class=[\"'][^\"']*(?:question|form-group|Qr7Oae|field)[^\"']*[\"']|role=[\"']listitem[\"'])|</form>|</body>|$))"
+        let blockRegex = try? NSRegularExpression(pattern: blockPattern, options: [.caseInsensitive])
+        let matches = blockRegex?.matches(in: html, range: NSRange(location: 0, length: ns.length)) ?? []
+        
+        if !matches.isEmpty {
             for m in matches {
-                if m.numberOfRanges > 1 {
-                    let rawLabel = nsStr.substring(with: m.range(at: 1))
-                    let clean = rawLabel.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !clean.isEmpty && clean.count < 120 && !fields.contains(where: { $0.label.lowercased() == clean.lowercased() }) {
-                        fields.append(FormInputField(
-                            label: clean,
-                            value: "",
-                            category: inferCategory(from: clean),
-                            questionType: clean.lowercased().contains("why") || clean.lowercased().contains("about") ? "paragraph" : "shortAnswer"
-                        ))
+                guard m.numberOfRanges > 1 else { continue }
+                let range = m.range(at: 1)
+                guard range.location != NSNotFound else { continue }
+                let blockHTML = ns.substring(with: range)
+                let blockNS = blockHTML as NSString
+                
+                // Label extraction
+                var label = ""
+                let hRegex = try? NSRegularExpression(pattern: "<(?:div[^>]*role=[\"']heading[\"']|h[1-6]|label|legend|span[^>]*class=[\"'][^\"']*(?:M7eMe|label|title)[^\"']*[\"'])[^>]*>(.*?)</(?:div|h[1-6]|label|legend|span)>", options: [.dotMatchesLineSeparators, .caseInsensitive])
+                if let hm = hRegex?.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                    label = cleanHTMLText(blockNS.substring(with: hm.range(at: 1)))
+                }
+                
+                // Fallback to aria-label
+                if label.isEmpty {
+                    let ariaRegex = try? NSRegularExpression(pattern: "aria-label=[\"']([^\"']+)[\"']", options: [.caseInsensitive])
+                    if let am = ariaRegex?.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                        label = cleanHTMLText(blockNS.substring(with: am.range(at: 1)))
+                    }
+                }
+                
+                guard !label.isEmpty && label.count < 140 else { continue }
+                if fields.contains(where: { $0.label.lowercased() == label.lowercased() }) { continue }
+                
+                // Entry Key
+                var entryKey: String?
+                let nameRegex = try? NSRegularExpression(pattern: "name=[\"']([^\"']+)[\"']", options: [.caseInsensitive])
+                if let nm = nameRegex?.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                    let nStr = blockNS.substring(with: nm.range(at: 1))
+                    if nStr.contains("entry.") {
+                        entryKey = nStr
+                    }
+                }
+                
+                // Value extraction
+                var val = ""
+                // A. Textarea
+                let taRegex = try? NSRegularExpression(pattern: "<textarea[^>]*>(.*?)</textarea>", options: [.dotMatchesLineSeparators, .caseInsensitive])
+                if let tm = taRegex?.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                    val = cleanHTMLText(blockNS.substring(with: tm.range(at: 1)))
+                }
+                
+                // B. Radio / Checkbox (checked value)
+                if val.isEmpty && (blockHTML.contains("type=\"radio\"") || blockHTML.contains("type=\"checkbox\"") || blockHTML.contains("role=\"radio\"") || blockHTML.contains("role=\"checkbox\"")) {
+                    let checkedPattern = "<(?:input|div)[^>]*(?:checked|aria-checked=[\"']true[\"'])[^>]*value=[\"']([^\"']*)[\"']|<(?:input|div)[^>]*value=[\"']([^\"']*)[\"'][^>]*(?:checked|aria-checked=[\"']true[\"'])"
+                    if let checkedRegex = try? NSRegularExpression(pattern: checkedPattern, options: [.caseInsensitive]),
+                       let cm = checkedRegex.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                        let cRange = cm.range(at: 1).location != NSNotFound ? cm.range(at: 1) : cm.range(at: 2)
+                        val = blockNS.substring(with: cRange)
+                    }
+                }
+                
+                // C. Regular input value
+                if val.isEmpty {
+                    let valRegex = try? NSRegularExpression(pattern: "<input[^>]*value=[\"']([^\"']*)[\"']", options: [.caseInsensitive])
+                    if let vm = valRegex?.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                        let candidateVal = blockNS.substring(with: vm.range(at: 1))
+                        if !candidateVal.isEmpty {
+                            val = candidateVal
+                        }
+                    }
+                }
+                
+                // Options extraction
+                var options: [String] = []
+                let optRegex = try? NSRegularExpression(pattern: "<label[^>]*>(.*?)</label>|<option[^>]*value=[\"']?([^\"'>]+)[\"']?[^>]*>(.*?)</option>", options: [.caseInsensitive])
+                if let oMatches = optRegex?.matches(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                    for om in oMatches {
+                        let oRange = om.range(at: 1).location != NSNotFound ? om.range(at: 1) : (om.range(at: 3).location != NSNotFound ? om.range(at: 3) : om.range(at: 2))
+                        let cleanOpt = cleanHTMLText(blockNS.substring(with: oRange))
+                        if !cleanOpt.isEmpty && cleanOpt != label && !options.contains(cleanOpt) {
+                            options.append(cleanOpt)
+                        }
+                    }
+                }
+                
+                // Question Type
+                let qType: String
+                if blockHTML.contains("<textarea") {
+                    qType = "paragraph"
+                } else if blockHTML.contains("type=\"radio\"") || blockHTML.contains("role=\"radio\"") {
+                    qType = "multipleChoice"
+                } else if blockHTML.contains("type=\"checkbox\"") || blockHTML.contains("role=\"checkbox\"") {
+                    qType = "checkboxes"
+                } else {
+                    qType = label.lowercased().contains("why") || label.lowercased().contains("about") || label.lowercased().contains("statement") ? "paragraph" : "shortAnswer"
+                }
+                
+                let isReq = blockHTML.contains("required") || blockHTML.contains("aria-required=\"true\"") || label.hasSuffix("*")
+                let cleanLabel = label.replacingOccurrences(of: "\\*$", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                fields.append(FormInputField(
+                    label: cleanLabel,
+                    value: val,
+                    category: inferCategory(from: cleanLabel),
+                    options: options,
+                    questionType: qType,
+                    isRequired: isReq,
+                    entryKey: entryKey
+                ))
+            }
+        }
+        
+        // 2. Fallback: Parse individual label + input pairs if block parsing found nothing
+        if fields.isEmpty {
+            let labelRegex = try? NSRegularExpression(pattern: "<label[^>]*>(.*?)</label>", options: [.dotMatchesLineSeparators, .caseInsensitive])
+            if let regex = labelRegex {
+                let matches = regex.matches(in: html, range: NSRange(location: 0, length: ns.length))
+                for m in matches {
+                    if m.numberOfRanges > 1 {
+                        let clean = cleanHTMLText(ns.substring(with: m.range(at: 1)))
+                        if !clean.isEmpty && clean.count < 120 && !fields.contains(where: { $0.label.lowercased() == clean.lowercased() }) {
+                            fields.append(FormInputField(
+                                label: clean,
+                                value: "",
+                                category: inferCategory(from: clean),
+                                questionType: clean.lowercased().contains("why") || clean.lowercased().contains("about") ? "paragraph" : "shortAnswer"
+                            ))
+                        }
                     }
                 }
             }
         }
         
         let titleMatch = html.range(of: "<title>(.*?)</title>", options: [.regularExpression, .caseInsensitive])
-        let pageTitle = titleMatch != nil ? String(html[titleMatch!]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines) : "Web Application Form"
+        let pageTitle = titleMatch != nil ? cleanHTMLText(String(html[titleMatch!])) : "Web Application Form"
         
         return RetrievedFormSchema(title: pageTitle, description: "", fields: fields)
     }
     
-    /// Autonomously retrieves form content and question schema from any URL
+    /// Autonomously retrieves form content and question schema from any URL or local file path
     public static func retrieveForm(from urlString: String) async -> RetrievedFormSchema? {
-        guard let url = URL(string: urlString) else { return nil }
+        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else { return nil }
         
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4.0)
-        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
-        req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        var htmlContent: String?
         
-        do {
-            let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse, http.statusCode < 400,
-                  let html = String(data: data, encoding: .utf8) else {
-                return nil
+        // 1. Local file support (file:///path/to/file or /path/to/file)
+        if trimmedURL.hasPrefix("/") || trimmedURL.hasPrefix("file://") {
+            let path = trimmedURL.hasPrefix("file://") ? (URL(string: trimmedURL)?.path ?? trimmedURL.replacingOccurrences(of: "file://", with: "")) : trimmedURL
+            let cleanFilePath: String
+            if let qIdx = path.firstIndex(of: "?") {
+                cleanFilePath = String(path[..<qIdx])
+            } else {
+                cleanFilePath = path
             }
+            if FileManager.default.fileExists(atPath: cleanFilePath) {
+                htmlContent = try? String(contentsOfFile: cleanFilePath, encoding: .utf8)
+            }
+        }
+        
+        // 2. Network HTTP/HTTPS fetch
+        if htmlContent == nil, let url = URL(string: trimmedURL) {
+            var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4.0)
+            req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+            req.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
             
-            if urlString.contains("docs.google.com/forms") || urlString.contains("forms.gle") || html.contains("FB_PUBLIC_LOAD_DATA_") {
-                if let schema = parseGoogleFormPublicLoadData(html) {
-                    return schema
+            do {
+                let (data, response) = try await URLSession.shared.data(for: req)
+                if let http = response as? HTTPURLResponse, http.statusCode < 400 {
+                    htmlContent = String(data: data, encoding: .utf8)
+                }
+            } catch {
+                // Ignore network error
+            }
+        }
+        
+        guard let html = htmlContent else { return nil }
+        
+        var schema: RetrievedFormSchema?
+        if trimmedURL.contains("docs.google.com/forms") || trimmedURL.contains("forms.gle") || html.contains("FB_PUBLIC_LOAD_DATA_") {
+            schema = parseGoogleFormPublicLoadData(html)
+        }
+        if schema == nil {
+            schema = parseGenericHTMLForm(html, url: trimmedURL)
+        }
+        
+        guard var finalSchema = schema else { return nil }
+        
+        // 3. Hydrate prefilled parameters from URL query items (e.g. ?entry.1001=Minh+Nguyen)
+        let queryParams = extractQueryParameters(from: trimmedURL)
+        if !queryParams.isEmpty {
+            for i in 0..<finalSchema.fields.count {
+                if finalSchema.fields[i].value.isEmpty {
+                    if let ek = finalSchema.fields[i].entryKey?.lowercased(), let val = queryParams[ek] {
+                        finalSchema.fields[i].value = val
+                        continue
+                    }
+                    let lbl = finalSchema.fields[i].label.lowercased()
+                    for (k, v) in queryParams {
+                        if lbl.contains(k) || k.contains(lbl) {
+                            finalSchema.fields[i].value = v
+                            break
+                        }
+                    }
                 }
             }
-            
-            return parseGenericHTMLForm(html, url: urlString)
-        } catch {
-            return nil
         }
+        
+        return finalSchema
     }
 }
 
@@ -1718,12 +1917,13 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     }
     
     private func setupAXSync() {
-        // Fast 0.5s poll to sync focused element value and selection changes
+        // Fast 0.5s poll to sync focused element value, selections, and live browser input changes
         axSyncTimer = Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.syncFocusedElement()
+                    self?.formModel?.syncLiveFormInputValues()
                 }
             }
     }
@@ -1852,7 +2052,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         AXUIElementCopyAttributeValue(elem, kAXTitleAttribute as CFString, &titleRef)
         var descRef: CFTypeRef?
         AXUIElementCopyAttributeValue(elem, kAXDescriptionAttribute as CFString, &descRef)
-        let elemTitle = ((titleRef as? String) ?? (descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var elemTitle = ((titleRef as? String) ?? (descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // If elemTitle is empty or generic (e.g. "Your answer"), resolve question heading via ancestor walk
+        if elemTitle.isEmpty || elemTitle.lowercased() == "your answer" || elemTitle.lowercased() == "address and search bar" {
+            if let resolved = FormInputAutoTracker.findQuestionTitleForElement(elem) {
+                elemTitle = resolved
+            }
+        }
         
         var valRef: CFTypeRef?
         AXUIElementCopyAttributeValue(elem, kAXValueAttribute as CFString, &valRef)
@@ -1898,6 +2105,242 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 }
             }
         }
+    }
+    
+    // MARK: - Hierarchy Inspection Helpers
+    /// Resolves the question title for a focused or scanned element by checking direct attributes,
+    /// title UI elements, or climbing ancestor containers to find question headings in Google Forms and web forms.
+    public static func findQuestionTitleForElement(_ elem: AXUIElement) -> String? {
+        let genericIgnored = ["your answer", "address and search bar", "search", "text", "edit", "input"]
+        
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXTitleAttribute as CFString, &titleRef)
+        var descRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXDescriptionAttribute as CFString, &descRef)
+        let t = ((titleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let d = ((descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if !t.isEmpty && !genericIgnored.contains(t.lowercased()) {
+            return t
+        }
+        if !d.isEmpty && !genericIgnored.contains(d.lowercased()) {
+            return d
+        }
+        
+        // Check kAXTitleUIElementAttribute
+        var titleElemRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(elem, kAXTitleUIElementAttribute as CFString, &titleElemRef) == .success,
+           let titleElem = titleElemRef {
+            let te = titleElem as! AXUIElement
+            var valRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(te, kAXValueAttribute as CFString, &valRef)
+            var tRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(te, kAXTitleAttribute as CFString, &tRef)
+            let s = ((valRef as? String) ?? (tRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !s.isEmpty && !genericIgnored.contains(s.lowercased()) {
+                return s
+            }
+        }
+        
+        // Climb ancestors up to 4 levels
+        var current = elem
+        for _ in 0..<4 {
+            var parentRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parentRef) == .success,
+                  let p = parentRef else { break }
+            current = p as! AXUIElement
+            
+            var childrenRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(current, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+               let children = childrenRef as? [AXUIElement] {
+                for ch in children {
+                    var rRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(ch, kAXRoleAttribute as CFString, &rRef)
+                    let role = (rRef as? String) ?? ""
+                    if role == "AXHeading" || role == "AXStaticText" {
+                        var vRef: CFTypeRef?, cTitleRef: CFTypeRef?
+                        AXUIElementCopyAttributeValue(ch, kAXValueAttribute as CFString, &vRef)
+                        AXUIElementCopyAttributeValue(ch, kAXTitleAttribute as CFString, &cTitleRef)
+                        let text = ((vRef as? String) ?? (cTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty && text != "*" && !genericIgnored.contains(text.lowercased()) {
+                            return text
+                        }
+                    }
+                }
+            }
+        }
+        return nil
+    }
+    
+    /// Scans the browser content window to extract live input field values paired with their question labels.
+    public static func scanBrowserWindowInputs(appElem: AXUIElement) -> [(label: String, value: String)]? {
+        guard let win = DefaultApplicationFormDetector.getBrowserWindowElement(appElem: appElem) else {
+            return nil
+        }
+        
+        var results: [(label: String, value: String)] = []
+        var queue: [AXUIElement] = [win]
+        var head = 0
+        let maxElements = 250
+        
+        while head < queue.count && head < maxElements {
+            let current = queue[head]
+            head += 1
+            
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(current, kAXRoleAttribute as CFString, &roleRef)
+            let role = (roleRef as? String) ?? ""
+            
+            if role == "AXTextField" || role == "AXTextArea" || role == "AXSearchField" || role == "AXComboBox" {
+                var descRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(current, kAXDescriptionAttribute as CFString, &descRef)
+                let desc = (descRef as? String) ?? ""
+                if desc != "Address and search bar" && !desc.localizedCaseInsensitiveContains("address") {
+                    var valRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(current, kAXValueAttribute as CFString, &valRef)
+                    let textVal = (valRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !textVal.isEmpty {
+                        let label = findQuestionTitleForElement(current) ?? desc
+                        if !label.isEmpty {
+                            results.append((label: label, value: textVal))
+                        }
+                    }
+                }
+            } else if role == "AXRadioButton" || role == "AXCheckBox" {
+                var checkedRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(current, kAXValueAttribute as CFString, &checkedRef)
+                let isChecked = (checkedRef as? Int == 1) || (checkedRef as? Bool == true)
+                if isChecked {
+                    var titleRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(current, kAXTitleAttribute as CFString, &titleRef)
+                    let optionTitle = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let qLabel = findQuestionTitleForElement(current) ?? ""
+                    if !qLabel.isEmpty && !optionTitle.isEmpty {
+                        results.append((label: qLabel, value: optionTitle))
+                    }
+                }
+            }
+            
+            var childrenRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(current, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+               let children = childrenRef as? [AXUIElement] {
+                for c in children {
+                    queue.append(c)
+                }
+            }
+        }
+        return results
+    }
+    
+    /// Extracts live question inputs from scriptable browsers (Safari, Chrome, Brave, Arc, Edge) via AppleScript.
+    public static func extractInputsViaAppleScript(bundleID: String) -> [(label: String, value: String)]? {
+        let b = bundleID.lowercased()
+        let isChrome = b.contains("chrome") || b.contains("brave") || b.contains("edge") || b.contains("arc") || b.contains("vivaldi") || b.contains("opera")
+        let isSafari = b.contains("safari") && !b.contains("technology")
+        guard isChrome || isSafari else { return nil }
+        
+        let jsSnippet = """
+        (function() {
+            var out = [];
+            var items = document.querySelectorAll('div[role=\"listitem\"], .Qr7Oae, .question, .form-group');
+            if (items.length > 0) {
+                for (var i = 0; i < items.length; i++) {
+                    var item = items[i];
+                    var h = item.querySelector('[role=\"heading\"], .M7eMe, label, h2, h3, h4');
+                    var title = h ? h.innerText.replace(/[*\\n\\r]+/g, ' ').trim() : '';
+                    var val = '';
+                    var inp = item.querySelector('input.whsOnd, input[type=\"text\"], input[type=\"email\"], textarea.KHxj8b, textarea');
+                    if (inp && inp.value) val = inp.value.trim();
+                    if (!val) {
+                        var rad = item.querySelector('[role=\"radio\"][aria-checked=\"true\"], input[type=\"radio\"]:checked');
+                        if (rad) val = rad.getAttribute('data-value') || rad.getAttribute('aria-label') || rad.value || rad.innerText.trim();
+                    }
+                    if (!val) {
+                        var chk = item.querySelectorAll('[role=\"checkbox\"][aria-checked=\"true\"], input[type=\"checkbox\"]:checked');
+                        if (chk.length > 0) {
+                            var cs = [];
+                            for (var j = 0; j < chk.length; j++) {
+                                var cv = chk[j].getAttribute('data-value') || chk[j].getAttribute('aria-label') || chk[j].value || chk[j].innerText.trim();
+                                if (cv) cs.push(cv);
+                            }
+                            val = cs.join(', ');
+                        }
+                    }
+                    if (title && val) out.push(title + ':::' + val);
+                }
+            } else {
+                var inps = document.querySelectorAll('input:not([type=\"hidden\"]), textarea');
+                for (var k = 0; k < inps.length; k++) {
+                    var el = inps[k];
+                    var l = el.getAttribute('aria-label') || el.name || el.placeholder || '';
+                    if (l && el.value) out.push(l + ':::' + el.value.trim());
+                }
+            }
+            return out.join('|||');
+        })()
+        """
+        
+        let scriptSource: String
+        if isChrome {
+            let escapedJS = jsSnippet.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ")
+            scriptSource = """
+            tell application id "\(bundleID)"
+                if (count of windows) > 0 then
+                    return execute front window's active tab javascript "\(escapedJS)"
+                end if
+            end tell
+            """
+        } else {
+            let escapedJS = jsSnippet.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ")
+            scriptSource = """
+            tell application id "com.apple.Safari"
+                if (count of documents) > 0 then
+                    return do JavaScript "\(escapedJS)" in current tab of front window
+                end if
+            end tell
+            """
+        }
+        
+        guard let output = executeAppleScript(scriptSource), !output.isEmpty else { return nil }
+        var results: [(label: String, value: String)] = []
+        for pair in output.components(separatedBy: "|||") {
+            let parts = pair.components(separatedBy: ":::")
+            if parts.count >= 2 {
+                let lbl = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                let val = parts[1...].joined(separator: ":::").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !lbl.isEmpty && !val.isEmpty {
+                    results.append((label: lbl, value: val))
+                }
+            }
+        }
+        return results
+    }
+    
+    private static func executeAppleScript(_ source: String) -> String? {
+        if let script = NSAppleScript(source: source) {
+            var errorDict: NSDictionary?
+            let desc = script.executeAndReturnError(&errorDict)
+            if errorDict == nil, let val = desc.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
+                return val
+            }
+        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", source]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !str.isEmpty {
+                    return str
+                }
+            }
+        } catch {}
+        return nil
     }
 }
 
@@ -2060,6 +2503,7 @@ public final class ApplicationFormModel: ObservableObject {
                         autoRetrieveFormContent(url: u)
                     }
                 }
+                syncLiveFormInputValues()
             }
         } else {
             // If Morph itself is frontmost and we already have an active form session,
@@ -2148,14 +2592,14 @@ public final class ApplicationFormModel: ObservableObject {
                 
                 if !schema.fields.isEmpty {
                     if let current = self.activeSession?.fields, !current.isEmpty {
-                        // Merge fields preserving any user input
+                        // Merge fields preserving any user input or adopting new values
                         var merged = schema.fields
                         for i in 0..<merged.count {
                             if let existing = current.first(where: {
                                 $0.label.lowercased() == merged[i].label.lowercased() ||
                                 ($0.entryKey != nil && $0.entryKey == merged[i].entryKey)
                             }) {
-                                if !existing.value.isEmpty {
+                                if !existing.value.isEmpty && merged[i].value.isEmpty {
                                     merged[i].value = existing.value
                                 }
                             }
@@ -2164,9 +2608,108 @@ public final class ApplicationFormModel: ObservableObject {
                     } else {
                         self.activeSession?.fields = schema.fields
                     }
+                    
+                    // Auto-update recipientEmail if default and an email field has value
+                    for field in self.activeSession?.fields ?? [] {
+                        if (field.category == .contact || field.label.lowercased().contains("email")) && !field.value.isEmpty && field.value.contains("@") {
+                            if self.recipientEmail.isEmpty || self.recipientEmail.contains("example.com") || self.recipientEmail.contains("@test.com") {
+                                self.setRecipientEmail(field.value)
+                            }
+                            break
+                        }
+                    }
+                }
+                
+                // Immediately synchronize live inputs from browser
+                self.syncLiveFormInputValues()
+            }
+        }
+    }
+    
+    // MARK: - Live Input Hydration & Synchronization
+    @MainActor
+    public func syncLiveFormInputValues() {
+        guard isFormDetected, isAutoCaptureEnabled,
+              let session = activeSession, !session.fields.isEmpty else { return }
+        
+        // 1. If form source is a local file or file URL, re-parse if any fields are empty
+        if let urlStr = session.sourceURL, (urlStr.hasPrefix("/") || urlStr.hasPrefix("file://")) {
+            let path = urlStr.hasPrefix("file://") ? (URL(string: urlStr)?.path ?? urlStr.replacingOccurrences(of: "file://", with: "")) : urlStr
+            let cleanFilePath: String
+            if let qIdx = path.firstIndex(of: "?") {
+                cleanFilePath = String(path[..<qIdx])
+            } else {
+                cleanFilePath = path
+            }
+            if FileManager.default.fileExists(atPath: cleanFilePath), let content = try? String(contentsOfFile: cleanFilePath, encoding: .utf8) {
+                if let schema = FormContentRetriever.parseGenericHTMLForm(content, url: urlStr) {
+                    for parsedField in schema.fields {
+                        if !parsedField.value.isEmpty {
+                            applyExtractedInput(label: parsedField.label, value: parsedField.value)
+                        }
+                    }
                 }
             }
         }
+        
+        // 2. Scan running browser windows via AXUIElement
+        let runningBrowsers = PersonalizedBrowserDetector.rankedRunningBrowsers()
+        var targetApps = runningBrowsers
+        if let frontApp = NSWorkspace.shared.frontmostApplication,
+           DefaultApplicationFormDetector.isBrowserApplication(frontApp) && !targetApps.contains(frontApp) {
+            targetApps.insert(frontApp, at: 0)
+        }
+        
+        for app in targetApps {
+            let appElem = AXUIElementCreateApplication(app.processIdentifier)
+            if let pairs = FormInputAutoTracker.scanBrowserWindowInputs(appElem: appElem), !pairs.isEmpty {
+                for pair in pairs {
+                    applyExtractedInput(label: pair.label, value: pair.value)
+                }
+            }
+        }
+        
+        // 3. Fallback for scriptable browsers (Safari, Chrome) via AppleScript DOM extraction
+        for app in targetApps {
+            let bid = app.bundleIdentifier ?? ""
+            if let pairs = FormInputAutoTracker.extractInputsViaAppleScript(bundleID: bid), !pairs.isEmpty {
+                for pair in pairs {
+                    applyExtractedInput(label: pair.label, value: pair.value)
+                }
+            }
+        }
+        
+        // 4. Auto-detect recipient email from any field containing email
+        for field in activeSession?.fields ?? [] {
+            if (field.category == .contact || field.label.lowercased().contains("email")) && !field.value.isEmpty && field.value.contains("@") {
+                if recipientEmail.isEmpty || recipientEmail.contains("example.com") || recipientEmail.contains("@test.com") {
+                    setRecipientEmail(field.value)
+                }
+                break
+            }
+        }
+    }
+    
+    @discardableResult
+    public func applyExtractedInput(label: String, value: String) -> Bool {
+        guard let session = activeSession, !session.fields.isEmpty else { return false }
+        let cleanVal = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanVal.isEmpty else { return false }
+        
+        let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        
+        // 1. Exact or substring match by label
+        if let idx = session.fields.firstIndex(where: {
+            let fl = $0.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            return fl == cleanLabel || fl.contains(cleanLabel) || cleanLabel.contains(fl)
+        }) {
+            if activeSession?.fields[idx].value != cleanVal {
+                activeSession?.fields[idx].value = cleanVal
+                lastAutoCapturedAt = Date()
+                return true
+            }
+        }
+        return false
     }
     
     public func selectActiveField(_ index: Int) {
