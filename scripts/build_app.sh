@@ -7,13 +7,14 @@ cd "$DIR"
 echo "🔨 Building Morph binary..."
 swift build -c release
 
+TMP_APP_DIR="/tmp/Morph.app"
 APP_DIR="$DIR/Morph.app"
-CONTENTS_DIR="$APP_DIR/Contents"
+CONTENTS_DIR="$TMP_APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-echo "📦 Assembling Morph.app bundle..."
-rm -rf "$APP_DIR"
+echo "📦 Assembling Morph.app bundle in /tmp..."
+rm -rf "$TMP_APP_DIR"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
@@ -64,16 +65,28 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-echo "🔏 Signing Morph.app bundle..."
-find "$APP_DIR" -name ".DS_Store" -delete 2>/dev/null || true
-dot_clean "$APP_DIR" 2>/dev/null || true
-xattr -cr "$APP_DIR" 2>/dev/null || true
-codesign --force --deep --sign - "$APP_DIR"
+echo "🔏 Signing Morph.app bundle in /tmp..."
+find "$TMP_APP_DIR" -name ".DS_Store" -delete 2>/dev/null || true
+dot_clean "$TMP_APP_DIR" 2>/dev/null || true
+xattr -cr "$TMP_APP_DIR" 2>/dev/null || true
 
-echo "✅ Morph.app built successfully at: $APP_DIR"
+SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Apple Development" | head -n 1 | awk -F '"' '{print $2}')
+if [ -n "$SIGN_IDENTITY" ]; then
+    echo "🔏 Signing with identity: $SIGN_IDENTITY"
+    codesign --force --deep --sign "$SIGN_IDENTITY" "$TMP_APP_DIR"
+else
+    echo "🔏 Signing with ad-hoc signature (-)"
+    codesign --force --deep --sign - "$TMP_APP_DIR"
+fi
+
+echo "✅ Morph.app built successfully at: $TMP_APP_DIR"
 
 # Install into /Applications
 echo "🚀 Installing Morph.app to /Applications/Morph.app..."
 rm -rf "/Applications/Morph.app"
-cp -R "$APP_DIR" "/Applications/Morph.app"
+cp -R "$TMP_APP_DIR" "/Applications/Morph.app"
 echo "✅ Morph.app successfully installed to /Applications/Morph.app"
+
+# Mirror to local directory
+rm -rf "$APP_DIR"
+cp -R "$TMP_APP_DIR" "$APP_DIR"

@@ -25,13 +25,18 @@ public final class MorphController: NSObject {
         setupMouseMonitors()
     }
     
+    private var currentTargetScreen: NSScreen?
+    
     private func targetScreen() -> NSScreen {
+        // Morph UI is strictly kept anchored under the physical notch of the user's primary/laptop screen.
+        // It never renders or jumps to external/bigger displays.
         return NSScreen.screens.first(where: { $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens[0]
     }
     
     private func setupPanel() {
         let screen = targetScreen()
-        model.detectScreenNotch()
+        self.currentTargetScreen = screen
+        model.detectScreenNotch(for: screen)
         
         let width = model.currentWidth
         let height = model.currentHeight
@@ -169,11 +174,11 @@ public final class MorphController: NSObject {
         // Explicitly observe formTracker detection state to guarantee immediate panel resizing
         model.formTracker.$isFormDetected
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self, !self.model.isExpanded else { return }
-                    self.resizePanelToRestingState()
-                }
+            .sink { [weak self] detected in
+                guard let self = self else { return }
+                NSLog("[MORPH-FORM] $isFormDetected sink: detected=%d, isExpanded=%d, currentWidth=%.1f, compactHUDMode=%@", detected ? 1 : 0, self.model.isExpanded ? 1 : 0, self.model.currentWidth, self.model.compactHUDMode.rawValue)
+                guard !self.model.isExpanded else { return }
+                self.resizePanelToRestingState()
             }
             .store(in: &cancellables)
             
@@ -181,10 +186,8 @@ public final class MorphController: NSObject {
         model.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self, !self.model.isExpanded else { return }
-                    self.resizePanelToRestingState()
-                }
+                guard let self = self, !self.model.isExpanded else { return }
+                self.resizePanelToRestingState()
             }
             .store(in: &cancellables)
         
@@ -325,7 +328,9 @@ public final class MorphController: NSObject {
         // completely bypassing macOS background event monitor throttling.
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self = self else { return }
-            self.checkMousePosition(NSEvent.mouseLocation)
+            MainActor.assumeIsolated {
+                self.checkMousePosition(NSEvent.mouseLocation)
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.mousePollTimer = timer
@@ -333,7 +338,9 @@ public final class MorphController: NSObject {
         // 2. Global event monitor for mouse moves and drags
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
             guard let self = self else { return }
-            self.checkMousePosition(NSEvent.mouseLocation)
+            DispatchQueue.main.async { [weak self] in
+                self?.checkMousePosition(NSEvent.mouseLocation)
+            }
         }
         
         // 3. Local event monitor for inside-window movements
@@ -463,14 +470,21 @@ public final class MorphController: NSObject {
     
     private func resizePanelToRestingState() {
         let screen = targetScreen()
-        let w = model.currentWidth
-        let h = model.currentHeight
-        panel.updatePosition(screen: screen, width: w, height: h, animate: false)
+        let w = model.currentWidth.rounded()
+        let h = model.currentHeight.rounded()
+        let x = floor(screen.frame.midX - (w / 2))
+        let y = floor(screen.frame.maxY - h)
+        let targetFrame = NSRect(x: x, y: y, width: w, height: h)
+        if panel.frame != targetFrame || !panel.isVisible {
+            NSLog("[MORPH-FORM] resizePanelToRestingState: w=%.1f, h=%.1f, mode=%@, oldFrame=%@ -> newFrame=%@", w, h, model.compactHUDMode.rawValue, NSStringFromRect(panel.frame), NSStringFromRect(targetFrame))
+            panel.updatePosition(screen: screen, width: w, height: h, animate: false)
+        }
     }
     
     private func handleScreenChange() {
-        model.detectScreenNotch()
         let screen = targetScreen()
+        currentTargetScreen = screen
+        model.detectScreenNotch(for: screen)
         let w = model.currentWidth
         let h = model.currentHeight
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)

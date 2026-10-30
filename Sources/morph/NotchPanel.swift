@@ -75,14 +75,16 @@ public final class NotchPanel: NSPanel {
     }
     
     public func updatePosition(screen: NSScreen, width: CGFloat, height: CGFloat, animate: Bool = false) {
-        let x = screen.frame.midX - (width / 2)
-        let y = screen.frame.maxY - height
-        let newFrame = NSRect(x: x, y: y, width: width, height: height)
+        let x = floor(screen.frame.midX - (width / 2))
+        let y = floor(screen.frame.maxY - height)
+        let newFrame = NSRect(x: x, y: y, width: width.rounded(), height: height.rounded())
         
         if self.frame != newFrame {
             self.setFrame(newFrame, display: true, animate: animate)
-        }
-        if !MorphEnvironment.isTestingEnvironment {
+            if !MorphEnvironment.isTestingEnvironment {
+                self.orderFrontRegardless()
+            }
+        } else if !MorphEnvironment.isTestingEnvironment && !self.isVisible {
             self.orderFrontRegardless()
         }
     }

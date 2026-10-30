@@ -15,6 +15,13 @@ Morph transforms the physical notch area into an unobtrusive, multi-functional w
 - **Scratchpad Notes (`⌘4`):** Persistent distraction-free notepad with live word count, instant clipboard copy, and notch pinning.
 - **Google Calendar (`⌘6`):** Dual-deck calendar with 7-column month grid, upcoming meeting notifications with direct Google Meet links, multi-calendar support, quick event creation, and tab-reusing browser sync.
 - **Profile & Sync (`⌘5`):** Account profile management with cloud session persistence and automated multi-service authentication.
+- **Application Form Tracker & Live Notch HUD (`⌘7`):** Real-time Google Form and web application form companion anchored to the physical notch:
+  - **Zero-Friction Form Detection:** Automatically detects active Google Forms, job applications, worksheets, and intake forms across all macOS browsers (Polar, Safari, Chrome, Arc, Brave, Edge, etc.) without false positives.
+  - **Real-Time Auto-Input Capture:** Streams user answers in real-time as you type or select options in the browser without manual copying.
+  - **Interactive Notch Option Pills:** Clickable option pills and single-keystroke selection (e.g. `1`, `2`, `y`, `n`) for multiple choice and checkbox questions.
+  - **Smart Field Alignment & Navigation:** Automatically advances to the next unanswered question on Tab, Enter, or option selection, skipping static disclaimer/info headers.
+  - **Form Memory & Draft Persistence:** Safely persists answers locally across app restarts, browser tab switches, and session interruptions, resuming right where you left off.
+  - **One-Click Export & Email Dispatch:** Instant markdown application summary generation, clipboard copying, and automated email drafting.
 
 ---
 

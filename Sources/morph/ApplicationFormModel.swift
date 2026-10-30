@@ -64,6 +64,16 @@ public struct FormInputField: Identifiable, Equatable, Codable, Sendable {
         !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
+    public var isActionableQuestion: Bool {
+        if questionType == "info" || questionType == "section" || questionType == "pageBreak" || questionType == "header" || questionType == "title" {
+            return false
+        }
+        if entryKey == nil && (questionType == "text" || questionType == "info" || questionType == "section") {
+            return false
+        }
+        return true
+    }
+    
     public var wordCount: Int {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return 0 }
@@ -72,7 +82,7 @@ public struct FormInputField: Identifiable, Equatable, Codable, Sendable {
 }
 
 // MARK: - Email Delivery Status
-public enum EmailDeliveryStatus: Equatable, Sendable {
+public enum EmailDeliveryStatus: Equatable, Sendable, Codable {
     case idle
     case sending
     case sent(Date)
@@ -82,10 +92,47 @@ public enum EmailDeliveryStatus: Equatable, Sendable {
         if case .sent = self { return true }
         return false
     }
+    
+    private enum CodingKeys: String, CodingKey {
+        case type, date, message
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let type = try container.decode(String.self, forKey: .type)
+        switch type {
+        case "idle": self = .idle
+        case "sending": self = .sending
+        case "sent":
+            let date = try container.decode(Date.self, forKey: .date)
+            self = .sent(date)
+        case "failed":
+            let msg = try container.decode(String.self, forKey: .message)
+            self = .failed(msg)
+        default:
+            self = .idle
+        }
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .idle:
+            try container.encode("idle", forKey: .type)
+        case .sending:
+            try container.encode("sending", forKey: .type)
+        case .sent(let date):
+            try container.encode("sent", forKey: .type)
+            try container.encode(date, forKey: .date)
+        case .failed(let msg):
+            try container.encode("failed", forKey: .type)
+            try container.encode(msg, forKey: .message)
+        }
+    }
 }
 
 // MARK: - Application Form Session
-public struct ApplicationFormSession: Identifiable, Equatable, Sendable {
+public struct ApplicationFormSession: Identifiable, Equatable, Sendable, Codable {
     public var id: UUID
     public var formTitle: String
     public var sourceAppName: String
@@ -131,12 +178,28 @@ public struct ApplicationFormSession: Identifiable, Equatable, Sendable {
     }
     
     public var answeredCount: Int {
-        fields.filter { $0.isAnswered && $0.questionType != "info" }.count
+        fields.filter { $0.isAnswered && $0.isActionableQuestion }.count
     }
     
     public var totalQuestions: Int {
-        let actionable = fields.filter { $0.questionType != "info" }.count
+        let actionable = fields.filter { $0.isActionableQuestion }.count
         return actionable > 0 ? actionable : fields.count
+    }
+    
+    public var requiredFields: [FormInputField] {
+        fields.filter { $0.isRequired && $0.isActionableQuestion }
+    }
+    
+    public var requiredCount: Int {
+        requiredFields.count
+    }
+    
+    public var answeredRequiredCount: Int {
+        requiredFields.filter { $0.isAnswered }.count
+    }
+    
+    public var hasRequiredFields: Bool {
+        requiredCount > 0
     }
     
     public var completionPercentage: Double {
@@ -289,7 +352,10 @@ public final class PersonalizedBrowserDetector: @unchecked Sendable {
     /// Returns all currently running browsers on the system, prioritizing the user's default browser first
     public static func rankedRunningBrowsers() -> [NSRunningApplication] {
         let running = NSWorkspace.shared.runningApplications.filter { app in
-            app.activationPolicy == .regular && DefaultApplicationFormDetector.isBrowserApplication(app)
+            !app.isTerminated &&
+            kill(app.processIdentifier, 0) == 0 &&
+            app.activationPolicy == .regular &&
+            DefaultApplicationFormDetector.isBrowserApplication(app)
         }
         let defaultProfile = detectDefaultBrowser()
         return running.sorted { a, b in
@@ -313,13 +379,25 @@ public struct FormDetectionResult: Sendable, Equatable {
     public var appName: String?
     public var url: String?
     public var browserFamily: BrowserEngineFamily?
+    public var screenIndex: Int?
+    public var screenName: String?
     
-    public init(isDetected: Bool, title: String? = nil, appName: String? = nil, url: String? = nil, browserFamily: BrowserEngineFamily? = nil) {
+    public init(
+        isDetected: Bool,
+        title: String? = nil,
+        appName: String? = nil,
+        url: String? = nil,
+        browserFamily: BrowserEngineFamily? = nil,
+        screenIndex: Int? = nil,
+        screenName: String? = nil
+    ) {
         self.isDetected = isDetected
         self.title = title
         self.appName = appName
         self.url = url
         self.browserFamily = browserFamily
+        self.screenIndex = screenIndex
+        self.screenName = screenName
     }
 }
 
@@ -351,13 +429,19 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
             "membership application", "grant application", "permit application", "volunteer application",
             "credit application", "loan application", "mortgage application",
             "registration form", "signup form", "sign-up form", "event registration", "attendee registration", "rsvp",
+            "registration", "register", "sign up", "sign-up", "signup",
+            "application", "applicant", "nomination", "nominations",
             "intake form", "feedback form", "evaluation form", "contact form", "contact us",
             "order form", "submission form", "questionnaire", "survey", "inquiry form", "waitlist",
             "quiz", "pop quiz", "assessment", "evaluation", "exam", "midterm",
             "course evaluation", "student evaluation", "peer review",
             "check-in", "check in", "checkin", "timesheet",
-            "onboarding", "intake", "feedback", "poll", "ballot", "petition",
-            "worksheet", "assignment", "fill & sign", "interactive form"
+            "onboarding", "intake", "feedback", "poll", "ballot", "voting", "vote", "petition", "election",
+            "worksheet", "assignment", "fill & sign", "interactive form",
+            "proposal", "proposals", "submission", "submissions", "reimbursement", "screening",
+            "screening form", "attendance", "attendance form", "preferences", "preference form",
+            "interview form", "rubric", "sign-in", "signin", "sign in",
+            "pre-advisement", "advisement", "tfaform", "formassembly"
         ]
         
         for kw in keywords {
@@ -366,11 +450,16 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
             }
         }
         
-        // Suffix & separator patterns: e.g. "Customer Inquiry Form", "Program - Application", "Physics 101 Quiz"
-        if lower.hasSuffix(" form") || lower.hasSuffix(" forms") || lower.hasSuffix(" application") || lower.hasSuffix(" questionnaire") || lower.hasSuffix(" survey") || lower.hasSuffix(" quiz") || lower.hasSuffix(" exam") || lower.hasSuffix(" assessment") || lower.hasSuffix(" evaluation") || lower.hasSuffix(" feedback") || lower.hasSuffix(" review") || lower.hasSuffix(" check-in") || lower.hasSuffix(" checkin") || lower.hasSuffix(" worksheet") {
+        // Direct Google Forms title identifiers
+        if lower.contains(" - google forms") || lower.contains(" · google forms") || lower.contains(" | google forms") || lower.contains("google forms") || lower.contains("docs.google.com/forms") || lower.contains("ia/sa") || lower.contains("bp 2026") || lower.contains("bp 2025") {
             return true
         }
-        if lower.contains(" form - ") || lower.contains(" form | ") || lower.contains(" - form") || lower.contains(" | form") || lower.contains(": form") || lower.contains(" forms - ") || lower.contains(" forms | ") {
+        
+        // Suffix & separator patterns: e.g. "Customer Inquiry Form", "Program - Application", "Physics 101 Quiz"
+        if lower.hasSuffix(" form") || lower.hasSuffix(" forms") || lower.hasSuffix(" application") || lower.hasSuffix(" questionnaire") || lower.hasSuffix(" survey") || lower.hasSuffix(" quiz") || lower.hasSuffix(" exam") || lower.hasSuffix(" assessment") || lower.hasSuffix(" evaluation") || lower.hasSuffix(" feedback") || lower.hasSuffix(" review") || lower.hasSuffix(" check-in") || lower.hasSuffix(" checkin") || lower.hasSuffix(" worksheet") || lower.hasSuffix(" registration") || lower.hasSuffix(" sign-up") || lower.hasSuffix(" signup") || lower.hasSuffix(" proposal") || lower.hasSuffix(" submission") || lower.hasSuffix(" attendance") {
+            return true
+        }
+        if lower.contains(" form - ") || lower.contains(" form | ") || lower.contains(" - form") || lower.contains(" | form") || lower.contains(": form") || lower.contains(" forms - ") || lower.contains(" forms | ") || lower.contains(" - google forms") || lower.contains(" · google forms") || lower.contains(" | google forms") {
             return true
         }
         if lower.contains(" application - ") || lower.contains(" application | ") || lower.contains(" - application") || lower.contains(" | application") {
@@ -417,15 +506,41 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
             "fillout.com",
             "cognitoforms.com",
             "wufoo.com",
+            "tfaforms.net",
+            "formassembly.com",
+            "qualtrics.com",
+            "formsite.com",
+            "forms.app",
+            "paperform.co",
+            "feathery.io",
+            "opnform.com",
+            "script.google.com/macros/s/",
             "/apply",
             "/application",
             "/applications",
             "/forms/",
+            "/forms",
+            "/form/",
             "/viewform",
             "/formresponse",
+            "/register",
+            "/registration",
+            "/signup",
+            "/sign-up",
+            "/survey",
+            "/surveys",
+            "/feedback",
+            "/rsvp",
+            "/questionnaire",
+            "/intake",
+            "/evaluation",
+            "/assessment",
             "/quiz",
             "/quizzes/",
             "/assignment",
+            "/worksheet",
+            "/pre-advisement",
+            "/advisement",
             "/job-application"
         ]
         
@@ -478,10 +593,115 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         ]
         for p in patterns {
             if let r = title.range(of: p) {
-                title = String(title[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let candidate = String(title[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !candidate.isEmpty {
+                    title = candidate
+                }
+            }
+        }
+        // Strip trailing URL attachments (e.g. " - https://docs.google.com/forms/...")
+        if let r = title.range(of: " - https://") ?? title.range(of: " - http://") ?? title.range(of: " — https://") ?? title.range(of: " — http://") {
+            let candidate = String(title[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !candidate.isEmpty {
+                title = candidate
             }
         }
         return title
+    }
+    
+    public static func stripServiceSuffixes(_ rawTitle: String) -> String {
+        var title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serviceSuffixes = [
+            " - Google Forms", " — Google Forms", ": Google Forms",
+            " - Google Form", " — Google Form",
+            " - Microsoft Forms", " — Microsoft Forms",
+            " - Typeform", " — Typeform",
+            " - Tally", " — Tally",
+            " - Jotform", " — Jotform",
+            " - FormAssembly", " — FormAssembly"
+        ]
+        for s in serviceSuffixes {
+            if let r = title.range(of: s, options: .caseInsensitive) {
+                let candidate = String(title[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !candidate.isEmpty {
+                    title = candidate
+                }
+            }
+        }
+        return title
+    }
+    
+    public static func extractFormIdentifier(from urlString: String) -> String? {
+        let clean = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return nil }
+        let withScheme = clean.hasPrefix("http://") || clean.hasPrefix("https://") ? clean : "https://" + clean
+        guard let url = URL(string: withScheme) else { return nil }
+        
+        let path = url.path
+        let host = url.host?.lowercased() ?? ""
+        
+        if host.contains("google.com") || host.contains("forms.gle") {
+            let components = path.components(separatedBy: "/").filter { !$0.isEmpty }
+            if let dIdx = components.firstIndex(of: "d") {
+                if dIdx + 1 < components.count {
+                    if components[dIdx + 1] == "e" && dIdx + 2 < components.count {
+                        return components[dIdx + 2]
+                    }
+                    return components[dIdx + 1]
+                }
+            }
+            if host.contains("forms.gle") && !components.isEmpty {
+                return components.first
+            }
+        }
+        
+        if host.contains("office.com") || host.contains("microsoft.com") {
+            if let comps = URLComponents(string: withScheme), let idItem = comps.queryItems?.first(where: { $0.name.lowercased() == "id" })?.value {
+                return host + ":" + idItem
+            }
+        }
+        
+        var normPath = path
+        for suffix in ["/viewform", "/formResponse", "/edit", "/preview"] {
+            if normPath.hasSuffix(suffix) {
+                normPath = String(normPath.dropLast(suffix.count))
+            }
+        }
+        return host + normPath
+    }
+    
+    public static func isSameForm(
+        titleA: String, urlA: String?,
+        titleB: String, urlB: String?
+    ) -> Bool {
+        let idA = urlA.flatMap { extractFormIdentifier(from: $0) }
+        let idB = urlB.flatMap { extractFormIdentifier(from: $0) }
+        
+        // 1. If both have form IDs, that is the canonical ground truth
+        if let a = idA, let b = idB, !a.isEmpty && !b.isEmpty {
+            return a == b
+        }
+        
+        // 2. If both have URLs, compare normalized URLs
+        if let uA = urlA, let uB = urlB, !uA.isEmpty && !uB.isEmpty {
+            let normA = FormContentRetriever.normalizeURLScheme(uA)
+            let normB = FormContentRetriever.normalizeURLScheme(uB)
+            return normA == normB
+        }
+        
+        // 3. Fallback to clean titles
+        let cleanA = stripServiceSuffixes(cleanTitle(titleA)).lowercased()
+        let cleanB = stripServiceSuffixes(cleanTitle(titleB)).lowercased()
+        
+        let genericNames = ["", "application form", "google forms", "google form", "untitled form", "polar"]
+        let isAGeneric = genericNames.contains(cleanA)
+        let isBGeneric = genericNames.contains(cleanB)
+        
+        if isAGeneric || isBGeneric {
+            return true
+        }
+        
+        return cleanA == cleanB
     }
     
     // MARK: - Browser & AX Helpers
@@ -497,33 +717,179 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         return keywords.contains { bundle.contains($0) || name.contains($0) }
     }
     
+    public static func isBrowserName(_ name: String) -> Bool {
+        let n = name.lowercased()
+        let keywords = [
+            "chrome", "chromium", "safari", "polar", "comet", "brave", "edge", "arc",
+            "firefox", "opera", "vivaldi", "orion", "zen", "browser",
+            "duckduckgo", "floorp", "waterfox", "librewolf", "tor",
+            "sigmaos", "wavebox", "webkit"
+        ]
+        return keywords.contains { n.contains($0) }
+    }
+    
+    /// Returns all relevant content, focused, and main windows of an application element.
+    /// Crucial discovery: modern Chromium & Electron shells (Polar, Arc, Comet) return an empty array []
+    /// for kAXWindowsAttribute on the root app element, attaching actual windows exclusively to
+    /// kAXFocusedWindowAttribute and kAXMainWindowAttribute.
+    public static func getAllBrowserWindows(appElem: AXUIElement) -> [AXUIElement] {
+        var results: [AXUIElement] = []
+        
+        var focusedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &focusedRef) == .success,
+           let f = focusedRef as! AXUIElement? {
+            results.append(f)
+        }
+        
+        var mainRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElem, kAXMainWindowAttribute as CFString, &mainRef) == .success,
+           let m = mainRef as! AXUIElement? {
+            if !results.contains(where: { CFEqual($0, m) }) {
+                results.append(m)
+            }
+        }
+        
+        var winsRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElem, kAXWindowsAttribute as CFString, &winsRef) == .success,
+           let wins = winsRef as? [AXUIElement], !wins.isEmpty {
+            for w in wins {
+                if !results.contains(where: { CFEqual($0, w) }) {
+                    results.append(w)
+                }
+            }
+        }
+        
+        return results
+    }
+    
     /// Retrieves the main, focused, or primary content AX window of an application.
     /// Crucial discovery: modern browsers (Polar, Arc, WebKit shells) often have invisible/overlay toolbar windows
     /// where kAXMainWindowAttribute points to an accessory window with an empty title.
-    /// Searching kAXWindowsAttribute for a titled content window succeeds reliably.
+    /// Searching kAXWindowsAttribute and checking focused/main windows for a titled content window succeeds reliably.
     public static func getBrowserWindowElement(appElem: AXUIElement) -> AXUIElement? {
-        var winsRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(appElem, kAXWindowsAttribute as CFString, &winsRef) == .success,
-           let wins = winsRef as? [AXUIElement] {
-            // Find a window with a non-empty title (content window)
-            for win in wins {
-                var titleRef: CFTypeRef?
-                _ = AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                let title = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !title.isEmpty {
+        // 1. Check focused window
+        var focusedRef: CFTypeRef?
+        var focusedWin: AXUIElement? = nil
+        if AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &focusedRef) == .success,
+           let f = focusedRef as! AXUIElement? {
+            focusedWin = f
+            var tRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(f, kAXTitleAttribute as CFString, &tRef) == .success,
+               let t = (tRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !t.isEmpty && t.lowercased() != "polar" {
+                return f
+            }
+        }
+        
+        // 2. Prioritize window on the primary/notch display
+        let windows = getAllBrowserWindows(appElem: appElem)
+        for win in windows {
+            let (sIdx, _) = screenForWindow(win)
+            if sIdx == 0 { // Primary / Notch screen
+                var tRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &tRef) == .success,
+                   let t = (tRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !t.isEmpty && t.lowercased() != "polar" {
                     return win
                 }
             }
-            if let first = wins.first {
-                return first
+        }
+        
+        // 3. Fallback to any titled window
+        for win in windows {
+            var titleRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef) == .success,
+               let t = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !t.isEmpty && t.lowercased() != "polar" {
+                return win
             }
         }
-        var winRef: CFTypeRef?
-        _ = AXUIElementCopyAttributeValue(appElem, kAXMainWindowAttribute as CFString, &winRef)
-        if winRef == nil {
-            _ = AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &winRef)
+        return focusedWin ?? windows.first
+    }
+    
+    // MARK: - Multi-Display Screen Resolvers
+    public static func screenForWindow(_ win: AXUIElement) -> (index: Int?, name: String?) {
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef)
+        _ = AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef)
+        
+        var pos = CGPoint.zero
+        var size = CGSize.zero
+        if let p = posRef as! AXValue? { AXValueGetValue(p, .cgPoint, &pos) }
+        if let s = sizeRef as! AXValue? { AXValueGetValue(s, .cgSize, &size) }
+        guard size.width > 50 && size.height > 50 else { return (nil, nil) }
+        
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return (nil, nil) }
+        let primaryH = screens[0].frame.height
+        let cocoaY = primaryH - pos.y - size.height
+        let cocoaRect = NSRect(x: pos.x, y: cocoaY, width: size.width, height: size.height)
+        
+        for (idx, screen) in screens.enumerated() {
+            if screen.frame.intersects(cocoaRect) {
+                return (idx, screen.localizedName)
+            }
         }
-        return winRef as! AXUIElement?
+        return (nil, nil)
+    }
+    
+    public static func screenForBounds(_ bounds: [String: Any]) -> (index: Int?, name: String?) {
+        let x = bounds["X"] as? CGFloat ?? 0
+        let y = bounds["Y"] as? CGFloat ?? 0
+        let w = bounds["Width"] as? CGFloat ?? 0
+        let h = bounds["Height"] as? CGFloat ?? 0
+        guard w > 50 && h > 50 else { return (nil, nil) }
+        
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return (nil, nil) }
+        let primaryH = screens[0].frame.height
+        let cocoaY = primaryH - y - h
+        let cocoaRect = NSRect(x: x, y: cocoaY, width: w, height: h)
+        
+        for (idx, screen) in screens.enumerated() {
+            if screen.frame.intersects(cocoaRect) {
+                return (idx, screen.localizedName)
+            }
+        }
+        return (nil, nil)
+    }
+    
+    /// Scans static texts and tab buttons in a Polar window to detect open background form tabs
+    public static func findOpenTabFormInPolarWindow(_ win: AXUIElement) -> (title: String, url: String?)? {
+        var queue = [win]
+        var head = 0
+        while head < queue.count && head < 200 {
+            let cur = queue[head]
+            head += 1
+            
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(cur, kAXRoleAttribute as CFString, &roleRef)
+            let role = roleRef as? String ?? ""
+            
+            if role == "AXStaticText" || role == "AXRadioButton" || role == "AXButton" {
+                var vRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(cur, kAXValueAttribute as CFString, &vRef)
+                var titleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(cur, kAXTitleAttribute as CFString, &titleRef)
+                
+                let text = ((vRef as? String) ?? (titleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty && isFormTitle(text) {
+                    var formURL: String? = nil
+                    if let session = readPolarSessionForm(filterTitle: text) {
+                        formURL = session.url
+                    }
+                    return (cleanTitle(text), formURL)
+                }
+            }
+            
+            var cRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(cur, kAXChildrenAttribute as CFString, &cRef) == .success,
+               let children = cRef as? [AXUIElement] {
+                queue.append(contentsOf: children)
+            }
+        }
+        return nil
     }
     
     /// Fast sub-5ms BFS search to extract the live web page URL from Polar, Chrome, Safari, etc.
@@ -569,14 +935,20 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
                 if AXUIElementCopyAttributeValue(current, kAXValueAttribute as CFString, &valRef) == .success,
                    let val = valRef as? String, !val.isEmpty {
                     let trimmed = val.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let isAddressBar = desc == "Address and search bar" ||
-                                       desc.localizedCaseInsensitiveContains("address") ||
-                                       desc.localizedCaseInsensitiveContains("search") ||
-                                       desc.localizedCaseInsensitiveContains("url") ||
-                                       desc.localizedCaseInsensitiveContains("location") ||
-                                       trimmed.contains(".") ||
-                                       trimmed.contains("://")
-                    if isAddressBar && !trimmed.isEmpty {
+                    let isAddressDesc = desc == "Address and search bar" ||
+                                        desc.localizedCaseInsensitiveContains("address") ||
+                                        desc.localizedCaseInsensitiveContains("location") ||
+                                        desc.localizedCaseInsensitiveContains("url")
+                    let looksLikeURL = !trimmed.contains(" ") && (
+                        trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") ||
+                        trimmed.contains("://") ||
+                        trimmed.contains("docs.google.com") ||
+                        trimmed.contains("forms.gle") ||
+                        trimmed.contains(".com/") || trimmed.contains(".org/") ||
+                        trimmed.contains(".net/") || trimmed.contains(".io/") ||
+                        trimmed.contains(".so/") || trimmed.contains(".edu/")
+                    )
+                    if (isAddressDesc || looksLikeURL) && !trimmed.isEmpty {
                         return trimmed
                     }
                 }
@@ -624,43 +996,60 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
             scriptSource = nil
         }
         
-        guard let source = scriptSource, let output = executeSimpleAppleScript(source) else {
+        guard let source = scriptSource, let output = Self.executeSimpleAppleScript(source) else {
             return (nil, nil)
         }
         
         let parts = output.components(separatedBy: " ||| ")
-        let url = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        let url = parts.first?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        let title = parts.count > 1 ? parts[1].trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) : nil
         return (url, title)
     }
     
-    private func executeSimpleAppleScript(_ source: String) -> String? {
-        if let script = NSAppleScript(source: source) {
-            var errorDict: NSDictionary?
-            let desc = script.executeAndReturnError(&errorDict)
-            if errorDict == nil, let val = desc.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
-                return val
-            }
-        }
+    private static let scriptExecutionLock = NSLock()
+    nonisolated(unsafe) private static var cachedPolarTitle: (title: String, time: Date)? = nil
+    
+    public static func executeSimpleAppleScript(_ source: String) -> String? {
+        // Prevent concurrent osascript process pile-ups
+        guard scriptExecutionLock.try() else { return nil }
+        defer { scriptExecutionLock.unlock() }
         
-        // Out-of-process osascript fallback (bypasses in-process AppleEvents entitlement restrictions)
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         proc.arguments = ["-e", source]
         let pipe = Pipe()
+        let errPipe = Pipe()
         proc.standardOutput = pipe
-        proc.standardError = Pipe()
+        proc.standardError = errPipe
+        
+        let semaphore = DispatchSemaphore(value: 0)
+        proc.terminationHandler = { _ in
+            semaphore.signal()
+        }
+        
         do {
             try proc.run()
-            proc.waitUntilExit()
-            if proc.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !str.isEmpty {
-                    return str
-                }
-            }
         } catch {
+            NSLog("[MORPH-SCRIPT] executeSimpleAppleScript failed to run: %@", error.localizedDescription)
             return nil
+        }
+        
+        let waitResult = semaphore.wait(timeout: .now() + 1.5)
+        if waitResult == .timedOut {
+            proc.terminate()
+            NSLog("[MORPH-SCRIPT] executeSimpleAppleScript timed out after 1.5s")
+            return nil
+        }
+        
+        if proc.terminationStatus == 0 {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines), !str.isEmpty {
+                return str
+            }
+        } else {
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
+            NSLog("[MORPH-SCRIPT] executeSimpleAppleScript failed: code=%d, err='%@'", proc.terminationStatus, errStr)
         }
         return nil
     }
@@ -687,135 +1076,197 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
     
     /// Specialized check for Polar Browser:
     /// High-performance native inspection combining sub-millisecond AXUIElement tree inspection
-    /// and Polar Chromium host session data. Zero AppleScript overhead, zero permission dialogs.
+    /// Universal detector for Polar Browser: checks the active on-screen window
+    /// and Polar Chromium host session data. Strictly suppresses background tabs.
     public static func checkPolarBrowser() -> FormDetectionResult? {
-        let apps = NSWorkspace.shared.runningApplications.filter { app in
-            let b = (app.bundleIdentifier ?? "").lowercased()
-            let n = (app.localizedName ?? "").lowercased()
-            return b.contains("polar") || n.contains("polar")
-        }
-        guard let polar = apps.first, !polar.isTerminated else { return nil }
+        let polar = NSWorkspace.shared.runningApplications.first(where: { app in
+            !app.isTerminated &&
+            kill(app.processIdentifier, 0) == 0 &&
+            app.activationPolicy == .regular &&
+            (app.bundleIdentifier == "com.polar.browser" ||
+             app.localizedName?.caseInsensitiveCompare("polar") == .orderedSame)
+        }) ?? NSWorkspace.shared.runningApplications.first(where: { app in
+            !app.isTerminated &&
+            kill(app.processIdentifier, 0) == 0 &&
+            (app.bundleIdentifier?.lowercased().contains("com.polar.browser") ?? false ||
+             app.localizedName?.lowercased() == "polar")
+        })
+        guard let polar = polar else { return nil }
         
         let appElem = AXUIElementCreateApplication(polar.processIdentifier)
-        var winsRef: CFTypeRef?
-        var openTabTitles: [String] = []
-        var detectedLiveResult: FormDetectionResult? = nil
+        _ = AXIsProcessTrusted()
         
-        if AXUIElementCopyAttributeValue(appElem, kAXWindowsAttribute as CFString, &winsRef) == .success,
-           let wins = winsRef as? [AXUIElement] {
-            for win in wins {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                let winTitle = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                
-                // BFS to inspect address bar and tab strip elements (depth <= 8, max 120 elements)
-                var queue: [(elem: AXUIElement, depth: Int)] = [(win, 0)]
-                var head = 0
-                while head < queue.count && head < 120 {
-                    let (elem, depth) = queue[head]
-                    head += 1
-                    
-                    var roleRef: CFTypeRef?
-                    AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
-                    let role = (roleRef as? String) ?? ""
-                    
-                    if role == "AXTextField" || role == "AXComboBox" || role == "AXSearchField" {
-                        var valRef: CFTypeRef?
-                        if AXUIElementCopyAttributeValue(elem, kAXValueAttribute as CFString, &valRef) == .success,
-                           let val = valRef as? String {
-                            let t = val.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if isFormURL(t) {
-                                let cleaned = cleanTitle(winTitle)
-                                let finalTitle = (cleaned.isEmpty || cleaned.localizedCaseInsensitiveContains("not found") || cleaned.localizedCaseInsensitiveContains("untitled")) ? (formNameFromURL(t) ?? "Google Form") : cleaned
-                                return FormDetectionResult(
-                                    isDetected: true,
-                                    title: finalTitle,
-                                    appName: "Polar",
-                                    url: t,
-                                    browserFamily: .polar
-                                )
-                            }
+        // 1. Identify Polar's active/focused content window
+        var activeWin: AXUIElement? = getBrowserWindowElement(appElem: appElem)
+        if activeWin == nil {
+            var focusedWinRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &focusedWinRef) == .success,
+               let fWin = focusedWinRef {
+                activeWin = (fWin as! AXUIElement)
+            }
+        }
+        if activeWin == nil {
+            var mainWinRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElem, kAXMainWindowAttribute as CFString, &mainWinRef) == .success,
+               let mWin = mainWinRef {
+                activeWin = (mWin as! AXUIElement)
+            }
+        }
+        if activeWin == nil {
+            let windows = getAllBrowserWindows(appElem: appElem)
+            activeWin = windows.first
+        }
+        
+        // 2. Extract active window title (via AX or WindowServer layer 0 window)
+        var winTitle = ""
+        if let win = activeWin {
+            var titleRef: CFTypeRef?
+            let tErr = AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+            if tErr == .success, let t = titleRef as? String {
+                winTitle = t.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            NSLog("[MORPH-FORM] checkPolarBrowser activeWin title: tErr=%d, winTitle='%@'", tErr.rawValue, winTitle)
+        }
+        
+        // If AX title was empty or generic, inspect the front layer 0 window of Polar from WindowServer
+        if winTitle.isEmpty || winTitle.lowercased() == "polar" {
+            let options = CGWindowListOption.excludeDesktopElements
+            if let winList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
+                var foundWSTitles: [String] = []
+                for win in winList {
+                    let owner = (win[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+                    let layer = win[kCGWindowLayer as String] as? Int ?? -1
+                    let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                    let h = bounds["Height"] as? CGFloat ?? 0
+                    if owner.contains("polar") && layer == 0 && h > 100 {
+                        let t = (win[kCGWindowName as String] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        foundWSTitles.append(t)
+                        if !t.isEmpty && t.lowercased() != "polar" && winTitle.isEmpty {
+                            winTitle = t
                         }
                     }
-                    
-                    if role == "AXStaticText" || role == "AXButton" {
-                        var valRef: CFTypeRef?
-                        if AXUIElementCopyAttributeValue(elem, kAXValueAttribute as CFString, &valRef) == .success,
-                           let val = valRef as? String, !val.isEmpty {
-                            let text = val.trimmingCharacters(in: .whitespacesAndNewlines)
-                            openTabTitles.append(text)
-                            if isFormTitle(text) {
-                                let cleaned = cleanTitle(text)
-                                detectedLiveResult = FormDetectionResult(
-                                    isDetected: true,
-                                    title: cleaned,
-                                    appName: "Polar",
-                                    url: "https://docs.google.com/forms",
-                                    browserFamily: .polar
-                                )
-                            }
-                        }
-                    }
-                    
-                    if depth >= 8 { continue }
-                    var childrenRef: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(elem, kAXChildrenAttribute as CFString, &childrenRef) == .success,
-                       let children = childrenRef as? [AXUIElement] {
-                        for c in children { queue.append((c, depth + 1)) }
-                    }
                 }
-                
-                if isFormTitle(winTitle) {
-                    return FormDetectionResult(
-                        isDetected: true,
-                        title: cleanTitle(winTitle),
-                        appName: "Polar",
-                        url: nil,
-                        browserFamily: .polar
-                    )
-                }
+                NSLog("[MORPH-FORM] checkPolarBrowser WS titles: count=%d, titles=%@, chosen='%@'", winList.count, foundWSTitles.joined(separator: " | "), winTitle)
             }
         }
         
-        // Fast Session Reader: If Polar is running, inspect recent Polar Chromium host session files
-        if let sessionForm = readPolarSessionForm() {
-            // Confirm the form is either in live open tabs or Polar has valid session
-            let matchesLiveTab = openTabTitles.isEmpty || openTabTitles.contains { tab in
-                let t = tab.lowercased()
-                let st = sessionForm.title.lowercased()
-                return st.contains(t) || t.contains(st) || (t.count >= 8 && st.hasPrefix(String(t.prefix(8))))
-            }
-            if matchesLiveTab {
-                return FormDetectionResult(
-                    isDetected: true,
-                    title: sessionForm.title,
-                    appName: "Polar",
-                    url: sessionForm.url,
-                    browserFamily: .polar
-                )
-            }
+        // 3. Inspect active window URL & Title
+        let addressURL = activeWin.flatMap { findAddressBarOrWebAreaURL(in: $0) }
+        let isURLForm = addressURL != nil && isFormURL(addressURL!)
+        let isTitleForm = !winTitle.isEmpty && isFormTitle(winTitle)
+        let cleaned = cleanTitle(winTitle)
+        
+        // Match against recent Polar session forms on disk only when we have a specific title or URL
+        var sessionMatch: (url: String, title: String)? = nil
+        let strippedTitle = stripServiceSuffixes(cleaned)
+        let genericTitles = ["", "polar", "google forms", "google form", "untitled form", "application form"]
+        let isSpecificTitle = !genericTitles.contains(strippedTitle.lowercased())
+        
+        if isSpecificTitle {
+            sessionMatch = readPolarSessionForm(filterTitle: strippedTitle, filterURL: addressURL)
+        } else if let aURL = addressURL, isURLForm {
+            sessionMatch = readPolarSessionForm(filterTitle: nil, filterURL: aURL)
         }
         
-        return detectedLiveResult
+        // Strict Suppression: If the active window's title or URL is known and clearly NOT a form
+        // (e.g. YouTube, Colab, Google Docs, Apple Store, Gemini), and neither URL nor title is a form:
+        // NEVER search background windows or session files for unrelated forms!
+        let hasActiveContent = (!cleaned.isEmpty && cleaned.lowercased() != "polar") || (addressURL != nil && !addressURL!.isEmpty)
+        if hasActiveContent && !isTitleForm && !isURLForm && sessionMatch == nil {
+            NSLog("[MORPH-FORM] checkPolarBrowser: Active window is non-form content ('%@', url='%@'). Suppressing background form tabs.", winTitle, addressURL ?? "nil")
+            return nil
+        }
+        
+        NSLog("[MORPH-FORM] checkPolarBrowser: winTitle='%@', addressURL='%@', isURLForm=%d, isTitleForm=%d, sessionMatch=%@", winTitle, addressURL ?? "nil", isURLForm ? 1 : 0, isTitleForm ? 1 : 0, sessionMatch?.url ?? "nil")
+        
+        if isURLForm || isTitleForm || sessionMatch != nil {
+            // Live addressURL and live window title ALWAYS take precedence over disk session files
+            var finalURL = isURLForm ? addressURL : sessionMatch?.url
+            var finalTitle = isSpecificTitle ? cleaned : (sessionMatch?.title ?? (finalURL.flatMap { formNameFromURL($0) } ?? (cleaned.isEmpty || cleaned.lowercased() == "polar" ? "Google Form" : cleaned)))
+            
+            if finalURL == nil && isSpecificTitle {
+                if let session = readPolarSessionForm(filterTitle: strippedTitle, filterURL: nil) {
+                    finalURL = session.url
+                    if finalTitle.isEmpty || finalTitle == "Google Form" || finalTitle.lowercased() == "polar" {
+                        finalTitle = session.title
+                    }
+                }
+            }
+            
+            let (screenIdx, screenName) = activeWin != nil ? screenForWindow(activeWin!) : (nil, nil)
+            return FormDetectionResult(
+                isDetected: true,
+                title: finalTitle,
+                appName: "Polar",
+                url: finalURL,
+                browserFamily: .polar,
+                screenIndex: screenIdx,
+                screenName: screenName
+            )
+        }
+        
+        // Active window is NOT a form (e.g. YouTube, Google Docs, Colab). Background tabs are strictly ignored.
+        return nil
     }
     
-    /// Reads the active form URL and page title directly from Polar Chromium host session binary data
-    public static func readPolarSessionForm() -> (url: String, title: String)? {
-        let base = ("~/Library/Application Support/com.polar.browser.host" as NSString).expandingTildeInPath
-        let possibleDirs = [
-            (base as NSString).appendingPathComponent("Default/Sessions"),
-            (base as NSString).appendingPathComponent("Sessions")
-        ]
+    /// Reads the active form URL and page title directly from Chromium family host session binary data
+    /// (Polar, Google Chrome, Brave, Arc, Edge, and user-data-dir profiles)
+    public static func readChromiumSessionForm(filterTitle: String? = nil, filterURL: String? = nil, polarOnly: Bool = false) -> (url: String, title: String)? {
+        var possibleDirs: [String] = []
+        if polarOnly {
+            let polarBase = ("~/Library/Application Support/com.polar.browser.host" as NSString).expandingTildeInPath
+            possibleDirs = [
+                (polarBase as NSString).appendingPathComponent("Sessions"),
+                (polarBase as NSString).appendingPathComponent("Default/Sessions")
+            ]
+            if let subdirs = try? FileManager.default.contentsOfDirectory(atPath: polarBase) {
+                for sub in subdirs {
+                    let sessionDir = (polarBase as NSString).appendingPathComponent("\(sub)/Sessions")
+                    var isDir: ObjCBool = false
+                    if FileManager.default.fileExists(atPath: sessionDir, isDirectory: &isDir), isDir.boolValue {
+                        if !possibleDirs.contains(sessionDir) {
+                            possibleDirs.append(sessionDir)
+                        }
+                    }
+                }
+            }
+        } else {
+            let bases = [
+                ("~/Library/Application Support/com.polar.browser.host" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/Google/Chrome" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/Google/Chrome Canary" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/Chromium" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/Microsoft Edge" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/BraveSoftware/Brave-Browser" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/Arc/User Data" as NSString).expandingTildeInPath,
+                ("~/Library/Application Support/Vivaldi" as NSString).expandingTildeInPath
+            ]
+            for base in bases {
+                possibleDirs.append((base as NSString).appendingPathComponent("Sessions"))
+                possibleDirs.append((base as NSString).appendingPathComponent("Default/Sessions"))
+                if let subdirs = try? FileManager.default.contentsOfDirectory(atPath: base) {
+                    for sub in subdirs {
+                        let sessionDir = (base as NSString).appendingPathComponent("\(sub)/Sessions")
+                        var isDir: ObjCBool = false
+                        if FileManager.default.fileExists(atPath: sessionDir, isDirectory: &isDir), isDir.boolValue {
+                            if !possibleDirs.contains(sessionDir) {
+                                possibleDirs.append(sessionDir)
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         var sessionFiles: [(path: String, mtime: Date)] = []
         for dir in possibleDirs {
             if let files = try? FileManager.default.contentsOfDirectory(atPath: dir) {
-                for file in files where file.hasPrefix("Session_") {
+                for file in files where file.hasPrefix("Session_") || file.hasPrefix("Tabs_") {
                     let fullPath = (dir as NSString).appendingPathComponent(file)
                     if let attrs = try? FileManager.default.attributesOfItem(atPath: fullPath),
                        let mtime = attrs[.modificationDate] as? Date {
-                        // Only consider sessions modified in the last 2 hours
-                        if abs(mtime.timeIntervalSinceNow) < 7200 {
+                        // Consider sessions modified within the last 24 hours
+                        if abs(mtime.timeIntervalSinceNow) < 86400 {
                             sessionFiles.append((fullPath, mtime))
                         }
                     }
@@ -827,10 +1278,13 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         let formPatterns = [
             "docs.google.com/forms", "forms.google.com", "forms.gle",
             "forms.office.com", "typeform.com", "tally.so", "jotform.com",
-            "greenhouse.io", "lever.co", "myworkdayjobs.com"
+            "tfaforms.net", "formassembly.com", "qualtrics.com",
+            "greenhouse.io", "lever.co", "myworkdayjobs.com",
+            "/forms/", "/viewform", "/formresponse", "/worksheet"
         ]
         
-        for (filePath, _) in sessionFiles.prefix(4) {
+
+        for (filePath, _) in sessionFiles.prefix(32) {
             guard let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)) else { continue }
             
             for pattern in formPatterns {
@@ -848,64 +1302,112 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
                     }
                     
                     if let rawURL = String(data: data[urlStart..<urlEnd], encoding: .utf8) {
-                        let cleanURL = rawURL.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmed = rawURL.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let cleanURL: String
+                        if let httpIdx = trimmed.range(of: "http") {
+                            cleanURL = String(trimmed[httpIdx.lowerBound...])
+                        } else {
+                            cleanURL = trimmed
+                        }
                         
                         var foundTitle = ""
-                        let postURLStart = urlEnd
-                        let postURLEnd = min(data.endIndex, data.index(postURLStart, offsetBy: 350))
-                        let postChunk = data[postURLStart..<postURLEnd]
+                        let limit = data.index(urlEnd, offsetBy: 300, limitedBy: data.endIndex) ?? data.endIndex
+                        let postBytes = Array(data[urlEnd..<limit])
                         
-                        if postChunk.count >= 8 {
-                            var i = postChunk.startIndex
-                            while i < postChunk.endIndex - 12 {
-                                if postChunk[i] >= 65 && postChunk[i] <= 122 && postChunk[i+1] == 0 && postChunk[i+3] == 0 {
+                        // Chromium SNSS tab title starts within 16 bytes of the URL
+                        if postBytes.count >= 8 {
+                            for i in 0..<min(16, postBytes.count - 4) {
+                                if postBytes[i] >= 32 && postBytes[i] <= 126 && postBytes[i+1] == 0 {
                                     var titleBytes = [UInt8]()
                                     var j = i
-                                    while j < postChunk.endIndex - 1 && (postChunk[j+1] == 0 || postChunk[j] == 0) && postChunk[j] >= 32 && postChunk[j] <= 126 {
-                                        titleBytes.append(postChunk[j])
-                                        titleBytes.append(postChunk[j+1])
+                                    while j < postBytes.count - 1 && postBytes[j+1] == 0 && postBytes[j] >= 32 && postBytes[j] <= 126 {
+                                        titleBytes.append(postBytes[j])
+                                        titleBytes.append(postBytes[j+1])
                                         j += 2
                                     }
-                                    if titleBytes.count >= 8, let tStr = String(data: Data(titleBytes), encoding: .utf16LittleEndian) {
+                                    if titleBytes.count >= 4, let tStr = String(data: Data(titleBytes), encoding: .utf16LittleEndian) {
                                         let tClean = tStr.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        if !tClean.contains("http") && !tClean.contains("uuid") && !tClean.contains("Blink") && tClean.count > 3 {
+                                        if !tClean.contains("http") && !tClean.contains("://") && !tClean.contains(".com") && !tClean.contains(".org") && !tClean.contains("/forms") && !tClean.contains("uuid") && !tClean.contains("Blink") && tClean.count > 2 {
                                             foundTitle = tClean
                                             break
                                         }
                                     }
                                 }
-                                i = data.index(after: i)
                             }
                         }
                         
+                        // If this entry is a dead "Page Not Found" page, skip to next match
+                        if foundTitle.localizedCaseInsensitiveContains("Page Not Found") {
+                            searchRange = urlEnd..<data.endIndex
+                            continue
+                        }
+                        
                         let fallbackTitle = formNameFromURL(cleanURL) ?? "Google Form"
-                        return (cleanURL, foundTitle.isEmpty ? fallbackTitle : foundTitle)
+                        let resTitle = (foundTitle.isEmpty || foundTitle.contains("Page Not Found")) ? fallbackTitle : foundTitle
+                        
+                        if let fURL = filterURL, !fURL.isEmpty {
+                            let cleanF = fURL.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
+                            let cleanC = cleanURL.replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
+                            let idF = extractFormIdentifier(from: fURL)
+                            let idC = extractFormIdentifier(from: cleanURL)
+                            if (idF != nil && idC != nil && idF == idC) || cleanC.contains(cleanF) || cleanF.contains(cleanC) {
+                                return (cleanURL, resTitle)
+                            }
+                        }
+                        
+                        if let filter = filterTitle, !filter.isEmpty {
+                            let strippedFilter = stripServiceSuffixes(filter).trimmingCharacters(in: .whitespacesAndNewlines)
+                            let strippedRes = stripServiceSuffixes(resTitle).trimmingCharacters(in: .whitespacesAndNewlines)
+                            let genericNames = ["google forms", "google form", "untitled form", "application form", "polar", ""]
+                            if !genericNames.contains(strippedFilter.lowercased()) {
+                                let fLow = strippedFilter.lowercased()
+                                let tLow = strippedRes.lowercased()
+                                if tLow == fLow || tLow.contains(fLow) || fLow.contains(tLow) {
+                                    return (cleanURL, resTitle)
+                                }
+                            }
+                        }
                     }
                     searchRange = urlEnd..<data.endIndex
                 }
             }
         }
+        
         return nil
     }
     
-    /// Specialized check for Apple Safari: inspects documents and tabs
+    /// Reads the active form URL and page title directly from Polar Chromium host session binary data
+    public static func readPolarSessionForm(filterTitle: String? = nil, filterURL: String? = nil) -> (url: String, title: String)? {
+        return readChromiumSessionForm(filterTitle: filterTitle, filterURL: filterURL, polarOnly: true)
+    }
+    
+    /// Specialized check for Apple Safari: inspects the active tab of the front window only
     private func checkSafariBrowser() -> FormDetectionResult? {
+        let isSafariAlive = NSWorkspace.shared.runningApplications.contains { app in
+            !app.isTerminated && kill(app.processIdentifier, 0) == 0 &&
+            (app.bundleIdentifier?.lowercased().contains("com.apple.safari") ?? false ||
+             app.localizedName?.lowercased() == "safari")
+        }
+        guard isSafariAlive else { return nil }
+        
         let script = """
         tell application "Safari"
-            repeat with d in documents
-                set dURL to URL of d
-                set dName to name of d
-                if dURL contains "forms" or dURL contains "form" or dURL contains "quiz" or dName contains "Form" or dName contains "Quiz" or dName contains "Survey" or dName contains "Application" then
-                    return dURL & " ||| " & dName
-                end if
-            end repeat
+            if (count of windows) > 0 then
+                try
+                    set tabURL to (URL of current tab of front window)
+                    set tabTitle to (name of current tab of front window)
+                    return tabURL & " ||| " & tabTitle
+                end try
+            end if
             if (count of documents) > 0 then
-                return (URL of front document) & " ||| " & (name of front document)
+                try
+                    return (URL of front document) & " ||| " & (name of front document)
+                end try
             end if
             return ""
         end tell
         """
-        guard let output = executeSimpleAppleScript(script), !output.isEmpty else { return nil }
+        guard let output = Self.executeSimpleAppleScript(script), !output.isEmpty else { return nil }
         let parts = output.components(separatedBy: " ||| ")
         let url = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let rawTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -932,47 +1434,85 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         return nil
     }
     
-    /// Specialized check for Chromium family (Chrome, Brave, Edge, Arc, Opera, Vivaldi)
-    private func checkChromiumBrowser(appName: String) -> FormDetectionResult? {
+    /// Specialized check for Chromium family (Chrome, Brave, Edge, Arc, Opera, Vivaldi): inspects the active tab of the front window only
+    private func checkChromiumBrowser(appName: String, bundleID: String? = nil, app: NSRunningApplication? = nil) -> FormDetectionResult? {
+        let runningApp = app ?? NSWorkspace.shared.runningApplications.first { a in
+            !a.isTerminated && kill(a.processIdentifier, 0) == 0 &&
+            (a.localizedName?.lowercased() == appName.lowercased() ||
+             (bundleID != nil && a.bundleIdentifier?.lowercased() == bundleID!.lowercased()))
+        }
+        guard let runningApp = runningApp else { return nil }
+        
+        let appElem = AXUIElementCreateApplication(runningApp.processIdentifier)
+        let activeWin = Self.getBrowserWindowElement(appElem: appElem)
+        
+        var axURL: String? = nil
+        var axTitle: String? = nil
+        if let win = activeWin {
+            axURL = Self.findAddressBarOrWebAreaURL(in: win)
+            var tRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &tRef) == .success,
+               let t = tRef as? String {
+                axTitle = t.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
+        let bID = bundleID ?? runningApp.bundleIdentifier ?? ""
+        let appTarget = !bID.isEmpty ? "application id \"\(bID)\"" : "application \"\(appName)\""
         let script = """
-        tell application "\(appName)"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    set tURL to URL of t
-                    set tTitle to title of t
-                    if tURL contains "forms" or tURL contains "form" or tURL contains "quiz" or tTitle contains "Form" or tTitle contains "Quiz" or tTitle contains "Survey" or tTitle contains "Application" then
-                        return tURL & " ||| " & tTitle
-                    end if
-                end repeat
-            end repeat
+        tell \(appTarget)
             if (count of windows) > 0 then
-                return (URL of active tab of front window) & " ||| " & (title of active tab of front window)
+                try
+                    set tabURL to (URL of active tab of front window)
+                    set tabTitle to (title of active tab of front window)
+                    return tabURL & " ||| " & tabTitle
+                end try
             end if
             return ""
         end tell
         """
-        guard let output = executeSimpleAppleScript(script), !output.isEmpty else { return nil }
-        let parts = output.components(separatedBy: " ||| ")
-        let url = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let rawTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let output = Self.executeSimpleAppleScript(script)
+        var scriptURL = ""
+        var scriptTitle = ""
+        if let out = output, !out.isEmpty {
+            let parts = out.components(separatedBy: " ||| ")
+            scriptURL = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            scriptTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        }
+        
+        let url = !scriptURL.isEmpty ? scriptURL : (axURL ?? "")
+        let rawTitle = !scriptTitle.isEmpty ? scriptTitle : (axTitle ?? "")
         
         let isDetectedByURL = !url.isEmpty && Self.isFormURL(url)
         let isDetectedByTitle = !rawTitle.isEmpty && Self.isFormTitle(rawTitle)
+        let cleaned = Self.cleanTitle(rawTitle)
         
+        // Strict suppression if active window content is known and not a form
+        let hasActiveContent = (!cleaned.isEmpty && cleaned.lowercased() != appName.lowercased()) || !url.isEmpty
+        if hasActiveContent && !isDetectedByURL && !isDetectedByTitle {
+            return nil
+        }
+        
+        var sessionMatch: (url: String, title: String)? = nil
+        let strippedTitle = Self.stripServiceSuffixes(cleaned)
+        let genericTitles = ["", "google forms", "google form", "untitled form", "application form", appName.lowercased()]
+        let isSpecificTitle = !genericTitles.contains(strippedTitle.lowercased())
         if isDetectedByURL || isDetectedByTitle {
-            let cleaned = Self.cleanTitle(rawTitle)
-            let finalTitle: String
-            if cleaned.isEmpty || cleaned.localizedCaseInsensitiveContains("not found") || cleaned.localizedCaseInsensitiveContains("untitled") {
-                finalTitle = Self.formNameFromURL(url) ?? "Google Form"
-            } else {
-                finalTitle = cleaned
-            }
+            sessionMatch = Self.readChromiumSessionForm(filterTitle: isSpecificTitle ? strippedTitle : nil, filterURL: !url.isEmpty ? url : nil, polarOnly: false)
+        }
+        
+        if isDetectedByURL || isDetectedByTitle || sessionMatch != nil {
+            let finalURL = !url.isEmpty ? url : sessionMatch?.url
+            let baseTitle = isSpecificTitle ? cleaned : (sessionMatch?.title ?? (finalURL.flatMap { Self.formNameFromURL($0) } ?? (cleaned.isEmpty ? "Google Form" : cleaned)))
+            let (screenIdx, screenName) = activeWin != nil ? Self.screenForWindow(activeWin!) : (nil, nil)
             return FormDetectionResult(
                 isDetected: true,
-                title: finalTitle,
+                title: baseTitle,
                 appName: appName,
-                url: isDetectedByURL ? url : nil,
-                browserFamily: .chromium
+                url: finalURL,
+                browserFamily: .chromium,
+                screenIndex: screenIdx,
+                screenName: screenName
             )
         }
         return nil
@@ -980,6 +1520,7 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
     
     /// Specialized check for Gecko family (Firefox, Zen Browser, Floorp, Waterfox, LibreWolf, Tor)
     private func checkGeckoBrowser(appName: String) -> FormDetectionResult? {
+        guard AXIsProcessTrusted() else { return nil }
         let script = """
         tell application "System Events"
             if exists process "\(appName)" then
@@ -1033,10 +1574,10 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
             return ""
         end tell
         """
-        guard let output = executeSimpleAppleScript(script), !output.isEmpty else { return nil }
+        guard let output = Self.executeSimpleAppleScript(script), !output.isEmpty else { return nil }
         let parts = output.components(separatedBy: " ||| ")
-        let url = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let rawTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let url = parts.first?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
+        let rawTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) : ""
         
         let isDetectedByURL = !url.isEmpty && Self.isFormURL(url)
         let isDetectedByTitle = !rawTitle.isEmpty && Self.isFormTitle(rawTitle)
@@ -1060,31 +1601,28 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         return nil
     }
 
-    /// Specialized check for WebKit shells (Orion, DuckDuckGo)
+    /// Specialized check for WebKit shells (Orion, DuckDuckGo): inspects active tab of front window only
     private func checkWebKitBrowser(appName: String) -> FormDetectionResult? {
         let lower = appName.lowercased()
         if lower.contains("orion") {
             let script = """
             tell application "Orion"
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        set tURL to URL of t
-                        set tTitle to name of t
-                        if tURL contains "forms" or tURL contains "form" or tURL contains "quiz" or tTitle contains "Form" or tTitle contains "Quiz" or tTitle contains "Survey" or tTitle contains "Application" then
-                            return tURL & " ||| " & tTitle
-                        end if
-                    end repeat
-                end repeat
                 if (count of windows) > 0 then
-                    return (URL of current tab of front window) & " ||| " & (name of current tab of front window)
+                    try
+                        set curURL to (URL of current tab of front window)
+                        set curTitle to (name of current tab of front window)
+                        if curURL contains "forms" or curURL contains "form" or curURL contains "quiz" or curTitle contains "Form" or curTitle contains "Quiz" or curTitle contains "Survey" or curTitle contains "Application" then
+                            return curURL & " ||| " & curTitle
+                        end if
+                    end try
                 end if
                 return ""
             end tell
             """
-            if let output = executeSimpleAppleScript(script), !output.isEmpty {
+            if let output = Self.executeSimpleAppleScript(script), !output.isEmpty {
                 let parts = output.components(separatedBy: " ||| ")
-                let url = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let rawTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                let url = parts.first?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
+                let rawTitle = parts.count > 1 ? parts[1].trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) : ""
                 let isDetectedByURL = !url.isEmpty && Self.isFormURL(url)
                 let isDetectedByTitle = !rawTitle.isEmpty && Self.isFormTitle(rawTitle)
                 if isDetectedByURL || isDetectedByTitle {
@@ -1140,23 +1678,35 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
 
     /// Dispatches a specialized form check tailored to the browser engine family
     private func checkBrowserByFamily(family: BrowserEngineFamily, appName: String, bundleID: String, app: NSRunningApplication? = nil) -> FormDetectionResult? {
+        var res: FormDetectionResult? = nil
         switch family {
         case .polar:
-            return Self.checkPolarBrowser()
+            res = Self.checkPolarBrowser()
         case .safari:
-            return checkSafariBrowser()
+            res = checkSafariBrowser()
         case .chromium:
-            return checkChromiumBrowser(appName: appName)
+            res = checkChromiumBrowser(appName: appName, bundleID: bundleID, app: app)
         case .gecko:
-            return checkGeckoBrowser(appName: appName)
+            res = checkGeckoBrowser(appName: appName)
         case .webkit:
-            return checkWebKitBrowser(appName: appName)
+            res = checkWebKitBrowser(appName: appName)
         case .unknown:
             if let app = app {
-                return checkGenericBrowser(app: app)
+                res = checkGenericBrowser(app: app)
             }
-            return nil
         }
+        
+        if let r = res, r.isDetected {
+            return r
+        }
+        
+        // Universal AXUIElement fallback for any browser if AppleScript returned nothing or failed
+        if let app = app {
+            if let axRes = checkGenericBrowser(app: app), axRes.isDetected {
+                return axRes
+            }
+        }
+        return nil
     }
     
     private func checkRunningBrowsersForFormURLs(windowList: [[String: Any]]? = nil) -> FormDetectionResult? {
@@ -1172,183 +1722,69 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         return nil
     }
     
-    // MARK: - Detect Active Form Across Every Window
+    // MARK: - Detect Active Form Across Frontmost On-Screen Context
     public func detectActiveApplicationForm() -> FormDetectionResult {
-        let ignoredOwners: Set<String> = [
-            "window server", "dock", "systemuiserver", "control center",
-            "notification center", "spotlight", "loginwindow", "airplayuiagent",
-            "coreservicesuiagent", "morph", "morph.app"
-        ]
-        
-        let runningApps = NSWorkspace.shared.runningApplications
-        
-        // 1. Priority 1: Personalized Default Browser Check (Highest priority!)
-        // Understand the user's primary browser choice and inspect it immediately with its tailored engine strategy
-        let defaultProfile = PersonalizedBrowserDetector.detectDefaultBrowser()
-        let isDefaultRunning = runningApps.contains { app in
-            let b = (app.bundleIdentifier ?? "").lowercased()
-            let n = (app.localizedName ?? "").lowercased()
-            return b == defaultProfile.bundleIdentifier.lowercased() || n == defaultProfile.displayName.lowercased()
+        // 1. Strictly inspect Frontmost Application context
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+            return FormDetectionResult(isDetected: false)
         }
-        if isDefaultRunning {
-            if let result = checkBrowserByFamily(family: defaultProfile.family, appName: defaultProfile.displayName, bundleID: defaultProfile.bundleIdentifier) {
+        
+        let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
+        let frontAppName = frontApp.localizedName ?? "Application"
+        let frontPID = frontApp.processIdentifier
+        
+        let isMorph = bundleID.contains("com.morph.") || bundleID == "morph" || frontAppName.lowercased() == "morph"
+        
+        // If Morph itself is frontmost (e.g. user interacting with Morph notch HUD or expanded panel),
+        // return false from the detector so Morph is not treated as a form document.
+        // checkActiveApplication() guards and preserves the existing form session.
+        if isMorph {
+            return FormDetectionResult(isDetected: false)
+        }
+        
+        // 2. If frontmost application is a browser:
+        let isBrowser = Self.isBrowserApplication(frontApp)
+        if isBrowser {
+            let family = PersonalizedBrowserDetector.engineFamily(for: bundleID, name: frontAppName)
+            
+            // Inspect active tab / front window of the frontmost browser
+            if let result = checkBrowserByFamily(family: family, appName: frontAppName, bundleID: bundleID, app: frontApp), result.isDetected {
+                NSLog("[MORPH-FORM] Browser family %@ MATCHED form: title=%@, url=%@", family.rawValue, result.title ?? "nil", result.url ?? "nil")
                 return result
             }
+            
+            NSLog("[MORPH-FORM] Front browser %@ (%@, family: %@) active tab is NOT a form", frontAppName, bundleID, family.rawValue)
+            return FormDetectionResult(isDetected: false)
         }
         
-        // 2. Priority 2: Check frontmost application
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
-            let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
-            let frontAppName = frontApp.localizedName ?? "Application"
-            let frontPID = frontApp.processIdentifier
-            
-            if !bundleID.contains("finder") && !bundleID.contains("morph") && !bundleID.contains("terminal") && !bundleID.contains("dt.xcode") {
-                let isBrowser = Self.isBrowserApplication(frontApp)
-                let appElem = AXUIElementCreateApplication(frontPID)
-                
-                if let winElement = Self.getBrowserWindowElement(appElem: appElem) {
-                    // 2a. Fast Live Address Bar / WebArea URL Inspection
-                    if isBrowser, let url = Self.findAddressBarOrWebAreaURL(in: winElement), Self.isFormURL(url) {
-                        var titleRef: CFTypeRef?
-                        _ = AXUIElementCopyAttributeValue(winElement, kAXTitleAttribute as CFString, &titleRef)
-                        let rawTitle = titleRef as? String ?? ""
-                        let cleaned = Self.cleanTitle(rawTitle)
-                        let finalTitle: String
-                        if cleaned.isEmpty || cleaned.localizedCaseInsensitiveContains("not found") || cleaned.localizedCaseInsensitiveContains("untitled") {
-                            finalTitle = Self.formNameFromURL(url) ?? "Google Form"
-                        } else {
-                            finalTitle = cleaned
-                        }
-                        let family = PersonalizedBrowserDetector.engineFamily(for: bundleID, name: frontAppName)
-                        return FormDetectionResult(
-                            isDetected: true,
-                            title: finalTitle,
-                            appName: frontAppName,
-                            url: url,
-                            browserFamily: family
-                        )
-                    }
-                    
-                    // 2b. Window Title Inspection
-                    var titleRef: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(winElement, kAXTitleAttribute as CFString, &titleRef) == .success,
-                       let rawTitle = titleRef as? String {
-                        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if Self.isFormTitle(title) {
-                            let browserURL = isBrowser ? Self.findAddressBarOrWebAreaURL(in: winElement) : nil
-                            let family = PersonalizedBrowserDetector.engineFamily(for: bundleID, name: frontAppName)
-                            return FormDetectionResult(
-                                isDetected: true,
-                                title: Self.cleanTitle(title),
-                                appName: frontAppName,
-                                url: browserURL,
-                                browserFamily: family
-                            )
-                        }
-                    }
-                }
-                
-                // Frontmost browser tab info check
-                let family = PersonalizedBrowserDetector.engineFamily(for: bundleID, name: frontAppName)
-                if let result = checkBrowserByFamily(family: family, appName: frontAppName, bundleID: bundleID, app: frontApp) {
-                    return result
-                }
-            }
-        }
+        NSLog("[MORPH-FORM] Front app is NOT a browser: %@ (%@)", frontAppName, bundleID)
         
-        // 3. Priority 3: Scan running browsers across the computer in ranked order
-        let rankedBrowsers = PersonalizedBrowserDetector.rankedRunningBrowsers()
-        for app in rankedBrowsers {
-            let pid = app.processIdentifier
-            let appName = app.localizedName ?? "Browser"
-            let bID = (app.bundleIdentifier ?? "").lowercased()
-            let family = PersonalizedBrowserDetector.engineFamily(for: bID, name: appName)
-            let appElem = AXUIElementCreateApplication(pid)
-            let win = Self.getBrowserWindowElement(appElem: appElem)
-            let url = win != nil ? Self.findAddressBarOrWebAreaURL(in: win!) : nil
-            
-            if let win = win {
-                // Check address bar / web area URL
-                if let url = url, Self.isFormURL(url) {
-                    var titleRef: CFTypeRef?
-                    _ = AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                    let rawTitle = titleRef as? String ?? ""
-                    let cleaned = Self.cleanTitle(rawTitle)
-                    let finalTitle: String
-                    if cleaned.isEmpty || cleaned.localizedCaseInsensitiveContains("not found") || cleaned.localizedCaseInsensitiveContains("untitled") {
-                        finalTitle = Self.formNameFromURL(url) ?? "Google Form"
-                    } else {
-                        finalTitle = cleaned
-                    }
-                    return FormDetectionResult(
-                        isDetected: true,
-                        title: finalTitle,
-                        appName: appName,
-                        url: url,
-                        browserFamily: family
-                    )
-                }
-                
-                // Check window title
+        // 3. If frontmost application is a non-browser app (e.g. Acrobat Reader, Preview with PDF form)
+        let isDevOrSystem = bundleID.contains("finder") || bundleID.contains("terminal") || bundleID.contains("dt.xcode")
+        if !isDevOrSystem {
+            let appElem = AXUIElementCreateApplication(frontPID)
+            if let winElement = Self.getBrowserWindowElement(appElem: appElem) {
                 var titleRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef) == .success,
+                if AXUIElementCopyAttributeValue(winElement, kAXTitleAttribute as CFString, &titleRef) == .success,
                    let rawTitle = titleRef as? String {
                     let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                     if Self.isFormTitle(title) {
+                        let (sIdx, sName) = Self.screenForWindow(winElement)
                         return FormDetectionResult(
                             isDetected: true,
                             title: Self.cleanTitle(title),
-                            appName: appName,
-                            url: url,
-                            browserFamily: family
+                            appName: frontAppName,
+                            url: nil,
+                            browserFamily: nil,
+                            screenIndex: sIdx,
+                            screenName: sName
                         )
                     }
                 }
             }
-            
-            // Specialized browser fallback for this running browser
-            if let result = checkBrowserByFamily(family: family, appName: appName, bundleID: bID, app: app) {
-                return result
-            }
         }
         
-        // 4. Priority 4: Scan across EVERY window of the computer in z-order (CGWindowListCopyWindowInfo)
-        let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
-        if let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
-            for win in windowList {
-                let owner = (win[kCGWindowOwnerName as String] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                let lowerOwner = owner.lowercased()
-                if ignoredOwners.contains(lowerOwner) || lowerOwner.contains("morph") {
-                    continue
-                }
-                
-                let layer = win[kCGWindowLayer as String] as? Int ?? -1
-                guard layer == 0 else { continue } // Normal application window layer
-                
-                let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
-                let width = bounds["Width"] as? CGFloat ?? 0
-                let height = bounds["Height"] as? CGFloat ?? 0
-                guard width >= 100 && height >= 100 else { continue } // Ignore micro utility/overlay windows
-                
-                let title = (win[kCGWindowName as String] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !title.isEmpty else { continue }
-                
-                if Self.isFormTitle(title) {
-                    let cleanedTitle = Self.cleanTitle(title)
-                    let appName = owner.isEmpty ? "Application" : owner
-                    let browserURL = fetchURLForRunningBrowser(ownerName: owner)
-                    let family = PersonalizedBrowserDetector.engineFamily(for: "", name: owner)
-                    return FormDetectionResult(
-                        isDetected: true,
-                        title: cleanedTitle,
-                        appName: appName,
-                        url: browserURL,
-                        browserFamily: family
-                    )
-                }
-            }
-        }
-        
+        // User is in another app (Terminal, Slack, Notes, Finder, etc.) -> strictly suppressed
         return FormDetectionResult(isDetected: false)
     }
     
@@ -1360,6 +1796,12 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
             return "Microsoft Form"
         } else if lower.contains("typeform.com") {
             return "Typeform"
+        } else if lower.contains("tally.so") {
+            return "Tally Form"
+        } else if lower.contains("tfaforms.net") || lower.contains("formassembly.com") {
+            return "FormAssembly Form"
+        } else if lower.contains("qualtrics.com") {
+            return "Qualtrics Survey"
         } else if lower.contains("tally.so") {
             return "Tally Form"
         } else if lower.contains("greenhouse.io") {
@@ -1380,16 +1822,34 @@ public struct MockApplicationFormDetector: ApplicationFormDetectorProtocol {
     public var title: String?
     public var appName: String?
     public var url: String?
+    public var screenIndex: Int?
+    public var screenName: String?
     
-    public init(detected: Bool = false, title: String? = nil, appName: String? = nil, url: String? = nil) {
+    public init(
+        detected: Bool = false,
+        title: String? = nil,
+        appName: String? = nil,
+        url: String? = nil,
+        screenIndex: Int? = nil,
+        screenName: String? = nil
+    ) {
         self.detected = detected
         self.title = title
         self.appName = appName
         self.url = url
+        self.screenIndex = screenIndex
+        self.screenName = screenName
     }
     
     public func detectActiveApplicationForm() -> FormDetectionResult {
-        return FormDetectionResult(isDetected: detected, title: title, appName: appName, url: url)
+        return FormDetectionResult(
+            isDetected: detected,
+            title: title,
+            appName: appName,
+            url: url,
+            screenIndex: screenIndex,
+            screenName: screenName
+        )
     }
 }
 
@@ -1544,6 +2004,7 @@ public struct FormContentRetriever: Sendable {
             
             let subtext = qArr.count > 2 ? (qArr[2] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
             let rawType = qArr.count > 3 ? (qArr[3] as? Int ?? 0) : 0
+            
             let entries = qArr.count > 4 ? (qArr[4] as? [[Any?]] ?? []) : []
             let firstEntry = entries.first
             
@@ -1555,11 +2016,31 @@ public struct FormContentRetriever: Sendable {
                 options = optList.compactMap { $0.first as? String }
             }
             
-            let isRequired: Bool
-            if let first = firstEntry, first.count > 2, let reqInt = first[2] as? Int {
+            var isRequired = false
+            for entry in entries {
+                if entry.count > 2, let reqInt = entry[2] as? Int, reqInt == 1 {
+                    isRequired = true
+                    break
+                }
+            }
+            if !isRequired, let first = firstEntry, first.count > 2, let reqInt = first[2] as? Int {
                 isRequired = (reqInt == 1)
+            }
+            if !isRequired && (prompt.hasSuffix("*") || prompt.contains(" *") || subtext.localizedCaseInsensitiveContains("required")) {
+                isRequired = true
+            }
+            
+            let promptLines = prompt.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let titleLine = promptLines.first ?? prompt
+            let cleanPrompt = titleLine.replacingOccurrences(of: "\\s*\\*+\\s*$", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanPrompt.isEmpty else { continue }
+            
+            let extraDesc = promptLines.dropFirst().joined(separator: "\n")
+            let combinedDesc: String
+            if !subtext.isEmpty {
+                combinedDesc = extraDesc.isEmpty ? subtext : (extraDesc + "\n" + subtext)
             } else {
-                isRequired = false
+                combinedDesc = extraDesc
             }
             
             let qType: String
@@ -1567,7 +2048,7 @@ public struct FormContentRetriever: Sendable {
             switch rawType {
             case 0:
                 qType = "shortAnswer"
-                cat = inferCategory(from: prompt)
+                cat = inferCategory(from: cleanPrompt)
             case 1:
                 qType = "paragraph"
                 cat = .question
@@ -1580,6 +2061,12 @@ public struct FormContentRetriever: Sendable {
             case 4:
                 qType = "checkboxes"
                 cat = .question
+            case 6:
+                qType = "info"
+                cat = .custom
+            case 8:
+                qType = "section"
+                cat = .custom
             case 9:
                 qType = "date"
                 cat = .personal
@@ -1590,18 +2077,26 @@ public struct FormContentRetriever: Sendable {
                 qType = "info"
                 cat = .custom
             default:
-                qType = "text"
-                cat = inferCategory(from: prompt)
+                if entryKey == nil {
+                    qType = "info"
+                    cat = .custom
+                } else {
+                    qType = "shortAnswer"
+                    cat = inferCategory(from: cleanPrompt)
+                }
             }
             
+            let finalQType = (entryKey == nil && qType != "info" && qType != "section") ? "info" : qType
+            let finalIsRequired = (finalQType == "info" || finalQType == "section") ? false : isRequired
+            
             let field = FormInputField(
-                label: prompt,
+                label: cleanPrompt,
                 value: "",
                 category: cat,
-                questionDescription: subtext,
+                questionDescription: combinedDesc,
                 options: options,
-                questionType: qType,
-                isRequired: isRequired,
+                questionType: finalQType,
+                isRequired: finalIsRequired,
                 entryKey: entryKey
             )
             fields.append(field)
@@ -1771,8 +2266,18 @@ public struct FormContentRetriever: Sendable {
                     qType = label.lowercased().contains("why") || label.lowercased().contains("about") || label.lowercased().contains("statement") ? "paragraph" : "shortAnswer"
                 }
                 
-                let isReq = blockHTML.contains("required") || blockHTML.contains("aria-required=\"true\"") || label.hasSuffix("*")
-                let cleanLabel = label.replacingOccurrences(of: "\\*$", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                let isReq = blockHTML.contains("required") ||
+                            blockHTML.contains("aria-required=\"true\"") ||
+                            blockHTML.contains("freebirdFormviewerViewItemsItemRequiredAsterisk") ||
+                            blockHTML.contains("aria-label=\"Required question\"") ||
+                            blockHTML.contains("class=\"vVVJbe\"") ||
+                            label.hasSuffix("*") ||
+                            label.contains(" *")
+                let cleanLabel = label.replacingOccurrences(of: "\\s*\\*+\\s*$", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                let lowerClean = cleanLabel.lowercased()
+                let ignoredLabels = ["search", "sign in", "submit", "next", "back", "clear form", "report abuse", "terms of service", "privacy policy", "address and search bar"]
+                guard !ignoredLabels.contains(lowerClean) else { continue }
                 
                 fields.append(FormInputField(
                     label: cleanLabel,
@@ -1813,9 +2318,22 @@ public struct FormContentRetriever: Sendable {
         return RetrievedFormSchema(title: pageTitle, description: "", fields: fields)
     }
     
+    /// Normalizes URLs by prepending https:// if scheme is missing (e.g. from Chromium/Polar address bars)
+    public static func normalizeURLScheme(_ urlString: String) -> String {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("file://") {
+            return trimmed
+        }
+        if !trimmed.contains("://") {
+            return "https://" + trimmed
+        }
+        return trimmed
+    }
+    
     /// Autonomously retrieves form content and question schema from any URL or local file path
     public static func retrieveForm(from urlString: String) async -> RetrievedFormSchema? {
-        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedURL = normalizeURLScheme(urlString)
         guard !trimmedURL.isEmpty else { return nil }
         
         var htmlContent: String?
@@ -1888,62 +2406,279 @@ public struct FormContentRetriever: Sendable {
 
 // MARK: - Autonomous Form Input Auto Tracker
 public final class FormInputAutoTracker: @unchecked Sendable {
-    private weak var formModel: ApplicationFormModel?
+    public weak var formModel: ApplicationFormModel?
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
     private var globalKeyMonitor: Any?
     private var axSyncTimer: AnyCancellable?
+    private var fullScanTimer: AnyCancellable?
+    private var debouncedAXSyncTask: Task<Void, Never>?
     public private(set) var isRunning: Bool = false
     
     public init(model: ApplicationFormModel) {
         self.formModel = model
     }
     
+    deinit {
+        stop()
+    }
+    
     public func start() {
         guard !isRunning else { return }
         isRunning = true
-        setupKeyMonitor()
+        setupEventTap()
         setupAXSync()
     }
     
     public func stop() {
         isRunning = false
+        debouncedAXSyncTask?.cancel()
+        debouncedAXSyncTask = nil
+        
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let src = runLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
+            }
+            CFMachPortInvalidate(tap)
+            eventTap = nil
+            runLoopSource = nil
+        }
+        
         if let mon = globalKeyMonitor {
             NSEvent.removeMonitor(mon)
             globalKeyMonitor = nil
         }
+        
         axSyncTimer?.cancel()
         axSyncTimer = nil
+        fullScanTimer?.cancel()
+        fullScanTimer = nil
     }
     
-    private func setupKeyMonitor() {
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self = self, self.isRunning else { return }
-            self.handleGlobalKeyEvent(event)
+    private func setupEventTap() {
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.leftMouseDown.rawValue)
+        let trackerPointer = Unmanaged.passUnretained(self).toOpaque()
+        
+        let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+            let tracker = Unmanaged<FormInputAutoTracker>.fromOpaque(refcon).takeUnretainedValue()
+            return tracker.handleTapEvent(proxy: proxy, type: type, event: event)
+        }
+        
+        // Prefer .cghidEventTap for universal HID-level event capture with Accessibility permission;
+        // Fall back to .cgSessionEventTap if needed
+        var tapPort = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: CGEventMask(mask),
+            callback: callback,
+            userInfo: trackerPointer
+        )
+        if tapPort == nil {
+            tapPort = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .listenOnly,
+                eventsOfInterest: CGEventMask(mask),
+                callback: callback,
+                userInfo: trackerPointer
+            )
+        }
+        
+        if let port = tapPort {
+            self.eventTap = port
+            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
+            self.runLoopSource = source
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            CGEvent.tapEnable(tap: port, enable: true)
+            NSLog("[MORPH-AUTOTRACKER] CGEvent tap successfully established on main run loop.")
+        } else {
+            NSLog("[MORPH-AUTOTRACKER] CGEvent tap creation failed. Falling back to NSEvent global monitor.")
+            // Fallback for environments where CGEventTap cannot be attached
+            globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] event in
+                guard let self = self, self.isRunning else { return }
+                if event.type == .leftMouseDown {
+                    let loc = NSEvent.mouseLocation
+                    Task { @MainActor [weak self] in
+                        self?.handleMouseDown(at: loc)
+                    }
+                    return
+                }
+                let keyCode = Int(event.keyCode)
+                let flags = event.modifierFlags
+                let characters = event.characters
+                var cgFlags = CGEventFlags()
+                if flags.contains(.command) { cgFlags.insert(.maskCommand) }
+                if flags.contains(.control) { cgFlags.insert(.maskControl) }
+                if flags.contains(.shift) { cgFlags.insert(.maskShift) }
+                if flags.contains(.option) { cgFlags.insert(.maskAlternate) }
+                Task { @MainActor [weak self] in
+                    self?.handleKeyStroke(keyCode: keyCode, flags: cgFlags, characters: characters)
+                }
+            }
         }
     }
     
+    private func handleTapEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        
+        guard isRunning else { return Unmanaged.passUnretained(event) }
+        
+        if type == .keyDown {
+            let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+            let flags = event.flags
+            
+            // Extract typed characters: prefer NSEvent character decoding which incorporates keyboard layout & shift,
+            // with fallback to keyboardGetUnicodeString
+            let characters: String? = NSEvent(cgEvent: event)?.characters ?? {
+                var length = 0
+                var chars = [UniChar](repeating: 0, count: 4)
+                event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &chars)
+                return length > 0 ? String(utf16CodeUnits: chars, count: length) : nil
+            }()
+            
+            DispatchQueue.main.async { [weak self] in
+                self?.handleKeyStroke(keyCode: keyCode, flags: flags, characters: characters)
+            }
+        } else if type == .leftMouseDown {
+            let loc = event.location
+            DispatchQueue.main.async { [weak self] in
+                self?.handleMouseDown(at: loc)
+            }
+        }
+        
+        return Unmanaged.passUnretained(event)
+    }
+    
     private func setupAXSync() {
-        // Lightweight 1.5s poll to sync focused element value and live browser input changes without CPU load
-        axSyncTimer = Timer.publish(every: 1.5, on: .main, in: .common)
+        // Fast 0.2s poll to sync focused element value and active field alignment
+        axSyncTimer = Timer.publish(every: 0.2, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.syncFocusedElement()
-                    self?.formModel?.syncLiveFormInputValues()
+                    guard let self = self, let model = self.formModel,
+                          model.isFormDetected, model.isAutoCaptureEnabled else { return }
+                    self.syncFocusedElement()
+                }
+            }
+        
+        // Periodic 1.5s background scan of all browser window inputs & AppleScript fallback
+        fullScanTimer = Timer.publish(every: 1.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self = self, let model = self.formModel,
+                          model.isFormDetected, model.isAutoCaptureEnabled else { return }
+                    self.formModel?.syncLiveFormInputValues()
                 }
             }
     }
     
-    public func handleGlobalKeyEvent(_ event: NSEvent) {
-        let keyCode = event.keyCode
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let characters = event.characters
-        
-        Task { @MainActor [weak self] in
-            guard let self = self, let model = self.formModel else { return }
-            guard model.isFormDetected && model.isAutoCaptureEnabled,
-                  let session = model.activeSession, !session.fields.isEmpty else { return }
+    public static func isInteractiveInputRole(_ role: String) -> Bool {
+        switch role {
+        case "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox",
+             "AXRadioButton", "AXCheckBox", "AXPopUpButton", "AXMenuButton",
+             "AXMenuItem", "AXButton":
+            return true
+        default:
+            return false
+        }
+    }
+    
+    /// Resolves the currently focused interactive element across the system or frontmost application.
+    public static func resolveFocusedElement(for frontApp: NSRunningApplication?) -> (element: AXUIElement, role: String)? {
+        // 1. Try system-wide focused element first (most accurate across macOS browsers and web frames)
+        let sys = AXUIElementCreateSystemWide()
+        var sysFocusedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &sysFocusedRef) == .success,
+           let sysFocused = sysFocusedRef {
+            let elem = sysFocused as! AXUIElement
+            var elemPid: pid_t = 0
+            AXUIElementGetPid(elem, &elemPid)
+            if elemPid == ProcessInfo.processInfo.processIdentifier { return nil }
+            if let eApp = NSRunningApplication(processIdentifier: elemPid),
+               let bid = eApp.bundleIdentifier?.lowercased(),
+               bid.contains("com.morph.") || bid == "morph" { return nil }
             
-            // Only capture if frontmost application is the detected browser / form host
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
+            let role = (roleRef as? String) ?? ""
+            if isInteractiveInputRole(role) {
+                return (elem, role)
+            } else if role == "AXWebArea" || role == "AXScrollArea" || role == "AXWindow" || role == "AXGroup" {
+                var innerRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(elem, kAXFocusedUIElementAttribute as CFString, &innerRef) == .success,
+                   let inner = innerRef {
+                    let innerElem = inner as! AXUIElement
+                    var innerRoleRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(innerElem, kAXRoleAttribute as CFString, &innerRoleRef)
+                    let innerRole = (innerRoleRef as? String) ?? ""
+                    if isInteractiveInputRole(innerRole) {
+                        return (innerElem, innerRole)
+                    }
+                }
+            }
+        }
+        
+        // 2. Fallback to frontmost application focused element
+        guard let app = frontApp ?? NSWorkspace.shared.frontmostApplication else { return nil }
+        let appElem = AXUIElementCreateApplication(app.processIdentifier)
+        var appFocusedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElem, kAXFocusedUIElementAttribute as CFString, &appFocusedRef) == .success,
+           let appFocused = appFocusedRef {
+            let elem = appFocused as! AXUIElement
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
+            let role = (roleRef as? String) ?? ""
+            if isInteractiveInputRole(role) {
+                return (elem, role)
+            }
+            var innerRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(elem, kAXFocusedUIElementAttribute as CFString, &innerRef) == .success,
+               let inner = innerRef {
+                let innerElem = inner as! AXUIElement
+                var innerRoleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(innerElem, kAXRoleAttribute as CFString, &innerRoleRef)
+                let innerRole = (innerRoleRef as? String) ?? ""
+                if isInteractiveInputRole(innerRole) {
+                    return (innerElem, innerRole)
+                }
+            }
+        }
+        return nil
+    }
+    
+    @MainActor
+    public func handleMouseDown(at location: CGPoint) {
+        guard let model = formModel, model.isFormDetected, model.isAutoCaptureEnabled else { return }
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              DefaultApplicationFormDetector.isBrowserApplication(frontApp) else { return }
+        
+        // 1. Immediately attempt hit test at click coordinate
+        syncFocusedElement(at: location)
+        
+        // 2. Schedule follow-up after 60ms once browser finalizes internal focus and state changes
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            self?.syncFocusedElement()
+        }
+    }
+    
+    @MainActor
+    public func handleKeyStroke(keyCode: Int, flags: CGEventFlags, characters: String?) {
+        guard let model = self.formModel else { return }
+        guard model.isFormDetected && model.isAutoCaptureEnabled,
+              let session = model.activeSession else { return }
+        
+        // Only capture if frontmost application is the detected browser / form host (bypassed in unit tests)
+        if !MorphEnvironment.isTestingEnvironment {
             guard let frontApp = NSWorkspace.shared.frontmostApplication else { return }
             let frontBundle = frontApp.bundleIdentifier?.lowercased() ?? ""
             let frontName = frontApp.localizedName?.lowercased() ?? ""
@@ -1957,128 +2692,299 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                               frontName.contains(model.detectedAppName.lowercased()) ||
                               model.detectedAppName.lowercased().contains(frontName)
             guard isTargetApp else { return }
+        }
+        
+        // If Cmd or Ctrl is pressed:
+        if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            // If Cmd+V (paste into browser field), trigger immediate AX sync in 80ms
+            if keyCode == 9 {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    self?.syncFocusedElement()
+                }
+            }
+            return
+        }
+        
+        // If fields are empty, sync focused element to dynamically discover field first
+        if session.fields.isEmpty {
+            self.syncFocusedElement()
+        }
+        
+        let count = model.activeSession?.fields.count ?? 0
+        guard count > 0 else { return }
+        var activeIdx = model.activeFieldIndex
+        if activeIdx >= count { activeIdx = count - 1 }
+        if activeIdx < 0 { activeIdx = 0 }
+        
+        // Ensure activeIdx is pointing to an actionable question
+        if !(model.activeSession?.fields[activeIdx].isActionableQuestion ?? false) {
+            model.advanceToFirstUnansweredFieldIfNeeded()
+            activeIdx = model.activeFieldIndex
+            if activeIdx >= count { activeIdx = count - 1 }
+        }
+        
+        // 1. Backspace / Delete (KeyCode 51)
+        if keyCode == 51 {
+            if !(model.activeSession?.fields[activeIdx].value.isEmpty ?? true) {
+                model.objectWillChange.send()
+                model.activeSession?.fields[activeIdx].value.removeLast()
+                model.lastAutoCapturedAt = Date()
+                model.saveDrafts()
+            }
+            self.scheduleDebouncedAXSync()
+            return
+        }
+        
+        // 2. Tab Navigation (KeyCode 48)
+        if keyCode == 48 {
+            model.objectWillChange.send()
+            if flags.contains(.maskShift) {
+                // Move backward to previous actionable question
+                var prev = activeIdx - 1
+                while prev >= 0 && !(model.activeSession?.fields[prev].isActionableQuestion ?? false) {
+                    prev -= 1
+                }
+                model.activeFieldIndex = max(0, prev >= 0 ? prev : 0)
+            } else {
+                // Move forward to next actionable question
+                var next = activeIdx + 1
+                while next < count && !(model.activeSession?.fields[next].isActionableQuestion ?? false) {
+                    next += 1
+                }
+                model.activeFieldIndex = min(count - 1, next < count ? next : count - 1)
+            }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 60_000_000)
+                self?.syncFocusedElement()
+            }
+            return
+        }
+        
+        // 3. Return / Enter (KeyCode 36, 76)
+        if keyCode == 36 || keyCode == 76 {
+            let qType = model.activeSession?.fields[activeIdx].questionType ?? ""
+            if qType == "paragraph" {
+                model.objectWillChange.send()
+                model.activeSession?.fields[activeIdx].value.append("\n")
+                model.lastAutoCapturedAt = Date()
+                model.saveDrafts()
+            } else {
+                model.objectWillChange.send()
+                var next = activeIdx + 1
+                while next < count && !(model.activeSession?.fields[next].isActionableQuestion ?? false) {
+                    next += 1
+                }
+                model.activeFieldIndex = min(count - 1, next < count ? next : count - 1)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(nanoseconds: 60_000_000)
+                    self?.syncFocusedElement()
+                }
+            }
+            return
+        }
+        
+        // 4. Printable Characters
+        if let chars = characters, !chars.isEmpty {
+            let printable = chars.filter { ch in
+                guard let s = ch.unicodeScalars.first else { return false }
+                return s.value >= 32 && s.value != 127 && (s.value < 0xF700 || s.value > 0xF8FF)
+            }
+            guard !printable.isEmpty else { return }
             
-            // If Cmd or Ctrl is pressed:
-            if flags.contains(.command) || flags.contains(.control) {
-                // If Cmd+V (paste into browser field), trigger immediate AX sync in 120ms
-                if keyCode == 9 {
-                    Task { @MainActor [weak self] in
-                        try? await Task.sleep(nanoseconds: 120_000_000)
-                        self?.syncFocusedElement()
+            let qType = model.activeSession?.fields[activeIdx].questionType ?? ""
+            let options = model.activeSession?.fields[activeIdx].options ?? []
+            
+            // Multiple choice option matching (1-based index or letter prefix)
+            if qType == "multipleChoice" && !options.isEmpty {
+                if let num = Int(printable), num >= 1 && num <= options.count {
+                    let chosen = options[num - 1]
+                    model.objectWillChange.send()
+                    model.activeSession?.fields[activeIdx].value = chosen
+                    model.lastAutoCapturedAt = Date()
+                    model.saveDrafts()
+                    model.advanceToFirstUnansweredFieldIfNeeded()
+                    return
+                }
+                let lower = printable.lowercased()
+                if let matchedOpt = options.first(where: { $0.lowercased().hasPrefix(lower) }) {
+                    model.objectWillChange.send()
+                    model.activeSession?.fields[activeIdx].value = matchedOpt
+                    model.lastAutoCapturedAt = Date()
+                    model.saveDrafts()
+                    model.advanceToFirstUnansweredFieldIfNeeded()
+                    return
+                }
+            }
+            
+            model.objectWillChange.send()
+            model.activeSession?.fields[activeIdx].value.append(printable)
+            model.lastAutoCapturedAt = Date()
+            model.saveDrafts()
+            
+            // Email detection: if user types email in any field, auto-update recipientEmail
+            let curVal = model.activeSession?.fields[activeIdx].value ?? ""
+            if curVal.contains("@") && curVal.contains(".") {
+                let tokens = curVal.components(separatedBy: .whitespacesAndNewlines)
+                for tok in tokens {
+                    if tok.contains("@") && tok.contains(".") && tok.count >= 5 {
+                        if model.recipientEmail.isEmpty || model.recipientEmail.contains("example.com") || model.recipientEmail.contains("@test.com") {
+                            model.setRecipientEmail(tok)
+                        }
+                        break
                     }
                 }
-                return
             }
             
-            let count = model.activeSession?.fields.count ?? 0
-            guard count > 0 else { return }
-            var activeIdx = model.activeFieldIndex
-            if activeIdx >= count { activeIdx = count - 1 }
-            if activeIdx < 0 { activeIdx = 0 }
-            
-            // 1. Backspace / Delete (KeyCode 51)
-            if keyCode == 51 {
-                if !(model.activeSession?.fields[activeIdx].value.isEmpty ?? true) {
-                    model.activeSession?.fields[activeIdx].value.removeLast()
-                    model.lastAutoCapturedAt = Date()
-                }
-                return
-            }
-            
-            // 2. Tab Navigation (KeyCode 48)
-            if keyCode == 48 {
-                if flags.contains(.shift) {
-                    model.activeFieldIndex = max(0, activeIdx - 1)
-                } else {
-                    model.activeFieldIndex = min(count - 1, activeIdx + 1)
-                }
-                return
-            }
-            
-            // 3. Return / Enter (KeyCode 36)
-            if keyCode == 36 {
-                let qType = model.activeSession?.fields[activeIdx].questionType ?? ""
-                if qType == "paragraph" {
-                    model.activeSession?.fields[activeIdx].value.append("\n")
-                    model.lastAutoCapturedAt = Date()
-                } else {
-                    model.activeFieldIndex = min(count - 1, activeIdx + 1)
-                }
-                return
-            }
-            
-            // 4. Printable Characters
-            if let chars = characters, !chars.isEmpty {
-                let printable = chars.filter { ch in
-                    guard let s = ch.unicodeScalars.first else { return false }
-                    return s.value >= 32 && s.value != 127
-                }
-                guard !printable.isEmpty else { return }
+            // Reconcile exact text from browser via debounced AX read (handles cursor moves, edits, replacements)
+            self.scheduleDebouncedAXSync()
+        }
+    }
+    
+    public func handleGlobalKeyEvent(_ event: NSEvent) {
+        let keyCode = Int(event.keyCode)
+        let flags = event.modifierFlags
+        let characters = event.characters
+        var cgFlags = CGEventFlags()
+        if flags.contains(.command) { cgFlags.insert(.maskCommand) }
+        if flags.contains(.control) { cgFlags.insert(.maskControl) }
+        if flags.contains(.shift) { cgFlags.insert(.maskShift) }
+        if flags.contains(.option) { cgFlags.insert(.maskAlternate) }
+        Task { @MainActor [weak self] in
+            self?.handleKeyStroke(keyCode: keyCode, flags: cgFlags, characters: characters)
+        }
+    }
+    
+    private func scheduleDebouncedAXSync() {
+        debouncedAXSyncTask?.cancel()
+        debouncedAXSyncTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            self?.syncFocusedElement()
+        }
+    }
+    
+    @MainActor
+    public func syncFocusedElement(at point: CGPoint? = nil) {
+        guard let model = formModel, model.isFormDetected, model.isAutoCaptureEnabled,
+              let session = model.activeSession else { return }
+        
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              DefaultApplicationFormDetector.isBrowserApplication(frontApp) else { return }
+        
+        var targetElem: AXUIElement? = nil
+        var elemRole: String = ""
+        
+        if let pt = point {
+            let sys = AXUIElementCreateSystemWide()
+            var hitRef: AXUIElement?
+            if AXUIElementCopyElementAtPosition(sys, Float(pt.x), Float(pt.y), &hitRef) == .success, let hit = hitRef {
+                var hitPid: pid_t = 0
+                AXUIElementGetPid(hit, &hitPid)
+                if hitPid == ProcessInfo.processInfo.processIdentifier { return }
+                if let hApp = NSRunningApplication(processIdentifier: hitPid),
+                   let bid = hApp.bundleIdentifier?.lowercased(),
+                   bid.contains("com.morph.") || bid == "morph" { return }
                 
-                model.activeSession?.fields[activeIdx].value.append(printable)
-                model.lastAutoCapturedAt = Date()
-                
-                // Email detection: if user types email in any field, auto-update recipientEmail
-                let curVal = model.activeSession?.fields[activeIdx].value ?? ""
-                if curVal.contains("@") && curVal.contains(".") {
-                    let tokens = curVal.components(separatedBy: .whitespacesAndNewlines)
-                    for tok in tokens {
-                        if tok.contains("@") && tok.contains(".") && tok.count >= 5 {
-                            if model.recipientEmail.isEmpty || model.recipientEmail.contains("example.com") || model.recipientEmail.contains("@test.com") {
-                                model.setRecipientEmail(tok)
-                            }
+                var rRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(hit, kAXRoleAttribute as CFString, &rRef)
+                let r = (rRef as? String) ?? ""
+                if Self.isInteractiveInputRole(r) {
+                    targetElem = hit
+                    elemRole = r
+                } else {
+                    // Check up to 4 ancestors if clicked element was a label, text, or icon inside an input
+                    var cur = hit
+                    for _ in 0..<4 {
+                        var pRef: CFTypeRef?
+                        guard AXUIElementCopyAttributeValue(cur, kAXParentAttribute as CFString, &pRef) == .success,
+                              let p = pRef else { break }
+                        cur = p as! AXUIElement
+                        var prRef: CFTypeRef?
+                        AXUIElementCopyAttributeValue(cur, kAXRoleAttribute as CFString, &prRef)
+                        let pr = (prRef as? String) ?? ""
+                        if Self.isInteractiveInputRole(pr) {
+                            targetElem = cur
+                            elemRole = pr
                             break
                         }
                     }
                 }
             }
         }
-    }
-    
-    @MainActor
-    public func syncFocusedElement() {
-        guard let model = formModel, model.isFormDetected, model.isAutoCaptureEnabled,
-              let session = model.activeSession, !session.fields.isEmpty else { return }
         
-        guard let frontApp = NSWorkspace.shared.frontmostApplication,
-              DefaultApplicationFormDetector.isBrowserApplication(frontApp) else { return }
-        
-        let appElem = AXUIElementCreateApplication(frontApp.processIdentifier)
-        var focusedRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appElem, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
-              let focused = focusedRef else { return }
-        let elem = focused as! AXUIElement
-        
-        var roleRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
-        let role = (roleRef as? String) ?? ""
-        
-        var titleRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(elem, kAXTitleAttribute as CFString, &titleRef)
-        var descRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(elem, kAXDescriptionAttribute as CFString, &descRef)
-        var elemTitle = ((titleRef as? String) ?? (descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // If elemTitle is empty or generic (e.g. "Your answer"), resolve question heading via ancestor walk
-        if elemTitle.isEmpty || elemTitle.lowercased() == "your answer" || elemTitle.lowercased() == "address and search bar" {
-            if let resolved = FormInputAutoTracker.findQuestionTitleForElement(elem) {
-                elemTitle = resolved
-            }
+        if targetElem == nil {
+            guard let resolved = Self.resolveFocusedElement(for: frontApp) else { return }
+            targetElem = resolved.element
+            elemRole = resolved.role
         }
         
-        var valRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(elem, kAXValueAttribute as CFString, &valRef)
-        let textVal = valRef as? String
+        guard let targetElem = targetElem else { return }
         
-        // 1. If focused element title/desc matches a question label, align activeFieldIndex
-        if !elemTitle.isEmpty {
-            if let matchedIdx = session.fields.firstIndex(where: {
-                let fl = $0.label.lowercased()
-                let el = elemTitle.lowercased()
-                return fl == el || fl.contains(el) || el.contains(fl)
-            }) {
+        var targetPid: pid_t = 0
+        AXUIElementGetPid(targetElem, &targetPid)
+        if targetPid == ProcessInfo.processInfo.processIdentifier { return }
+        if let tApp = NSRunningApplication(processIdentifier: targetPid),
+           let bid = tApp.bundleIdentifier?.lowercased(),
+           bid.contains("com.morph.") || bid == "morph" { return }
+        
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(targetElem, kAXTitleAttribute as CFString, &titleRef)
+        var descRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(targetElem, kAXDescriptionAttribute as CFString, &descRef)
+        var valRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(targetElem, kAXValueAttribute as CFString, &valRef)
+        
+        let elemTitle = ((titleRef as? String) ?? (descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let textVal = (valRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Ignore browser address bar
+        if elemTitle.localizedCaseInsensitiveContains("address and search bar") || elemTitle.lowercased() == "address" {
+            return
+        }
+        
+        // Resolve question heading via deep ancestor walk
+        let questionTitle = FormInputAutoTracker.findQuestionTitleForElement(targetElem) ?? elemTitle
+        let cleanQuestion = ApplicationFormModel.cleanQuestionTitle(questionTitle)
+        
+        // 1. Align activeFieldIndex or dynamically create field if missing
+        if !cleanQuestion.isEmpty {
+            if let matchedIdx = ApplicationFormModel.bestMatchingFieldIndex(for: cleanQuestion, in: session.fields) {
                 if model.activeFieldIndex != matchedIdx {
+                    model.objectWillChange.send()
                     model.activeFieldIndex = matchedIdx
+                }
+            } else if session.fields.isEmpty {
+                // ONLY dynamically register fields if the session has NO pre-loaded schema
+                let ignoredTitles: Set<String> = [
+                    "address", "address and search bar", "search", "search or enter website name",
+                    "back", "forward", "reload", "refresh", "home", "sidebar", "show sidebar", "hide sidebar",
+                    "extensions", "extension", "profiles", "profiles and menu", "profile", "bookmarks", "bookmark",
+                    "bookmark this page", "downloads", "history", "settings", "options", "menu", "close", "minimize",
+                    "zoom", "fullscreen", "new tab", "tab", "all", "required", "ask polar", "polar", "morph",
+                    "edit", "view", "window", "help", "file", "tools", "share"
+                ]
+                let lowerQ = cleanQuestion.lowercased()
+                if !ignoredTitles.contains(lowerQ) && !lowerQ.hasPrefix("all,") && !lowerQ.hasPrefix("required,") && cleanQuestion.count >= 3 && !cleanQuestion.contains(",") {
+                    let cat = FormContentRetriever.inferCategory(from: cleanQuestion)
+                    let qType: String
+                    if elemRole == "AXTextArea" {
+                        qType = "paragraph"
+                    } else if elemRole == "AXRadioButton" {
+                        qType = "multipleChoice"
+                    } else if elemRole == "AXCheckBox" {
+                        qType = "checkboxes"
+                    } else if elemRole == "AXPopUpButton" || elemRole == "AXComboBox" {
+                        qType = "dropdown"
+                    } else {
+                        qType = "shortAnswer"
+                    }
+                    let isReq = FormInputAutoTracker.isElementRequired(targetElem)
+                    let newField = FormInputField(label: cleanQuestion, value: "", category: cat, questionType: qType, isRequired: isReq)
+                    model.objectWillChange.send()
+                    model.activeSession?.fields.append(newField)
+                    model.activeFieldIndex = (model.activeSession?.fields.count ?? 1) - 1
+                    model.lastAutoCapturedAt = Date()
                 }
             }
         }
@@ -2086,50 +2992,104 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         let activeIdx = model.activeFieldIndex
         guard activeIdx < (model.activeSession?.fields.count ?? 0) else { return }
         
-        // 2. Text input sync
-        if (role == "AXTextField" || role == "AXTextArea" || role == "AXSearchField" || role == "AXComboBox") {
+        // 2. Text input sync (AXTextField, AXTextArea, AXSearchField, AXComboBox)
+        // Crucial fix: ONLY reconcile if textVal is non-empty so background AX sync never wipes typed answers!
+        if elemRole == "AXTextField" || elemRole == "AXTextArea" || elemRole == "AXSearchField" || elemRole == "AXComboBox" {
             if let tv = textVal, !tv.isEmpty {
                 let current = model.activeSession?.fields[activeIdx].value ?? ""
                 if current != tv {
+                    model.objectWillChange.send()
                     model.activeSession?.fields[activeIdx].value = tv
                     model.lastAutoCapturedAt = Date()
                 }
             }
         }
         
-        // 3. Radio button / Checkbox selection sync
-        if role == "AXRadioButton" || role == "AXCheckBox" {
+        // 3. Radio button selection sync (AXRadioButton)
+        if elemRole == "AXRadioButton" {
             var checkedRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(elem, kAXValueAttribute as CFString, &checkedRef)
+            AXUIElementCopyAttributeValue(targetElem, kAXValueAttribute as CFString, &checkedRef)
             let isChecked = (checkedRef as? Int == 1) || (checkedRef as? Bool == true)
-            if isChecked && !elemTitle.isEmpty {
+            if isChecked {
+                let optionName = (!elemTitle.isEmpty && elemTitle.lowercased() != cleanQuestion.lowercased()) ? elemTitle : (textVal ?? "")
+                if !optionName.isEmpty {
+                    let current = model.activeSession?.fields[activeIdx].value ?? ""
+                    if current != optionName {
+                        model.objectWillChange.send()
+                        model.activeSession?.fields[activeIdx].value = optionName
+                        model.lastAutoCapturedAt = Date()
+                    }
+                }
+            }
+        }
+        
+        // 4. Checkbox selection sync (AXCheckBox)
+        if elemRole == "AXCheckBox" {
+            var checkedRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(targetElem, kAXValueAttribute as CFString, &checkedRef)
+            let isChecked = (checkedRef as? Int == 1) || (checkedRef as? Bool == true)
+            let optionName = (!elemTitle.isEmpty && elemTitle.lowercased() != cleanQuestion.lowercased()) ? elemTitle : (textVal ?? "")
+            if !optionName.isEmpty {
                 let current = model.activeSession?.fields[activeIdx].value ?? ""
-                if current != elemTitle {
-                    model.activeSession?.fields[activeIdx].value = elemTitle
+                var selectedOptions = current.components(separatedBy: ", ").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                if isChecked {
+                    if !selectedOptions.contains(optionName) {
+                        selectedOptions.append(optionName)
+                    }
+                } else {
+                    selectedOptions.removeAll { $0 == optionName }
+                }
+                let newVal = selectedOptions.joined(separator: ", ")
+                if current != newVal {
+                    model.objectWillChange.send()
+                    model.activeSession?.fields[activeIdx].value = newVal
                     model.lastAutoCapturedAt = Date()
                 }
             }
         }
+        
+        // 5. Dropdown / PopUpButton selection sync
+        if elemRole == "AXPopUpButton" {
+            if let selectedVal = textVal ?? (titleRef as? String), !selectedVal.isEmpty {
+                if model.activeSession?.fields[activeIdx].value != selectedVal {
+                    model.objectWillChange.send()
+                    model.activeSession?.fields[activeIdx].value = selectedVal
+                    model.lastAutoCapturedAt = Date()
+                }
+            }
+        }
+        
+        model.saveDrafts()
     }
     
     // MARK: - Hierarchy Inspection Helpers
     /// Resolves the question title for a focused or scanned element by checking direct attributes,
     /// title UI elements, or climbing ancestor containers to find question headings in Google Forms and web forms.
     public static func findQuestionTitleForElement(_ elem: AXUIElement) -> String? {
-        let genericIgnored = ["your answer", "address and search bar", "search", "text", "edit", "input"]
+        let genericIgnored = [
+            "your answer", "address and search bar", "search", "text", "edit", "input",
+            "*", "required question", "clear selection", "other:", "other option"
+        ]
         
         var titleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(elem, kAXTitleAttribute as CFString, &titleRef)
         var descRef: CFTypeRef?
         AXUIElementCopyAttributeValue(elem, kAXDescriptionAttribute as CFString, &descRef)
+        var helpRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXHelpAttribute as CFString, &helpRef)
+        
         let t = ((titleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let d = ((descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let h = ((helpRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if !t.isEmpty && !genericIgnored.contains(t.lowercased()) {
-            return t
+        if !t.isEmpty && !genericIgnored.contains(t.lowercased()) && !t.hasPrefix("http") {
+            return ApplicationFormModel.cleanQuestionTitle(t)
         }
-        if !d.isEmpty && !genericIgnored.contains(d.lowercased()) {
-            return d
+        if !d.isEmpty && !genericIgnored.contains(d.lowercased()) && !d.hasPrefix("http") {
+            return ApplicationFormModel.cleanQuestionTitle(d)
+        }
+        if !h.isEmpty && !genericIgnored.contains(h.lowercased()) && !h.hasPrefix("http") {
+            return ApplicationFormModel.cleanQuestionTitle(h)
         }
         
         // Check kAXTitleUIElementAttribute
@@ -2143,13 +3103,141 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             AXUIElementCopyAttributeValue(te, kAXTitleAttribute as CFString, &tRef)
             let s = ((valRef as? String) ?? (tRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !s.isEmpty && !genericIgnored.contains(s.lowercased()) {
-                return s
+                return ApplicationFormModel.cleanQuestionTitle(s)
             }
         }
         
-        // Climb ancestors up to 4 levels
+        // Check kAXLinkedUIElementsAttribute
+        var linkedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(elem, "AXLinkedUIElements" as CFString, &linkedRef) == .success,
+           let linkedList = linkedRef as? [AXUIElement] {
+            for linked in linkedList {
+                var lValRef: CFTypeRef?, lTitleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(linked, kAXValueAttribute as CFString, &lValRef)
+                AXUIElementCopyAttributeValue(linked, kAXTitleAttribute as CFString, &lTitleRef)
+                let s = ((lValRef as? String) ?? (lTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !s.isEmpty && !genericIgnored.contains(s.lowercased()) {
+                    return ApplicationFormModel.cleanQuestionTitle(s)
+                }
+            }
+        }
+        
+        // Climb ancestors up to 9 levels (accommodates Google Forms deep DOM tree structure)
         var current = elem
-        for _ in 0..<4 {
+        for _ in 0..<9 {
+            var parentRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parentRef) == .success,
+                  let p = parentRef else { break }
+            current = p as! AXUIElement
+            
+            // Check if ancestor itself has a heading or title
+            var pTitleRef: CFTypeRef?, pDescRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(current, kAXTitleAttribute as CFString, &pTitleRef)
+            AXUIElementCopyAttributeValue(current, kAXDescriptionAttribute as CFString, &pDescRef)
+            let pt = ((pTitleRef as? String) ?? (pDescRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !pt.isEmpty && !genericIgnored.contains(pt.lowercased()) && !pt.hasPrefix("http") && pt.count > 2 {
+                return ApplicationFormModel.cleanQuestionTitle(pt)
+            }
+            
+            var childrenRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(current, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+               let children = childrenRef as? [AXUIElement] {
+                // Pass 1: Prioritize explicit AXHeading (Google Forms question headers)
+                for ch in children {
+                    var rRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(ch, kAXRoleAttribute as CFString, &rRef)
+                    let role = (rRef as? String) ?? ""
+                    if role == "AXHeading" {
+                        var vRef: CFTypeRef?, cTitleRef: CFTypeRef?
+                        AXUIElementCopyAttributeValue(ch, kAXValueAttribute as CFString, &vRef)
+                        AXUIElementCopyAttributeValue(ch, kAXTitleAttribute as CFString, &cTitleRef)
+                        let text = ((vRef as? String) ?? (cTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty && text != "*" && !genericIgnored.contains(text.lowercased()) && text.count > 2 {
+                            return ApplicationFormModel.cleanQuestionTitle(text)
+                        }
+                    } else if role == "AXGroup" {
+                        var subChildrenRef: CFTypeRef?
+                        if AXUIElementCopyAttributeValue(ch, kAXChildrenAttribute as CFString, &subChildrenRef) == .success,
+                           let subChildren = subChildrenRef as? [AXUIElement] {
+                            for sub in subChildren {
+                                var subRRef: CFTypeRef?
+                                AXUIElementCopyAttributeValue(sub, kAXRoleAttribute as CFString, &subRRef)
+                                if (subRRef as? String) == "AXHeading" {
+                                    var vRef: CFTypeRef?, cTitleRef: CFTypeRef?
+                                    AXUIElementCopyAttributeValue(sub, kAXValueAttribute as CFString, &vRef)
+                                    AXUIElementCopyAttributeValue(sub, kAXTitleAttribute as CFString, &cTitleRef)
+                                    let text = ((vRef as? String) ?? (cTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                    if !text.isEmpty && text != "*" && !genericIgnored.contains(text.lowercased()) && text.count > 2 {
+                                        return ApplicationFormModel.cleanQuestionTitle(text)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Pass 2: Fall back to AXStaticText
+                for ch in children {
+                    var rRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(ch, kAXRoleAttribute as CFString, &rRef)
+                    let role = (rRef as? String) ?? ""
+                    if role == "AXStaticText" {
+                        var vRef: CFTypeRef?, cTitleRef: CFTypeRef?
+                        AXUIElementCopyAttributeValue(ch, kAXValueAttribute as CFString, &vRef)
+                        AXUIElementCopyAttributeValue(ch, kAXTitleAttribute as CFString, &cTitleRef)
+                        let text = ((vRef as? String) ?? (cTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty && text != "*" && !genericIgnored.contains(text.lowercased()) && text.count > 2 {
+                            return ApplicationFormModel.cleanQuestionTitle(text)
+                        }
+                    } else if role == "AXGroup" {
+                        var subChildrenRef: CFTypeRef?
+                        if AXUIElementCopyAttributeValue(ch, kAXChildrenAttribute as CFString, &subChildrenRef) == .success,
+                           let subChildren = subChildrenRef as? [AXUIElement] {
+                            for sub in subChildren {
+                                var subRRef: CFTypeRef?
+                                AXUIElementCopyAttributeValue(sub, kAXRoleAttribute as CFString, &subRRef)
+                                if (subRRef as? String) == "AXStaticText" {
+                                    var vRef: CFTypeRef?, cTitleRef: CFTypeRef?
+                                    AXUIElementCopyAttributeValue(sub, kAXValueAttribute as CFString, &vRef)
+                                    AXUIElementCopyAttributeValue(sub, kAXTitleAttribute as CFString, &cTitleRef)
+                                    let text = ((vRef as? String) ?? (cTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                    if !text.isEmpty && text != "*" && !genericIgnored.contains(text.lowercased()) && text.count > 2 {
+                                        return ApplicationFormModel.cleanQuestionTitle(text)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return nil
+    }
+    
+    /// Determines whether an accessibility element or its parent container indicates a required answer.
+    public static func isElementRequired(_ elem: AXUIElement) -> Bool {
+        var reqRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(elem, "AXRequired" as CFString, &reqRef) == .success {
+            if let b = reqRef as? Bool, b {
+                return true
+            }
+            if let n = reqRef as? Int, n == 1 {
+                return true
+            }
+        }
+        
+        var titleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXTitleAttribute as CFString, &titleRef)
+        var descRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXDescriptionAttribute as CFString, &descRef)
+        let t = ((titleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let d = ((descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.hasSuffix("*") || t.contains(" *") || d.hasSuffix("*") || d.contains(" *") || t.localizedCaseInsensitiveContains("required") || d.localizedCaseInsensitiveContains("required") {
+            return true
+        }
+        
+        var current = elem
+        for _ in 0..<5 {
             var parentRef: CFTypeRef?
             guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parentRef) == .success,
                   let p = parentRef else { break }
@@ -2162,15 +3250,43 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     var rRef: CFTypeRef?
                     AXUIElementCopyAttributeValue(ch, kAXRoleAttribute as CFString, &rRef)
                     let role = (rRef as? String) ?? ""
-                    if role == "AXHeading" || role == "AXStaticText" {
+                    if role == "AXStaticText" || role == "AXHeading" {
                         var vRef: CFTypeRef?, cTitleRef: CFTypeRef?
                         AXUIElementCopyAttributeValue(ch, kAXValueAttribute as CFString, &vRef)
                         AXUIElementCopyAttributeValue(ch, kAXTitleAttribute as CFString, &cTitleRef)
                         let text = ((vRef as? String) ?? (cTitleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !text.isEmpty && text != "*" && !genericIgnored.contains(text.lowercased()) {
-                            return text
+                        if text == "*" || text.hasSuffix("*") || text.localizedCaseInsensitiveContains("required") {
+                            return true
                         }
                     }
+                }
+            }
+        }
+        return false
+    }
+    
+    /// Searches for the AXWebArea element within a browser window to bypass window chrome and tabs.
+    public static func findWebAreaElement(in root: AXUIElement) -> AXUIElement? {
+        var queue: [AXUIElement] = [root]
+        var head = 0
+        let maxDepthCheck = 150
+        
+        while head < queue.count && head < maxDepthCheck {
+            let cur = queue[head]
+            head += 1
+            
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(cur, kAXRoleAttribute as CFString, &roleRef)
+            let role = (roleRef as? String) ?? ""
+            if role == "AXWebArea" {
+                return cur
+            }
+            
+            var childrenRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(cur, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+               let children = childrenRef as? [AXUIElement] {
+                for c in children {
+                    queue.append(c)
                 }
             }
         }
@@ -2183,10 +3299,13 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             return nil
         }
         
+        // Bypass window chrome/toolbars by starting directly at AXWebArea if available
+        let startElem = findWebAreaElement(in: win) ?? win
+        
         var results: [(label: String, value: String)] = []
-        var queue: [AXUIElement] = [win]
+        var queue: [AXUIElement] = [startElem]
         var head = 0
-        let maxElements = 250
+        let maxElements = 3000
         
         while head < queue.count && head < maxElements {
             let current = queue[head]
@@ -2206,8 +3325,13 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     let textVal = (valRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     if !textVal.isEmpty {
                         let label = findQuestionTitleForElement(current) ?? desc
-                        if !label.isEmpty {
-                            results.append((label: label, value: textVal))
+                        let cleanLbl = ApplicationFormModel.cleanQuestionTitle(label)
+                        if !cleanLbl.isEmpty {
+                            if let existingIdx = results.firstIndex(where: { $0.label.caseInsensitiveCompare(cleanLbl) == .orderedSame }) {
+                                results[existingIdx].value = textVal
+                            } else {
+                                results.append((label: cleanLbl, value: textVal))
+                            }
                         }
                     }
                 }
@@ -2216,12 +3340,37 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 AXUIElementCopyAttributeValue(current, kAXValueAttribute as CFString, &checkedRef)
                 let isChecked = (checkedRef as? Int == 1) || (checkedRef as? Bool == true)
                 if isChecked {
-                    var titleRef: CFTypeRef?
+                    var titleRef: CFTypeRef?, descRef: CFTypeRef?
                     AXUIElementCopyAttributeValue(current, kAXTitleAttribute as CFString, &titleRef)
-                    let optionTitle = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    AXUIElementCopyAttributeValue(current, kAXDescriptionAttribute as CFString, &descRef)
+                    let optionTitle = ((titleRef as? String) ?? (descRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                     let qLabel = findQuestionTitleForElement(current) ?? ""
-                    if !qLabel.isEmpty && !optionTitle.isEmpty {
-                        results.append((label: qLabel, value: optionTitle))
+                    let cleanLbl = ApplicationFormModel.cleanQuestionTitle(qLabel)
+                    if !cleanLbl.isEmpty && !optionTitle.isEmpty {
+                        if let existingIdx = results.firstIndex(where: { $0.label.caseInsensitiveCompare(cleanLbl) == .orderedSame }) {
+                            if !results[existingIdx].value.contains(optionTitle) {
+                                results[existingIdx].value += ", " + optionTitle
+                            }
+                        } else {
+                            results.append((label: cleanLbl, value: optionTitle))
+                        }
+                    }
+                }
+            } else if role == "AXPopUpButton" {
+                var valRef: CFTypeRef?, titleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(current, kAXValueAttribute as CFString, &valRef)
+                AXUIElementCopyAttributeValue(current, kAXTitleAttribute as CFString, &titleRef)
+                let popVal = ((valRef as? String) ?? (titleRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let ignoredDrop = ["choose", "select", "select an option", "choose an option"]
+                if !popVal.isEmpty && !ignoredDrop.contains(popVal.lowercased()) {
+                    let label = findQuestionTitleForElement(current) ?? ""
+                    let cleanLbl = ApplicationFormModel.cleanQuestionTitle(label)
+                    if !cleanLbl.isEmpty {
+                        if let existingIdx = results.firstIndex(where: { $0.label.caseInsensitiveCompare(cleanLbl) == .orderedSame }) {
+                            results[existingIdx].value = popVal
+                        } else {
+                            results.append((label: cleanLbl, value: popVal))
+                        }
                     }
                 }
             }
@@ -2240,21 +3389,21 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     /// Extracts live question inputs from scriptable browsers (Safari, Chrome, Brave, Arc, Edge) via AppleScript.
     public static func extractInputsViaAppleScript(bundleID: String) -> [(label: String, value: String)]? {
         let b = bundleID.lowercased()
-        let isChrome = b.contains("chrome") || b.contains("brave") || b.contains("edge") || b.contains("arc") || b.contains("vivaldi") || b.contains("opera")
+        let isChrome = b.contains("chrome") || b.contains("brave") || b.contains("edge") || b.contains("arc") || b.contains("vivaldi") || b.contains("opera") || b.contains("chromium") || b.contains("comet") || b.contains("sigmaos") || b.contains("wavebox")
         let isSafari = b.contains("safari") && !b.contains("technology")
         guard isChrome || isSafari else { return nil }
         
         let jsSnippet = """
         (function() {
             var out = [];
-            var items = document.querySelectorAll('div[role=\"listitem\"], .Qr7Oae, .question, .form-group');
+            var items = document.querySelectorAll('div[role=\"listitem\"], .Qr7Oae, .geS5n, .question, .form-group');
             if (items.length > 0) {
                 for (var i = 0; i < items.length; i++) {
                     var item = items[i];
                     var h = item.querySelector('[role=\"heading\"], .M7eMe, label, h2, h3, h4');
                     var title = h ? h.innerText.replace(/[*\\n\\r]+/g, ' ').trim() : '';
                     var val = '';
-                    var inp = item.querySelector('input.whsOnd, input[type=\"text\"], input[type=\"email\"], textarea.KHxj8b, textarea');
+                    var inp = item.querySelector('input.whsOnd, input[type=\"text\"], input[type=\"email\"], input[type=\"tel\"], input[type=\"url\"], input[type=\"number\"], textarea.KHxj8b, textarea');
                     if (inp && inp.value) val = inp.value.trim();
                     if (!val) {
                         var rad = item.querySelector('[role=\"radio\"][aria-checked=\"true\"], input[type=\"radio\"]:checked');
@@ -2271,10 +3420,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                             val = cs.join(', ');
                         }
                     }
+                    if (!val) {
+                        var drop = item.querySelector('[role=\"option\"][aria-selected=\"true\"], .quantumWizMenuPaperselectOption[aria-selected=\"true\"], .MOCG8c.KKjvXb, select');
+                        if (drop) val = drop.getAttribute('data-value') || drop.getAttribute('aria-label') || drop.value || drop.innerText.trim();
+                    }
                     if (title && val) out.push(title + ':::' + val);
                 }
             } else {
-                var inps = document.querySelectorAll('input:not([type=\"hidden\"]), textarea');
+                var inps = document.querySelectorAll('input:not([type=\"hidden\"]), textarea, select');
                 for (var k = 0; k < inps.length; k++) {
                     var el = inps[k];
                     var l = el.getAttribute('aria-label') || el.name || el.placeholder || '';
@@ -2291,7 +3444,11 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             scriptSource = """
             tell application id "\(bundleID)"
                 if (count of windows) > 0 then
-                    return execute front window's active tab javascript "\(escapedJS)"
+                    try
+                        tell front window to tell active tab
+                            return execute javascript "\(escapedJS)"
+                        end tell
+                    end try
                 end if
             end tell
             """
@@ -2300,7 +3457,11 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             scriptSource = """
             tell application id "com.apple.Safari"
                 if (count of documents) > 0 then
-                    return do JavaScript "\(escapedJS)" in current tab of front window
+                    try
+                        tell front window to tell current tab
+                            return do JavaScript "\(escapedJS)"
+                        end tell
+                    end try
                 end if
             end tell
             """
@@ -2313,8 +3474,9 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             if parts.count >= 2 {
                 let lbl = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
                 let val = parts[1...].joined(separator: ":::").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !lbl.isEmpty && !val.isEmpty {
-                    results.append((label: lbl, value: val))
+                let cleanLbl = ApplicationFormModel.cleanQuestionTitle(lbl)
+                if !cleanLbl.isEmpty && !val.isEmpty {
+                    results.append((label: cleanLbl, value: val))
                 }
             }
         }
@@ -2349,16 +3511,25 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     }
 }
 
+// MARK: - Form Field Filter Mode
+public enum FormFieldFilterMode: String, CaseIterable, Equatable, Sendable {
+    case requiredOnly = "Required"
+    case all = "All"
+}
+
 // MARK: - Main ApplicationFormModel
 @MainActor
 public final class ApplicationFormModel: ObservableObject {
     @Published public var activeSession: ApplicationFormSession?
+    @Published public var suspendedSession: ApplicationFormSession?
     @Published public var isFormDetected: Bool = false
     @Published public var isJustDetected: Bool = false
     @Published public var detectedFormTitle: String = ""
     @Published public var detectedAppName: String = ""
     @Published public var detectedURL: String? = nil
     @Published public var detectedBrowserFamily: BrowserEngineFamily = .unknown
+    @Published public var detectedScreenIndex: Int? = nil
+    @Published public var detectedScreenName: String? = nil
     @Published public var userDefaultBrowser: UserBrowserProfile
     @Published public var isTracking: Bool = false
     @Published public var isAutoCaptureEnabled: Bool = true
@@ -2368,6 +3539,27 @@ public final class ApplicationFormModel: ObservableObject {
     @Published public var activeFieldIndex: Int = 0
     @Published public var isAutoRetrievingSchema: Bool = false
     @Published public var lastAutoCapturedAt: Date? = nil
+    @Published public var filterMode: FormFieldFilterMode = .requiredOnly
+    @Published public var consecutiveMissedDetections: Int = 0
+    
+    public var visibleFields: [FormInputField] {
+        guard let session = activeSession else { return [] }
+        let actionable = session.fields.filter { $0.isActionableQuestion }
+        if filterMode == .requiredOnly && session.hasRequiredFields {
+            return session.requiredFields
+        }
+        return actionable
+    }
+    
+    public func setFilterMode(_ mode: FormFieldFilterMode) {
+        self.filterMode = mode
+        self.advanceToFirstUnansweredFieldIfNeeded()
+    }
+    
+    public func toggleFilterMode() {
+        self.filterMode = (self.filterMode == .requiredOnly) ? .all : .requiredOnly
+        self.advanceToFirstUnansweredFieldIfNeeded()
+    }
     
     public var detector: ApplicationFormDetectorProtocol
     public var dispatcher: ApplicationEmailDispatcherProtocol
@@ -2393,9 +3585,96 @@ public final class ApplicationFormModel: ObservableObject {
         self.userDefaultBrowser = userDefaultBrowser ?? PersonalizedBrowserDetector.detectDefaultBrowser()
         
         if !MorphEnvironment.isTestingEnvironment {
+            loadDrafts()
             self.autoTracker = FormInputAutoTracker(model: self)
             self.autoTracker?.start()
             startPolling()
+        }
+    }
+    
+    // MARK: - Draft & History Persistence
+    nonisolated public static let draftsStorageKey = "com.morph.applicationForm.drafts"
+    
+    public func saveDrafts() {
+        var draftsToSave: [ApplicationFormSession] = []
+        if let active = activeSession {
+            draftsToSave.append(active)
+        }
+        if let suspended = suspendedSession {
+            if !draftsToSave.contains(where: { $0.id == suspended.id }) {
+                draftsToSave.append(suspended)
+            }
+        }
+        for hist in historySessions {
+            if !draftsToSave.contains(where: { $0.id == hist.id }) {
+                draftsToSave.append(hist)
+            }
+        }
+        
+        do {
+            let data = try JSONEncoder().encode(draftsToSave)
+            UserDefaults.standard.set(data, forKey: Self.draftsStorageKey)
+        } catch {
+            NSLog("[MORPH-FORM] Failed to encode form drafts: %@", error.localizedDescription)
+        }
+    }
+    
+    public func loadDrafts() {
+        guard let data = UserDefaults.standard.data(forKey: Self.draftsStorageKey) else { return }
+        do {
+            var loaded = try JSONDecoder().decode([ApplicationFormSession].self, from: data)
+            let bogusLabels: Set<String> = ["all", "required", "polar", "morph", "ask polar"]
+            for sessionIdx in loaded.indices {
+                loaded[sessionIdx].fields.removeAll { field in
+                    let lbl = field.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                    return bogusLabels.contains(lbl) || lbl.hasPrefix("all,") || lbl.hasPrefix("required,")
+                }
+                for fieldIdx in loaded[sessionIdx].fields.indices {
+                    if loaded[sessionIdx].fields[fieldIdx].entryKey == nil && loaded[sessionIdx].fields[fieldIdx].questionType == "text" {
+                        loaded[sessionIdx].fields[fieldIdx].questionType = "info"
+                        loaded[sessionIdx].fields[fieldIdx].isRequired = false
+                    }
+                }
+            }
+            self.historySessions = loaded
+        } catch {
+            NSLog("[MORPH-FORM] Failed to decode form drafts: %@", error.localizedDescription)
+        }
+    }
+    
+    public func clearSavedDrafts() {
+        UserDefaults.standard.removeObject(forKey: Self.draftsStorageKey)
+    }
+    
+    public func advanceToFirstUnansweredFieldIfNeeded() {
+        guard let session = activeSession, !session.fields.isEmpty else { return }
+        
+        let curIdx = self.activeFieldIndex
+        let fields = session.fields
+        let isReqFilter = (filterMode == .requiredOnly && session.hasRequiredFields)
+        
+        // If current index is valid, unanswered, and matches current filter mode, keep it
+        if curIdx >= 0 && curIdx < fields.count {
+            let curField = fields[curIdx]
+            if !curField.isAnswered && curField.isActionableQuestion {
+                if !isReqFilter || curField.isRequired {
+                    return
+                }
+            }
+        }
+        
+        // Find the first unanswered question (prioritizing required if in requiredOnly mode)
+        if isReqFilter {
+            if let firstReq = fields.indices.first(where: { !fields[$0].isAnswered && fields[$0].isActionableQuestion && fields[$0].isRequired }) {
+                self.objectWillChange.send()
+                self.activeFieldIndex = firstReq
+                return
+            }
+        }
+        
+        if let firstUnanswered = fields.indices.first(where: { !fields[$0].isAnswered && fields[$0].isActionableQuestion }) {
+            self.objectWillChange.send()
+            self.activeFieldIndex = firstUnanswered
         }
     }
     
@@ -2457,8 +3736,8 @@ public final class ApplicationFormModel: ObservableObject {
             }
         }
         
-        // 4. Fast 1.0s periodic timer monitoring all on-screen windows across the computer
-        pollTimer = Timer.publish(every: 1.0, on: .main, in: .common)
+        // 4. Fast 0.5s periodic timer monitoring active on-screen form context
+        pollTimer = Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkActiveApplication()
@@ -2467,14 +3746,30 @@ public final class ApplicationFormModel: ObservableObject {
     
     // MARK: - Active Form Detection
     public func checkActiveApplication() {
+        if let frontApp = NSWorkspace.shared.frontmostApplication {
+            let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
+            let appName = frontApp.localizedName?.lowercased() ?? ""
+            if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") {
+                // Morph itself is frontmost (e.g. interacting with HUD or expanded view).
+                // Retain current detection and session state without touching it.
+                return
+            }
+        }
+        
         let result = detector.detectActiveApplicationForm()
+        if result.isDetected != self.isFormDetected {
+            NSLog("[MORPH-FORM] checkActiveApplication: isDetected changed from %d to %d (title: %@, app: %@, url: %@)", self.isFormDetected ? 1 : 0, result.isDetected ? 1 : 0, result.title ?? "nil", result.appName ?? "nil", result.url ?? "nil")
+        }
         if result.isDetected {
+            self.consecutiveMissedDetections = 0
             let title = result.title ?? "Application Form"
             let app = result.appName ?? userDefaultBrowser.displayName
             let url = result.url
             let family = result.browserFamily ?? PersonalizedBrowserDetector.engineFamily(for: "", name: app)
+            let normalizedURL = url != nil ? FormContentRetriever.normalizeURLScheme(url!) : nil
             
-            if !self.isFormDetected {
+            let wasDetected = self.isFormDetected
+            if !wasDetected {
                 self.isJustDetected = true
                 justDetectedResetTask?.cancel()
                 justDetectedResetTask = Task { @MainActor [weak self] in
@@ -2489,43 +3784,148 @@ public final class ApplicationFormModel: ObservableObject {
             self.isFormDetected = true
             self.detectedFormTitle = title
             self.detectedAppName = app
-            self.detectedURL = url
+            self.detectedURL = normalizedURL
             self.detectedBrowserFamily = family
+            self.detectedScreenIndex = result.screenIndex
+            self.detectedScreenName = result.screenName
             
-            // If not tracking and a form is newly detected, automatically initiate or stage session
-            if activeSession == nil {
-                startTracking(title: title, appName: app, url: url)
-            } else {
-                if activeSession?.formTitle == "Application Form" && title != "Application Form" {
-                    activeSession?.formTitle = title
-                    activeSession?.sourceAppName = app
+            // Multi-Form Awareness & Resumption:
+            // 1. If we have a suspended session (user switched away and came back), check if it's the SAME form
+            if let suspended = suspendedSession {
+                let isSame = DefaultApplicationFormDetector.isSameForm(
+                    titleA: suspended.formTitle, urlA: suspended.sourceURL,
+                    titleB: title, urlB: normalizedURL
+                )
+                
+                if isSame {
+                    self.activeSession = suspended
+                    self.suspendedSession = nil
+                    self.isTracking = true
+                    let cleanCurr = DefaultApplicationFormDetector.cleanTitle(title)
+                    let cleanOld = DefaultApplicationFormDetector.cleanTitle(suspended.formTitle)
+                    let genericTitles = ["application form", "google forms", "untitled form", "polar"]
+                    if genericTitles.contains(cleanOld.lowercased()) && !genericTitles.contains(cleanCurr.lowercased()) && !cleanCurr.isEmpty {
+                        self.activeSession?.formTitle = title
+                        self.detectedFormTitle = title
+                    }
+                    if let u = normalizedURL, (self.activeSession?.sourceURL == nil || self.activeSession?.sourceURL?.isEmpty == true) {
+                        self.activeSession?.sourceURL = u
+                    }
+                } else {
+                    // Different form opened: archive suspended session to history
+                    var old = suspended
+                    old.completedAt = Date()
+                    if let existingIdx = historySessions.firstIndex(where: { $0.id == old.id }) {
+                        historySessions[existingIdx] = old
+                    } else {
+                        historySessions.insert(old, at: 0)
+                    }
+                    self.suspendedSession = nil
                 }
-                if let u = url, !u.isEmpty {
-                    if activeSession?.sourceURL != u {
-                        activeSession?.sourceURL = u
-                        self.detectedURL = u
-                        autoRetrieveFormContent(url: u)
-                    } else if (activeSession?.fields.isEmpty ?? true) && !isAutoRetrievingSchema {
-                        autoRetrieveFormContent(url: u)
+            }
+            
+            if let active = activeSession {
+                // 2. Already tracking an active session: check if user switched to a DIFFERENT form
+                let isSame = DefaultApplicationFormDetector.isSameForm(
+                    titleA: active.formTitle, urlA: active.sourceURL,
+                    titleB: title, urlB: normalizedURL
+                )
+                
+                if !isSame {
+                    // Different form opened! Archive old session to history
+                    var old = active
+                    old.completedAt = Date()
+                    if let existingIdx = historySessions.firstIndex(where: { $0.id == old.id }) {
+                        historySessions[existingIdx] = old
+                    } else {
+                        historySessions.insert(old, at: 0)
+                    }
+                    self.activeSession = nil
+                } else {
+                    // Same form: refine title/URL if transitioning from generic to specific
+                    let cleanCurr = DefaultApplicationFormDetector.cleanTitle(title)
+                    let cleanOld = DefaultApplicationFormDetector.cleanTitle(active.formTitle)
+                    let genericTitles = ["application form", "google forms", "untitled form", "polar"]
+                    if genericTitles.contains(cleanOld.lowercased()) && !genericTitles.contains(cleanCurr.lowercased()) && !cleanCurr.isEmpty {
+                        activeSession?.formTitle = title
+                        self.detectedFormTitle = title
+                    }
+                    activeSession?.sourceAppName = app
+                    if let u = normalizedURL, !u.isEmpty {
+                        if activeSession?.sourceURL != u {
+                            activeSession?.sourceURL = u
+                            self.detectedURL = u
+                            if activeSession?.fields.isEmpty ?? true {
+                                autoRetrieveFormContent(url: u)
+                            }
+                        } else if (activeSession?.fields.isEmpty ?? true) && !isAutoRetrievingSchema {
+                            autoRetrieveFormContent(url: u)
+                        }
                     }
                 }
-                syncLiveFormInputValues()
             }
+            
+            // 3. Search history / drafts memory for this form!
+            if activeSession == nil {
+                if let matchIdx = historySessions.firstIndex(where: {
+                    DefaultApplicationFormDetector.isSameForm(
+                        titleA: $0.formTitle, urlA: $0.sourceURL,
+                        titleB: title, urlB: normalizedURL
+                    )
+                }) {
+                    var restored = historySessions.remove(at: matchIdx)
+                    restored.completedAt = nil
+                    let cleanCurr = DefaultApplicationFormDetector.cleanTitle(title)
+                    let cleanOld = DefaultApplicationFormDetector.cleanTitle(restored.formTitle)
+                    let genericTitles = ["application form", "google forms", "untitled form", "polar"]
+                    if genericTitles.contains(cleanOld.lowercased()) && !genericTitles.contains(cleanCurr.lowercased()) && !cleanCurr.isEmpty {
+                        restored.formTitle = title
+                    }
+                    if let u = normalizedURL, !u.isEmpty {
+                        restored.sourceURL = u
+                    }
+                    restored.sourceAppName = app
+                    self.activeSession = restored
+                    self.isTracking = true
+                    NSLog("[MORPH-FORM] Restored form session '%@' from memory with %d fields (%d answered)", restored.formTitle, restored.fields.count, restored.answeredCount)
+                    advanceToFirstUnansweredFieldIfNeeded()
+                    saveDrafts()
+                } else {
+                    // No existing session in drafts or history: start tracking fresh
+                    startTracking(title: title, appName: app, url: normalizedURL)
+                }
+            }
+            
+            syncLiveFormInputValues()
+            advanceToFirstUnansweredFieldIfNeeded()
+            saveDrafts()
         } else {
             // If Morph itself is frontmost and we already have an active form session,
             // retain the state while the user interacts with the Notch/HUD
             if let frontApp = NSWorkspace.shared.frontmostApplication {
                 let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
-                if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph")) && self.isFormDetected {
+                let appName = frontApp.localizedName?.lowercased() ?? ""
+                if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") && self.isFormDetected {
                     return
                 }
             }
             
-            // Strictly context-aware: when no form is detected across any window, reset isFormDetected immediately
-            self.isFormDetected = false
-            self.isJustDetected = false
-            self.detectedBrowserFamily = .unknown
-            justDetectedResetTask?.cancel()
+            self.consecutiveMissedDetections += 1
+            
+            // Immediate collapse when using something else:
+            // Stash active session into suspendedSession so when the user goes back to the form,
+            // it resumes without losing entered fields or answers.
+            if self.isFormDetected {
+                if let current = self.activeSession {
+                    self.suspendedSession = current
+                }
+                self.isFormDetected = false
+                self.isJustDetected = false
+                self.detectedBrowserFamily = .unknown
+                self.detectedScreenIndex = nil
+                self.detectedScreenName = nil
+                self.justDetectedResetTask?.cancel()
+            }
         }
     }
     
@@ -2538,10 +3938,39 @@ public final class ApplicationFormModel: ObservableObject {
     ) {
         let finalTitle = title ?? (detectedFormTitle.isEmpty ? "Application Form" : detectedFormTitle)
         let finalApp = appName ?? (detectedAppName.isEmpty ? "Web Browser" : detectedAppName)
-        let finalUrl = url ?? detectedURL
+        let rawUrl = url ?? detectedURL
+        let finalUrl = rawUrl != nil ? FormContentRetriever.normalizeURLScheme(rawUrl!) : nil
         let emailToUse = (defaultEmail?.isEmpty == false ? defaultEmail! : (recipientEmail.isEmpty ? "user@example.com" : recipientEmail))
         
         self.recipientEmail = emailToUse
+        
+        // Search history/drafts for an existing session for this form before creating a blank one
+        if let matchIdx = historySessions.firstIndex(where: {
+            DefaultApplicationFormDetector.isSameForm(
+                titleA: $0.formTitle, urlA: $0.sourceURL,
+                titleB: finalTitle, urlB: finalUrl
+            )
+        }) {
+            var restored = historySessions.remove(at: matchIdx)
+            restored.completedAt = nil
+            if !finalTitle.isEmpty && finalTitle != "Application Form" {
+                restored.formTitle = finalTitle
+            }
+            if let u = finalUrl, !u.isEmpty {
+                restored.sourceURL = u
+            }
+            restored.sourceAppName = finalApp
+            self.activeSession = restored
+            self.isTracking = true
+            self.isFormDetected = true
+            self.detectedFormTitle = restored.formTitle
+            self.detectedAppName = finalApp
+            self.detectedURL = finalUrl
+            advanceToFirstUnansweredFieldIfNeeded()
+            saveDrafts()
+            return
+        }
+        
         let session = ApplicationFormSession(
             formTitle: finalTitle,
             sourceAppName: finalApp,
@@ -2557,6 +3986,8 @@ public final class ApplicationFormModel: ObservableObject {
         self.detectedAppName = finalApp
         self.detectedURL = finalUrl
         
+        saveDrafts()
+        
         if let formURL = finalUrl, !formURL.isEmpty {
             autoRetrieveFormContent(url: formURL)
         }
@@ -2565,14 +3996,27 @@ public final class ApplicationFormModel: ObservableObject {
     public func stopTracking() {
         if var session = activeSession {
             session.completedAt = Date()
-            historySessions.insert(session, at: 0)
+            if let existingIdx = historySessions.firstIndex(where: { $0.id == session.id }) {
+                historySessions[existingIdx] = session
+            } else {
+                historySessions.insert(session, at: 0)
+            }
+        } else if var session = suspendedSession {
+            session.completedAt = Date()
+            if let existingIdx = historySessions.firstIndex(where: { $0.id == session.id }) {
+                historySessions[existingIdx] = session
+            } else {
+                historySessions.insert(session, at: 0)
+            }
         }
         self.activeSession = nil
+        self.suspendedSession = nil
         self.activeFieldIndex = 0
         self.isTracking = false
         self.isFormDetected = false
         self.isJustDetected = false
         self.justDetectedResetTask?.cancel()
+        saveDrafts()
         self.onFormClosed?()
     }
     
@@ -2588,6 +4032,16 @@ public final class ApplicationFormModel: ObservableObject {
                 self.isAutoRetrievingSchema = false
                 guard let schema = schema else { return }
                 
+                // Discard schema if user already navigated to a different form
+                if let curURL = self.activeSession?.sourceURL, !curURL.isEmpty {
+                    let curID = DefaultApplicationFormDetector.extractFormIdentifier(from: curURL)
+                    let schemaID = DefaultApplicationFormDetector.extractFormIdentifier(from: url)
+                    if curID != nil && schemaID != nil && curID != schemaID {
+                        NSLog("[MORPH-FORM] autoRetrieveFormContent: Discarding stale schema for '%@' because active session is '%@'", url, curURL)
+                        return
+                    }
+                }
+                
                 if !schema.title.isEmpty {
                     self.detectedFormTitle = schema.title
                     self.activeSession?.formTitle = schema.title
@@ -2601,13 +4055,27 @@ public final class ApplicationFormModel: ObservableObject {
                         // Merge fields preserving any user input or adopting new values
                         var merged = schema.fields
                         for i in 0..<merged.count {
-                            if let existing = current.first(where: {
-                                $0.label.lowercased() == merged[i].label.lowercased() ||
-                                ($0.entryKey != nil && $0.entryKey == merged[i].entryKey)
+                            if let matchIdx = Self.bestMatchingFieldIndex(for: merged[i].label, in: current) {
+                                let existing = current[matchIdx]
+                                if !existing.value.isEmpty && merged[i].value.isEmpty {
+                                    merged[i].value = existing.value
+                                }
+                            } else if let existing = current.first(where: {
+                                $0.entryKey != nil && $0.entryKey == merged[i].entryKey
                             }) {
                                 if !existing.value.isEmpty && merged[i].value.isEmpty {
                                     merged[i].value = existing.value
                                 }
+                            }
+                        }
+                        // Preserve any dynamically captured fields not present in schema
+                        for cur in current {
+                            let cleanCur = Self.cleanQuestionTitle(cur.label)
+                            if !cleanCur.isEmpty && !merged.contains(where: {
+                                Self.cleanQuestionTitle($0.label).caseInsensitiveCompare(cleanCur) == .orderedSame ||
+                                ($0.entryKey != nil && cur.entryKey != nil && $0.entryKey == cur.entryKey)
+                            }) {
+                                merged.append(cur)
                             }
                         }
                         self.activeSession?.fields = merged
@@ -2624,10 +4092,16 @@ public final class ApplicationFormModel: ObservableObject {
                             break
                         }
                     }
+                    
+                    if self.activeSession?.hasRequiredFields == true {
+                        self.filterMode = .requiredOnly
+                    }
                 }
                 
                 // Immediately synchronize live inputs from browser
                 self.syncLiveFormInputValues()
+                self.advanceToFirstUnansweredFieldIfNeeded()
+                self.saveDrafts()
             }
         }
     }
@@ -2636,7 +4110,7 @@ public final class ApplicationFormModel: ObservableObject {
     @MainActor
     public func syncLiveFormInputValues() {
         guard isFormDetected, isAutoCaptureEnabled,
-              let session = activeSession, !session.fields.isEmpty else { return }
+              let session = activeSession else { return }
         
         // 1. If form source is a local file or file URL, re-parse if any fields are empty
         if let urlStr = session.sourceURL, (urlStr.hasPrefix("/") || urlStr.hasPrefix("file://")) {
@@ -2709,37 +4183,157 @@ public final class ApplicationFormModel: ObservableObject {
         }
     }
     
-    @discardableResult
-    public func applyExtractedInput(label: String, value: String) -> Bool {
-        guard let session = activeSession, !session.fields.isEmpty else { return false }
-        let cleanVal = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanVal.isEmpty else { return false }
+    // MARK: - Hierarchical Label Normalization & Robust Matching
+    nonisolated public static func cleanQuestionTitle(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        s = s.replacingOccurrences(of: "\\s*\\*+\\s*$", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\s*\\(required\\)\\s*$", with: "", options: [.regularExpression, .caseInsensitive])
+        s = s.replacingOccurrences(of: "^(Q\\d+[:.]?|\\d+[.)])\\s*", with: "", options: .regularExpression)
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated public static func normalizeFieldLabel(_ label: String) -> String {
+        var s = cleanQuestionTitle(label).lowercased()
+        s = s.replacingOccurrences(of: "^[*#\\-\\s]+", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "[*:\\-\\s]+$", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "^\\(?\\d+[\\.\\):]?\\s*", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated public static func bestMatchingFieldIndex(for label: String, in fields: [FormInputField]) -> Int? {
+        guard !fields.isEmpty else { return nil }
+        let rawLabel = cleanQuestionTitle(label)
+        guard !rawLabel.isEmpty else { return nil }
+        let normInput = normalizeFieldLabel(rawLabel)
         
-        let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Tier 1: Exact raw match (case-insensitive)
+        if let idx = fields.firstIndex(where: { $0.label.caseInsensitiveCompare(rawLabel) == .orderedSame }) {
+            return idx
+        }
         
-        // 1. Exact or substring match by label
-        if let idx = session.fields.firstIndex(where: {
-            let fl = $0.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            return fl == cleanLabel || fl.contains(cleanLabel) || cleanLabel.contains(fl)
-        }) {
-            if activeSession?.fields[idx].value != cleanVal {
-                activeSession?.fields[idx].value = cleanVal
-                lastAutoCapturedAt = Date()
-                return true
+        // Tier 2: Exact normalized match
+        if !normInput.isEmpty {
+            if let idx = fields.firstIndex(where: { normalizeFieldLabel($0.label) == normInput }) {
+                return idx
             }
         }
-        return false
+        
+        // Tier 3: Token-overlap scoring
+        let inputTokens = Set(normInput.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count >= 2 })
+        var bestIdx: Int? = nil
+        var highestScore: Double = 0.0
+        
+        for (idx, field) in fields.enumerated() {
+            let normField = normalizeFieldLabel(field.label)
+            let fieldTokens = Set(normField.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count >= 2 })
+            
+            if !inputTokens.isEmpty && !fieldTokens.isEmpty {
+                let intersection = inputTokens.intersection(fieldTokens)
+                let union = inputTokens.union(fieldTokens)
+                let jaccard = Double(intersection.count) / Double(union.count)
+                
+                let minTokens = min(inputTokens.count, fieldTokens.count)
+                let containment = Double(intersection.count) / Double(minTokens)
+                
+                if containment >= 0.8 && minTokens >= 2 && jaccard >= 0.5 {
+                    let score = 0.7 + (jaccard * 0.3)
+                    if score > highestScore {
+                        highestScore = score
+                        bestIdx = idx
+                    }
+                } else if jaccard >= 0.6 {
+                    if jaccard > highestScore {
+                        highestScore = jaccard
+                        bestIdx = idx
+                    }
+                }
+            }
+            
+            // Tier 4: Substring match with strict length ratio constraint (>= 0.7)
+            if !normInput.isEmpty && !normField.isEmpty {
+                if normInput.contains(normField) || normField.contains(normInput) {
+                    let minLen = min(normInput.count, normField.count)
+                    let maxLen = max(normInput.count, normField.count)
+                    let ratio = Double(minLen) / Double(maxLen)
+                    if ratio >= 0.7 && minLen >= 4 {
+                        let score = 0.5 + (ratio * 0.2)
+                        if score > highestScore {
+                            highestScore = score
+                            bestIdx = idx
+                        }
+                    }
+                }
+            }
+        }
+        
+        return bestIdx
+    }
+    
+    @discardableResult
+    public func applyExtractedInput(label: String, value: String) -> Bool {
+        guard let session = activeSession else { return false }
+        let cleanVal = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanLbl = Self.cleanQuestionTitle(label)
+        guard !cleanVal.isEmpty, !cleanLbl.isEmpty else { return false }
+        
+        let ignoredTitles: Set<String> = [
+            "address", "address and search bar", "search", "search or enter website name",
+            "back", "forward", "reload", "refresh", "home", "sidebar", "show sidebar", "hide sidebar",
+            "extensions", "extension", "profiles", "profiles and menu", "profile", "bookmarks", "bookmark",
+            "bookmark this page", "downloads", "history", "settings", "options", "menu", "close", "minimize",
+            "zoom", "fullscreen", "new tab", "tab", "all", "required", "ask polar", "polar", "morph"
+        ]
+        let lowerLbl = cleanLbl.lowercased()
+        if ignoredTitles.contains(lowerLbl) || lowerLbl.hasPrefix("all,") || lowerLbl.hasPrefix("required,") {
+            return false
+        }
+        
+        var didUpdate = false
+        if let idx = Self.bestMatchingFieldIndex(for: cleanLbl, in: session.fields) {
+            if activeSession?.fields[idx].value != cleanVal {
+                objectWillChange.send()
+                activeSession?.fields[idx].value = cleanVal
+                lastAutoCapturedAt = Date()
+                didUpdate = true
+            }
+        } else {
+            // Dynamic field addition when a real input/answer is extracted
+            let cat = FormContentRetriever.inferCategory(from: cleanLbl)
+            let newField = FormInputField(label: cleanLbl, value: cleanVal, category: cat)
+            objectWillChange.send()
+            activeSession?.fields.append(newField)
+            lastAutoCapturedAt = Date()
+            didUpdate = true
+        }
+        
+        // Auto-update recipientEmail if value is a valid email
+        if didUpdate && cleanVal.contains("@") && cleanVal.contains(".") && cleanVal.count >= 5 {
+            if recipientEmail.isEmpty || recipientEmail.contains("example.com") || recipientEmail.contains("@test.com") {
+                setRecipientEmail(cleanVal)
+            }
+        }
+        
+        if didUpdate {
+            saveDrafts()
+            advanceToFirstUnansweredFieldIfNeeded()
+        }
+        
+        return didUpdate
     }
     
     public func selectActiveField(_ index: Int) {
         guard let fields = activeSession?.fields, index >= 0 && index < fields.count else { return }
+        objectWillChange.send()
         self.activeFieldIndex = index
     }
     
     public func updateFieldByIndex(_ index: Int, value: String) {
         guard let fields = activeSession?.fields, index >= 0 && index < fields.count else { return }
+        objectWillChange.send()
         activeSession?.fields[index].value = value
         lastAutoCapturedAt = Date()
+        saveDrafts()
     }
     
     public func setRecipientEmail(_ email: String) {
@@ -2748,6 +4342,7 @@ public final class ApplicationFormModel: ObservableObject {
         if activeSession != nil {
             activeSession?.recipientEmail = trimmed
         }
+        saveDrafts()
     }
     
     // MARK: - Field Management
@@ -2765,6 +4360,7 @@ public final class ApplicationFormModel: ObservableObject {
         )
         
         activeSession?.fields.append(field)
+        saveDrafts()
         
         // If user entered an email field, auto-suggest or update recipientEmail if default
         if category == .contact || label.lowercased().contains("email") {
@@ -2778,10 +4374,12 @@ public final class ApplicationFormModel: ObservableObject {
     public func updateField(id: UUID, value: String) {
         guard let idx = activeSession?.fields.firstIndex(where: { $0.id == id }) else { return }
         activeSession?.fields[idx].value = value
+        saveDrafts()
     }
     
     public func removeField(id: UUID) {
         activeSession?.fields.removeAll(where: { $0.id == id })
+        saveDrafts()
     }
     
     public func clearFields() {

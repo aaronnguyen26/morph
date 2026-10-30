@@ -304,8 +304,8 @@ public final class NotchModel: ObservableObject {
         }
     }
     
-    public func detectScreenNotch() {
-        guard let screen = NSScreen.screens.first(where: { $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main else {
+    public func detectScreenNotch(for targetScreen: NSScreen? = nil) {
+        guard let screen = targetScreen ?? NSScreen.screens.first(where: { $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main else {
             return
         }
         
@@ -394,6 +394,19 @@ public final class NotchModel: ObservableObject {
                 self.closeDropShelfAndRestoreContext()
             }
         }
+        
+        // Auto-surface Form Tracker when a form is detected while island is expanded on Home
+        formTracker.$isFormDetected
+            .dropFirst()
+            .sink { [weak self] detected in
+                guard let self = self else { return }
+                if detected && self.isExpanded && (self.selectedTab == .home || self.activeContextFeature == nil) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                        self.activeContextFeature = .formTracker
+                    }
+                }
+            }
+            .store(in: &cancellables)
         
         pomodoro.$completedSessionsCount
             .dropFirst()
