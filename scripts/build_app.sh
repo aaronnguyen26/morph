@@ -4,8 +4,26 @@ set -e
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 cd "$DIR"
 
-echo "🔨 Building Morph binary..."
-swift build -c release
+if [ "$1" = "--skip-build" ]; then
+    echo "⏭️ Skipping build as requested..."
+    BUILD_MODE="release"
+elif [ "$1" = "--debug" ]; then
+    echo "🔨 Building Morph binary (debug)..."
+    swift build -j 1
+    BUILD_MODE="debug"
+else
+    echo "🔨 Building Morph binary..."
+    BUILD_MODE="release"
+    set +e
+    swift build -c release -j 1
+    STATUS=$?
+    set -e
+    if [ $STATUS -ne 0 ]; then
+        echo "⚠️ Release build failed or ran out of memory, falling back to debug build..."
+        swift build -j 1
+        BUILD_MODE="debug"
+    fi
+fi
 
 TMP_APP_DIR="/tmp/Morph.app"
 APP_DIR="$DIR/Morph.app"
@@ -19,7 +37,19 @@ mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
 # Copy binary
-cp "$DIR/.build/release/morph" "$MACOS_DIR/morph"
+if [ "$BUILD_MODE" = "release" ]; then
+    if [ -f "$DIR/.build/arm64-apple-macosx/release/morph" ]; then
+        cp "$DIR/.build/arm64-apple-macosx/release/morph" "$MACOS_DIR/morph"
+    else
+        cp "$DIR/.build/release/morph" "$MACOS_DIR/morph"
+    fi
+else
+    if [ -f "$DIR/.build/arm64-apple-macosx/debug/morph" ]; then
+        cp "$DIR/.build/arm64-apple-macosx/debug/morph" "$MACOS_DIR/morph"
+    else
+        cp "$DIR/.build/debug/morph" "$MACOS_DIR/morph"
+    fi
+fi
 chmod +x "$MACOS_DIR/morph"
 
 # Copy resources
@@ -90,3 +120,11 @@ echo "✅ Morph.app successfully installed to /Applications/Morph.app"
 # Mirror to local directory
 rm -rf "$APP_DIR"
 cp -R "$TMP_APP_DIR" "$APP_DIR"
+
+# If Morph was actively running, restart it with the updated binary
+if pgrep -x "morph" > /dev/null 2>&1; then
+    echo "🔄 Relaunching running Morph process with updated binary..."
+    killall morph 2>/dev/null || true
+    sleep 1
+    open -a "/Applications/Morph.app"
+fi

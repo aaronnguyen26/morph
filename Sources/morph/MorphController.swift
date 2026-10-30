@@ -16,8 +16,8 @@ public final class MorphController: NSObject {
     private var localMonitor: Any?
     private var mousePollTimer: Timer?
     
-    public init(model: NotchModel = NotchModel()) {
-        self.model = model
+    public init(model: NotchModel? = nil) {
+        self.model = model ?? NotchModel()
         super.init()
         Self.shared = self
         setupPanel()

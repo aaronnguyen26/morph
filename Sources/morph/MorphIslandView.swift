@@ -61,9 +61,9 @@ public struct MorphIslandView: View {
                     topTrailingRadius: topRadius,
                     style: .continuous
                 )
-                .fill(Color.black)
+                .fill(model.theme.canvasBackground)
                 .overlay(
-                    // Luxury dark ambient background texture
+                    // Luxury ambient background texture
                     backgroundImageView
                         .clipShape(
                             UnevenRoundedRectangle(
@@ -93,8 +93,8 @@ public struct MorphIslandView: View {
                             )
                             : LinearGradient(
                                 colors: [
-                                    Color.white.opacity(model.isExpanded ? 0.20 : 0.28),
-                                    Color.white.opacity(model.isExpanded ? 0.08 : 0.16)
+                                    model.theme.isDark ? Color.white.opacity(model.isExpanded ? 0.20 : 0.28) : Color.black.opacity(model.isExpanded ? 0.12 : 0.18),
+                                    model.theme.isDark ? Color.white.opacity(model.isExpanded ? 0.08 : 0.16) : Color.black.opacity(model.isExpanded ? 0.06 : 0.10)
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
@@ -108,7 +108,7 @@ public struct MorphIslandView: View {
                 .shadow(
                     color: model.dropShelf.isDraggingOverNotch
                         ? Color.cyan.opacity(0.55)
-                        : (model.isExpanded ? Color.black.opacity(0.65) : Color.black.opacity(0.3)),
+                        : (model.isExpanded ? model.theme.windowShadow : (model.theme.isDark ? Color.black.opacity(0.3) : Color.black.opacity(0.12))),
                     radius: model.dropShelf.isDraggingOverNotch ? 16 : (model.isExpanded ? 24 : 8),
                     x: 0,
                     y: model.isExpanded ? 10 : 4
@@ -243,6 +243,8 @@ public struct MorphIslandView: View {
             CompactMediaWingLeft(media: model.media, model: model)
         case .dualActive:
             CompactDualWingLeft(pomodoro: model.pomodoro, model: model)
+        case .calendarAndMedia:
+            CompactCalendarWingLeft(calendar: model.calendar, model: model)
         case .notesPinned:
             CompactNotesWingLeft(model: model)
         case .calendarAlert:
@@ -268,6 +270,8 @@ public struct MorphIslandView: View {
             CompactMediaWingRight(media: model.media, model: model)
         case .dualActive:
             CompactDualWingRight(media: model.media, model: model)
+        case .calendarAndMedia:
+            CompactMediaWingRight(media: model.media, model: model)
         case .notesPinned:
             expandChevron
                 .padding(.trailing, 10)
@@ -350,14 +354,17 @@ public struct MorphIslandView: View {
         .help("Expand Island")
     }
     
-    // MARK: - 3. Expanded Island View (640 x 300 pt)
+    // MARK: - 3. Expanded Island View (640 x 225 pt)
     private var expandedView: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 4) {
             // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
             topNotchRow
                 .frame(height: notchBlindHeight)
             
-            // Main Feature Body: Sits completely BELOW the notch blind spot!
+            // Unified Horizontal Navigation Bar (The Bar Above: Focus, Home, Music, Notes, Calendar, Profile)
+            horizontalFeatureBar
+            
+            // Main Feature Body: Sits completely BELOW the notch blind spot and horizontal bar!
             ZStack {
                 if let contextFeature = model.activeContextFeature {
                     switch contextFeature {
@@ -377,7 +384,7 @@ public struct MorphIslandView: View {
                         HomeView(model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .timer:
-                        PomodoroView(pomodoro: model.pomodoro)
+                        PomodoroView(pomodoro: model.pomodoro, model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .music:
                         MediaView(media: model.media)
@@ -402,6 +409,57 @@ public struct MorphIslandView: View {
         .frame(width: model.expandedWidth, height: model.expandedHeight, alignment: .top)
     }
     
+    // MARK: - Horizontal Navigation Feature Bar (Home, Focus Timer, Music, Notes, Calendar, Profile)
+    private var horizontalFeatureBar: some View {
+        HStack(spacing: 6) {
+            Spacer(minLength: 0)
+            
+            ForEach([MorphTab.home, .timer, .music, .notes, .calendar, .profile]) { tab in
+                Button(action: {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                        model.selectedTab = tab
+                        model.activeContextFeature = nil
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.iconName)
+                            .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
+                        Text(tab == .timer ? "Focus Timer" : tab.rawValue)
+                            .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium, design: .rounded))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .foregroundColor(model.selectedTab == tab ? Color.black : Color.white.opacity(0.85))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        model.selectedTab == tab
+                            ? Color.white
+                            : model.theme.inactivePillBackground
+                    )
+                    .clipShape(Capsule())
+                    .environment(\.colorScheme, model.selectedTab == tab ? .light : .dark)
+                    .overlay(
+                        Capsule()
+                            .stroke(
+                                model.selectedTab == tab
+                                    ? Color.clear
+                                    : model.theme.hairlineBorder,
+                                lineWidth: 0.5
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("\(tab == .timer ? "Focus Timer" : tab.rawValue) (\(shortcutForTab(tab)))")
+            }
+            
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2.5)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+    
     // MARK: - Top Notch Row (Wings visible, Center completely empty)
     private var topNotchRow: some View {
         HStack(spacing: 0) {
@@ -417,44 +475,26 @@ public struct MorphIslandView: View {
                             Text("Back")
                                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                         }
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.14))
+                        .background(model.theme.cardBackgroundElevated)
                         .clipShape(Capsule())
                         .overlay(
                             Capsule()
-                                .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                         )
                     }
                     .buttonStyle(.plain)
                     .fixedSize(horizontal: true, vertical: true)
-                    .help("Back to Home (Esc)")
+                    .help("Back (Esc)")
                     
                     Text(contextFeature == .formTracker ? "Form Tracker" : contextFeature.rawValue)
                         .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.70))
+                        .foregroundColor(model.theme.textSecondary)
                         .lineLimit(1)
-                } else if model.selectedTab != .home {
-                    Button(action: {
-                        model.returnToHome()
-                    }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 8.5, weight: .bold))
-                            Text("Home")
-                                .font(.system(size: 9.5, weight: .bold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3.5)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Back to Home (⌘[)")
                 } else {
-                    // Profile Avatar Pill on Home screen (Pure Clean: No decorative dots!)
+                    // Profile Avatar Pill with Name & Breadcrumb
                     Button(action: {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                             model.selectedTab = .profile
@@ -463,28 +503,33 @@ public struct MorphIslandView: View {
                         HStack(spacing: 5) {
                             ZStack {
                                 Circle()
-                                    .fill(Color.white.opacity(0.18))
-                                    .frame(width: 16, height: 16)
+                                    .fill(model.theme.cardBackgroundElevated)
+                                    .frame(width: 18, height: 18)
                                 Text(model.supabase.currentUser.displayInitials)
                                     .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(model.theme.textPrimary)
                             }
                             Text(model.supabase.currentUser.firstName)
                                 .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(model.theme.textPrimary)
                                 .lineLimit(1)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3.5)
-                        .background(Color.white.opacity(0.08))
+                        .background(model.theme.cardBackground)
                         .clipShape(Capsule())
                         .overlay(
                             Capsule()
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                         )
                     }
                     .buttonStyle(.plain)
                     .help("Profile & Preferences (⌘5 or ⌘,)")
+                    
+                    Text(model.selectedTab == .timer ? "Focus" : model.selectedTab.rawValue)
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(model.theme.textTertiary)
+                        .lineLimit(1)
                 }
                 
                 Spacer()
@@ -497,40 +542,28 @@ public struct MorphIslandView: View {
                 .frame(width: notchBlindWidth, height: notchBlindHeight)
             
             // RIGHT WING (Outside Notch: 100% Visible)
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Spacer()
                 
-                // Segmented Tabs
-                HStack(spacing: 3.5) {
-                    ForEach([MorphTab.home, .timer, .music, .notes, .calendar]) { tab in
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                                model.selectedTab = tab
-                                model.activeContextFeature = nil
-                            }
-                        }) {
-                            HStack(spacing: 3) {
-                                Image(systemName: tab.iconName)
-                                    .font(.system(size: 8.5))
-                                Text(tab.rawValue)
-                                    .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
-                            }
-                            .foregroundColor(model.selectedTab == tab ? .black : Color.white.opacity(0.65))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3.5)
-                            .background(
-                                model.selectedTab == tab
-                                    ? Color.white
-                                    : Color.white.opacity(0.08)
-                            )
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .help("\(tab.rawValue) (\(shortcutForTab(tab)))")
+                // Theme Toggle Button
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        model.toggleTheme()
                     }
+                }) {
+                    Image(systemName: model.theme.isDark ? "sun.max.fill" : "moon.fill")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(model.theme.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(model.theme.cardBackground)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
+                .buttonStyle(.plain)
+                .help(model.theme.isDark ? "Switch to Light Ceramic Theme" : "Switch to Dark Obsidian Theme")
                 
                 // Pin Button
                 Button(action: {
@@ -538,10 +571,14 @@ public struct MorphIslandView: View {
                 }) {
                     Image(systemName: model.isPinned ? "pin.fill" : "pin")
                         .font(.system(size: 8.5))
-                        .foregroundColor(model.isPinned ? .white : Color.white.opacity(0.5))
-                        .frame(width: 20, height: 20)
-                        .background(model.isPinned ? Color.white.opacity(0.25) : Color.white.opacity(0.06))
+                        .foregroundColor(model.isPinned ? model.theme.textPrimary : model.theme.textTertiary)
+                        .frame(width: 22, height: 22)
+                        .background(model.isPinned ? model.theme.cardBackgroundElevated : model.theme.cardBackground)
                         .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
                 .buttonStyle(.plain)
                 .help(model.isPinned ? "Unpin Window (⌘P)" : "Pin Window Open (⌘P)")
@@ -554,10 +591,14 @@ public struct MorphIslandView: View {
                 }) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 8.5, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.6))
-                        .frame(width: 20, height: 20)
-                        .background(Color.white.opacity(0.06))
+                        .foregroundColor(model.theme.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(model.theme.cardBackground)
                         .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
                 .buttonStyle(.plain)
                 .help("Collapse to Notch (⌘W or ⌘M)")
@@ -583,20 +624,33 @@ public struct MorphIslandView: View {
     @ViewBuilder
     private var backgroundImageView: some View {
         if model.isExpanded {
-            if let image = Self.cachedBackgroundImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: model.expandedWidth, height: model.expandedHeight)
-                    .clipped()
-                    .opacity(0.85)
+            if model.theme.isDark {
+                if let image = Self.cachedBackgroundImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: model.expandedWidth, height: model.expandedHeight)
+                        .clipped()
+                        .opacity(0.85)
+                } else {
+                    // Procedural dark ambient gradient fallback
+                    LinearGradient(
+                        colors: [
+                            Color(white: 0.12),
+                            Color(white: 0.05),
+                            Color(white: 0.01)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
             } else {
-                // Procedural dark ambient gradient fallback
+                // Procedural light frosted alabaster gradient
                 LinearGradient(
                     colors: [
-                        Color(white: 0.12),
-                        Color(white: 0.05),
-                        Color(white: 0.01)
+                        Color.white.opacity(0.96),
+                        Color(red: 0.96, green: 0.96, blue: 0.98).opacity(0.92),
+                        Color(red: 0.94, green: 0.94, blue: 0.96).opacity(0.90)
                     ],
                     startPoint: .top,
                     endPoint: .bottom

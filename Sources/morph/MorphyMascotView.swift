@@ -4,17 +4,19 @@ public struct MorphyMouthShape: Shape {
     var isSinging: Bool
     var isFocused: Bool
     
+    public init(isSinging: Bool = false, isFocused: Bool = false) {
+        self.isSinging = isSinging
+        self.isFocused = isFocused
+    }
+    
     public func path(in rect: CGRect) -> Path {
         var path = Path()
         if isSinging {
-            // Cute singing circle mouth
             path.addEllipse(in: CGRect(x: rect.midX - 2.5, y: rect.midY - 2.5, width: 5, height: 5))
         } else if isFocused {
-            // Confident focused small smile line
             path.move(to: CGPoint(x: rect.midX - 2.5, y: rect.midY))
             path.addLine(to: CGPoint(x: rect.midX + 2.5, y: rect.midY))
         } else {
-            // Cheerful curved smile
             path.move(to: CGPoint(x: rect.minX, y: rect.minY))
             path.addQuadCurve(
                 to: CGPoint(x: rect.maxX, y: rect.minY),
@@ -25,268 +27,196 @@ public struct MorphyMouthShape: Shape {
     }
 }
 
+/// Living Orbital Dots Mascot ("Morphy Core")
+/// Inspired by OpenAI Voice Mode dynamic orbital constellation and Meta AI Muse living fluid core.
+/// Strictly monochromatic: Deep Obsidian, Frosted Glass, Silver, and Crisp White.
 public struct MorphyMascotView: View {
     @ObservedObject var model: NotchModel
     
-    @State private var isBlinking: Bool = false
-    @State private var isFloating: Bool = false
-    @State private var orbitRotation: Double = 0
-    @State private var isWinking: Bool = false
-    @State private var isExcited: Bool = false
-    @State private var tapBounce: CGFloat = 0
-    
-    // Timer for natural blinking
-    private let blinkTimer = Timer.publish(every: 3.8, on: .main, in: .common).autoconnect()
+    @State private var outerRotation: Double = 0
+    @State private var innerRotation: Double = 0
+    @State private var coreScale: CGFloat = 1.0
+    @State private var isPulsing: Bool = false
+    @State private var isHovered: Bool = false
+    @State private var tapImpulse: CGFloat = 0
     
     public init(model: NotchModel) {
         self.model = model
     }
     
-    // Pure monochrome accent: Crisp white / subtle silver
-    private var accentColor: Color {
-        Color.white
-    }
-    
     public var body: some View {
-        // MARK: - Morphy Floating Cyber Mascot Centerpiece (Pure Monochrome)
         ZStack {
-            // Ambient Reactive Aura Glow (Monochrome soft white falloff)
+            // Ambient Radiant Glow Falloff (Meta Muse Aura)
             Circle()
                 .fill(
                     RadialGradient(
-                        gradient: Gradient(colors: [
-                            Color.white.opacity(isExcited ? 0.20 : 0.08),
-                            Color.white.opacity(0.02),
+                        colors: [
+                            model.theme.isDark ? Color.white.opacity(isHovered ? 0.18 : 0.08) : Color.black.opacity(isHovered ? 0.10 : 0.04),
                             Color.clear
-                        ]),
+                        ],
                         center: .center,
                         startRadius: 8,
-                        endRadius: 44
+                        endRadius: 42
                     )
                 )
-                .frame(width: 88, height: 88)
+                .frame(width: 84, height: 84)
             
-            // Outer Orbit Tech Ring (Subtle dashed cyber orbit in silver)
+            // Outer Concentric Track (Dashed Specular Track)
             Circle()
                 .stroke(
-                    Color.white.opacity(0.12),
-                    style: StrokeStyle(lineWidth: 1, dash: [4, 6])
+                    model.theme.isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.08),
+                    style: StrokeStyle(lineWidth: 1, dash: [3, 5])
                 )
-                .frame(width: 66, height: 66)
-                .rotationEffect(.degrees(orbitRotation))
+                .frame(width: 58, height: 58)
+                .rotationEffect(.degrees(outerRotation))
             
-            // Orbiting Cyber Spark Pips (Monochrome)
+            // Secondary Inset Track (Solid Hairline)
+            Circle()
+                .stroke(
+                    model.theme.isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05),
+                    lineWidth: 0.75
+                )
+                .frame(width: 44, height: 44)
+            
+            // Outer Orbiting Constellation Dots (OpenAI Voice Mode Inspiration)
             ZStack {
+                // Dot 1 (Lead Specular Dot)
                 Circle()
-                    .fill(Color.white.opacity(0.65))
-                    .frame(width: 3, height: 3)
-                    .offset(x: 33, y: 0)
+                    .fill(model.theme.textPrimary)
+                    .frame(width: 4.5, height: 4.5)
+                    .shadow(color: model.theme.textPrimary.opacity(0.6), radius: 3)
+                    .offset(x: 29, y: 0)
                 
+                // Dot 2 (Harmonic Orbit Dot)
                 Circle()
-                    .fill(Color.white.opacity(0.4))
-                    .frame(width: 2.2, height: 2.2)
-                    .offset(x: -28, y: -16)
+                    .fill(model.theme.textPrimary.opacity(0.65))
+                    .frame(width: 3.2, height: 3.2)
+                    .offset(x: -25, y: -14)
                 
+                // Dot 3 (Fine Orbit Pip)
                 Circle()
-                    .fill(Color.white.opacity(0.3))
+                    .fill(model.theme.textPrimary.opacity(0.40))
                     .frame(width: 2.5, height: 2.5)
-                    .offset(x: -12, y: 30)
+                    .offset(x: -12, y: 26)
             }
-            .rotationEffect(.degrees(orbitRotation * 0.75))
+            .rotationEffect(.degrees(outerRotation))
             
-            // Robotic Cyber Antenna Ears (Tipped with monochrome white LEDs)
-            HStack(spacing: 24) {
-                // Left Antenna Ear
-                VStack(spacing: 0) {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 4.5, height: 4.5)
-                        .shadow(color: Color.white.opacity(0.75), radius: 2.5)
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.4), Color.white.opacity(0.15)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 2.5, height: 9)
-                }
-                .rotationEffect(.degrees(-26))
-                
-                // Right Antenna Ear
-                VStack(spacing: 0) {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 4.5, height: 4.5)
-                        .shadow(color: Color.white.opacity(0.75), radius: 2.5)
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.4), Color.white.opacity(0.15)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 2.5, height: 9)
-                }
-                .rotationEffect(.degrees(26))
-            }
-            .offset(y: -22)
-            
-            // Glass Pod Body (Glossy OLED Dark Sphere with Specular Sheen)
+            // Counter-Orbiting Inner Constellation Dots
             ZStack {
-                // Dark Glass Orb Gradient
+                Circle()
+                    .fill(model.theme.textPrimary.opacity(0.85))
+                    .frame(width: 3.5, height: 3.5)
+                    .offset(x: 0, y: -22)
+                
+                Circle()
+                    .fill(model.theme.textPrimary.opacity(0.50))
+                    .frame(width: 2.5, height: 2.5)
+                    .offset(x: 19, y: 11)
+                
+                Circle()
+                    .fill(model.theme.textPrimary.opacity(0.35))
+                    .frame(width: 2.2, height: 2.2)
+                    .offset(x: -19, y: 11)
+            }
+            .rotationEffect(.degrees(innerRotation))
+            
+            // Living Morphic Center Core (Meta AI Muse Breathing Orb)
+            ZStack {
+                // Base Fluid Sphere with Specular Rim
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [
-                                Color(white: 0.20),
-                                Color(white: 0.08),
-                                Color.black
-                            ],
+                            colors: model.theme.isDark
+                                ? [Color(white: 0.24), Color(white: 0.10), Color(white: 0.04)]
+                                : [Color(white: 0.98), Color(white: 0.90), Color(white: 0.82)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 46, height: 46)
+                    .frame(width: 28, height: 28)
                     .overlay(
                         Circle()
                             .stroke(
                                 LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.35),
-                                        Color.white.opacity(0.12),
-                                        Color.white.opacity(0.04)
-                                    ],
+                                    colors: model.theme.isDark
+                                        ? [Color.white.opacity(0.5), Color.white.opacity(0.1)]
+                                        : [Color.black.opacity(0.2), Color.black.opacity(0.05)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
                                 lineWidth: 1
                             )
                     )
-                    .shadow(color: Color.black.opacity(0.8), radius: 8, x: 0, y: 4)
+                    .shadow(
+                        color: model.theme.isDark ? Color.black.opacity(0.8) : Color.black.opacity(0.15),
+                        radius: 6,
+                        x: 0,
+                        y: 3
+                    )
                 
-                // Top Glass Specular Reflection Highlight
+                // Specular Core Glint
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [Color.white.opacity(0.24), Color.clear],
+                            colors: [Color.white.opacity(model.theme.isDark ? 0.35 : 0.6), Color.clear],
                             startPoint: .top,
                             endPoint: .center
                         )
                     )
-                    .frame(width: 38, height: 20)
-                    .offset(y: -10)
-                    .mask(Circle().frame(width: 44, height: 44))
+                    .frame(width: 22, height: 12)
+                    .offset(y: -6)
+                    .mask(Circle().frame(width: 26, height: 26))
                 
-                // Curved OLED Cyber Visor Screen
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(white: 0.03))
-                    .frame(width: 34, height: 22)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
-                    )
-                
-                // Subtle Frost Cheeks
-                HStack(spacing: 18) {
-                    Capsule()
-                        .fill(Color.white.opacity(isExcited ? 0.35 : 0.12))
-                        .frame(width: 4.5, height: 2.2)
-                    
-                    Capsule()
-                        .fill(Color.white.opacity(isExcited ? 0.35 : 0.12))
-                        .frame(width: 4.5, height: 2.2)
+                // OpenAI Living Harmonic 3-Dot Voice Cluster inside the Core
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(model.theme.textPrimary.opacity(0.85))
+                        .frame(width: 2.8, height: 2.8)
+                    Circle()
+                        .fill(model.theme.textPrimary)
+                        .frame(width: model.media.isPlaying ? 4.2 : 3.4, height: model.media.isPlaying ? 4.2 : 3.4)
+                        .scaleEffect(isPulsing ? 1.15 : 0.88)
+                    Circle()
+                        .fill(model.theme.textPrimary.opacity(0.85))
+                        .frame(width: 2.8, height: 2.8)
                 }
-                .offset(y: 4.5)
-                
-                // Expressive Digital Cyber Eyes (Crisp White)
-                HStack(spacing: 7) {
-                    // Left Eye
-                    if isWinking {
-                        Capsule()
-                            .fill(Color.white)
-                            .frame(width: 3.5, height: 1.5)
-                    } else {
-                        Capsule()
-                            .fill(Color.white)
-                            .frame(width: 3.5, height: isBlinking ? 1.2 : 8)
-                            .shadow(color: Color.white.opacity(0.7), radius: 2)
-                    }
-                    
-                    // Right Eye
-                    Capsule()
-                        .fill(Color.white)
-                        .frame(width: 3.5, height: isBlinking ? 1.2 : 8)
-                        .shadow(color: Color.white.opacity(0.7), radius: 2)
-                }
-                .offset(y: -1.5)
-                .animation(.easeInOut(duration: 0.12), value: isBlinking)
-                .animation(.easeInOut(duration: 0.15), value: isWinking)
-                
-                // Expressive Cyber Mouth
-                MorphyMouthShape(
-                    isSinging: model.media.isPlaying,
-                    isFocused: model.pomodoro.isRunning && !model.media.isPlaying
-                )
-                .stroke(
-                    Color.white,
-                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round)
-                )
-                .frame(width: 7, height: 3.5)
-                .offset(y: 6.5)
             }
+            .scaleEffect((coreScale + tapImpulse) * (model.media.isPlaying ? 1.06 : 1.0))
         }
-        .offset(y: (isFloating ? -3 : 3) + tapBounce)
+        .frame(width: 68, height: 68)
         .contentShape(Circle())
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                isHovered = hovering
+            }
+        }
         .onTapGesture {
-            handleTapInteraction()
+            triggerMascotImpulse()
         }
-        .help("Click Morphy for a cheerful high-five!")
+        .help("Morphy Core • Living Dynamic Companion")
         .onAppear {
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                isFloating = true
+            withAnimation(.linear(duration: 18).repeatForever(autoreverses: false)) {
+                outerRotation = 360
             }
-            withAnimation(.linear(duration: 22).repeatForever(autoreverses: false)) {
-                orbitRotation = 360
+            withAnimation(.linear(duration: 24).repeatForever(autoreverses: false)) {
+                innerRotation = -360
             }
-        }
-        .onReceive(blinkTimer) { _ in
-            guard !isWinking else { return }
-            withAnimation {
-                isBlinking = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                withAnimation {
-                    isBlinking = false
-                }
+            withAnimation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true)) {
+                coreScale = 1.05
+                isPulsing = true
             }
         }
     }
     
-    private func handleTapInteraction() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.65)) {
-            isWinking = true
-            isExcited = true
-            tapBounce = -7
+    private func triggerMascotImpulse() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.55)) {
+            tapImpulse = 0.18
+            outerRotation += 45
+            innerRotation -= 45
         }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.72)) {
-                tapBounce = 0
-            }
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation {
-                isWinking = false
-            }
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            withAnimation {
-                isExcited = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                tapImpulse = 0
             }
         }
     }

@@ -118,11 +118,16 @@ public final class MediaControllerModel: ObservableObject {
         }
     }
     
+    @MainActor
     public init(
-        engine: YouTubeMusicEngine = YouTubeMusicEngine.shared,
-        systemAudio: SystemAudioServiceProtocol = MorphEnvironment.isTestingEnvironment ? MockSystemAudioService() : SystemAudioService.shared,
-        networkMonitor: NetworkMonitor = NetworkMonitor.shared
+        engine customEngine: YouTubeMusicEngine? = nil,
+        systemAudio customAudio: SystemAudioServiceProtocol? = nil,
+        networkMonitor customMonitor: NetworkMonitor? = nil
     ) {
+        let engine = customEngine ?? YouTubeMusicEngine.shared
+        let systemAudio = customAudio ?? (MorphEnvironment.isTestingEnvironment ? MockSystemAudioService() : SystemAudioService.shared)
+        let networkMonitor = customMonitor ?? NetworkMonitor.shared
+        
         self.engine = engine
         self.systemAudio = systemAudio
         self.networkMonitor = networkMonitor

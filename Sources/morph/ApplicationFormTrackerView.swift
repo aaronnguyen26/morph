@@ -248,6 +248,8 @@ public struct ApplicationFormTrackerView: View {
                             .foregroundColor(.white)
                             .lineLimit(1)
                         
+                        questionTypeBadge(for: field.questionType)
+                        
                         if field.isRequired {
                             Text("REQ")
                                 .font(.system(size: 6.5, weight: .bold, design: .monospaced))
@@ -301,6 +303,35 @@ public struct ApplicationFormTrackerView: View {
                 .frame(width: 14, height: 14)
                 .padding(.top, 1)
         }
+    }
+    
+    @ViewBuilder
+    private func questionTypeBadge(for type: String) -> some View {
+        let label: String = {
+            switch type {
+            case "paragraph": return "PARA"
+            case "multipleChoice": return "CHOICE"
+            case "checkboxes": return "CHECK"
+            case "dropdown": return "DROP"
+            case "linearScale": return "SCALE"
+            case "date": return "DATE"
+            case "time": return "TIME"
+            case "grid": return "GRID"
+            default: return "SHORT"
+            }
+        }()
+        
+        Text(label)
+            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+            .foregroundColor(Color.white.opacity(0.70))
+            .padding(.horizontal, 3.5)
+            .padding(.vertical, 1)
+            .background(Color.white.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+            )
     }
     
     @ViewBuilder
@@ -605,8 +636,35 @@ public struct CompactFormTrackerWingRight: View {
         Button(action: {
             model.openContextualFeature(.formTracker)
         }) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 if let session = formTracker.activeSession {
+                    if session.fields.indices.contains(formTracker.activeFieldIndex) {
+                        let activeField = session.fields[formTracker.activeFieldIndex]
+                        let typeTag: String = {
+                            switch activeField.questionType {
+                            case "paragraph": return "PARA"
+                            case "multipleChoice": return "CHOICE"
+                            case "checkboxes": return "CHECK"
+                            case "dropdown": return "DROP"
+                            case "linearScale": return "SCALE"
+                            case "date": return "DATE"
+                            case "time": return "TIME"
+                            default: return "SHORT"
+                            }
+                        }()
+                        Text("Q\(formTracker.activeFieldIndex + 1):\(typeTag)")
+                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.85))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .background(Color.white.opacity(0.10))
+                            .clipShape(Capsule())
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+                            )
+                    }
+                    
                     if session.hasRequiredFields {
                         HStack(spacing: 2) {
                             Text("\(session.answeredRequiredCount)/\(session.requiredCount)")

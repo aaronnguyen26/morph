@@ -2354,6 +2354,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         ]
         
         let tracker = FormInputAutoTracker(model: model)
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
         
         // Initially empty -> awaiting input
         XCTAssertEqual(model.activeSession?.fields[0].value, "")
@@ -2380,6 +2381,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         ]
         
         let tracker = FormInputAutoTracker(model: model)
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
         
         // Backspace once (KeyCode 51)
         tracker.handleKeyStroke(keyCode: 51, flags: [], characters: nil)
@@ -2397,7 +2399,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
     }
     
     @MainActor
-    func testRealTimeTabAdvancesActiveFieldIndex() {
+    func testTabInvalidatesFocusInsteadOfGuessingNextField() {
         let model = ApplicationFormModel()
         model.startTracking(title: "Survey Form", appName: "Google Chrome")
         model.activeSession?.fields = [
@@ -2407,19 +2409,23 @@ final class ApplicationFormTrackerTests: XCTestCase {
         ]
         
         let tracker = FormInputAutoTracker(model: model)
-        model.activeFieldIndex = 0
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
+        XCTAssertEqual(model.activeFieldIndex, 0)
         
-        // Tab forward (KeyCode 48)
+        // Tab moves browser focus somewhere Morph cannot know without Accessibility: no guessing
         tracker.handleKeyStroke(keyCode: 48, flags: [], characters: "\t")
-        XCTAssertEqual(model.activeFieldIndex, 1)
+        XCTAssertNil(tracker.confirmedFieldID)
         
-        // Tab forward again
-        tracker.handleKeyStroke(keyCode: 48, flags: [], characters: "\t")
+        // Typing now must not land in any field until focus is confirmed
+        tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "abc")
+        XCTAssertEqual(model.activeSession?.fields.map(\.value), ["Answer 1", "", ""])
+        XCTAssertEqual(tracker.pendingText, "abc")
+        
+        // Accessibility confirms the browser focused question 3 -> buffered text goes THERE
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[2].id)
         XCTAssertEqual(model.activeFieldIndex, 2)
-        
-        // Shift+Tab backward (KeyCode 48 with maskShift)
-        tracker.handleKeyStroke(keyCode: 48, flags: [.maskShift], characters: "\t")
-        XCTAssertEqual(model.activeFieldIndex, 1)
+        XCTAssertEqual(model.activeSession?.fields.map(\.value), ["Answer 1", "", "abc"])
+        XCTAssertEqual(tracker.pendingText, "")
     }
     
     @MainActor
@@ -2432,13 +2438,15 @@ final class ApplicationFormTrackerTests: XCTestCase {
         ]
         
         let tracker = FormInputAutoTracker(model: model)
-        model.activeFieldIndex = 0
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
         
-        // Return on short answer advances active field
+        // Return on short answer moves focus: no newline, no guessed advance
         tracker.handleKeyStroke(keyCode: 36, flags: [], characters: "\r")
-        XCTAssertEqual(model.activeFieldIndex, 1)
+        XCTAssertEqual(model.activeSession?.fields[0].value, "First Line")
+        XCTAssertNil(tracker.confirmedFieldID)
         
-        // Return on paragraph appends newline character
+        // Return on a confirmed paragraph appends newline character
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[1].id)
         tracker.handleKeyStroke(keyCode: 36, flags: [], characters: "\r")
         XCTAssertEqual(model.activeSession?.fields[1].value, "Paragraph 1\n")
         XCTAssertEqual(model.activeFieldIndex, 1, "Paragraph return should not advance field index")
@@ -2453,6 +2461,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         ]
         
         let tracker = FormInputAutoTracker(model: model)
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
         tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "student@stanford.edu")
         
         XCTAssertEqual(model.activeSession?.fields[0].value, "student@stanford.edu")
@@ -2468,6 +2477,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         ]
         
         let tracker = FormInputAutoTracker(model: model)
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
         
         // Up arrow (\u{F700}), Down arrow (\u{F701}), Left arrow (\u{F702}), Right arrow (\u{F703})
         tracker.handleKeyStroke(keyCode: 126, flags: [], characters: "\u{F700}")
@@ -2680,7 +2690,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
     }
     
     @MainActor
-    func testMultipleChoiceOptionKeystrokeMatchingAndSelection() {
+    func testTypingNeverRecordsAnswerForChoiceQuestions() {
         let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
         model.startTracking(title: "Application Form", appName: "Polar")
         let q1 = FormInputField(label: "I consent", value: "", category: .question, options: ["Yes", "No (Cancel)"], questionType: "multipleChoice", isRequired: true, entryKey: "entry.1")
@@ -2689,12 +2699,12 @@ final class ApplicationFormTrackerTests: XCTestCase {
         model.activeFieldIndex = 0
         
         let tracker = FormInputAutoTracker(model: model)
-        // Typing 'y' or 'Y' should select "Yes", record it, and advance to next question
+        tracker.confirmFocus(fieldID: q1.id)
+        // Letters typed while a radio group has focus do not select an option in the browser; Morph must not invent one
         tracker.handleKeyStroke(keyCode: 16, flags: [], characters: "y")
         
-        XCTAssertEqual(model.activeSession?.fields[0].value, "Yes")
-        XCTAssertTrue(model.activeSession?.fields[0].isAnswered ?? false)
-        XCTAssertEqual(model.activeFieldIndex, 1, "Must automatically advance to next unanswered question")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "")
+        XCTAssertEqual(model.activeSession?.fields[1].value, "")
     }
     
     @MainActor
@@ -2706,6 +2716,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         model.activeFieldIndex = 0
         
         let tracker = FormInputAutoTracker(model: model)
+        tracker.confirmFocus(fieldID: q1.id)
         // Keystroke streaming adds user's answer
         tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "Minh")
         XCTAssertEqual(model.activeSession?.fields[0].value, "Minh")
@@ -2769,5 +2780,283 @@ final class ApplicationFormTrackerTests: XCTestCase {
         XCTAssertEqual(cleanedFields[1].value, "Juan Dela Cruz")
         
         model2.clearSavedDrafts()
+    }
+    
+    // MARK: - Google Form Types, Field Attribution & Antigravity Exclusion Tests
+    
+    func testAntigravityIsNeverDetectedAsFormApplication() {
+        XCTAssertTrue(DefaultApplicationFormDetector.isNonFormApplication(bundleID: "com.google.antigravity", appName: "Antigravity"))
+        XCTAssertTrue(DefaultApplicationFormDetector.isNonFormApplication(bundleID: "antigravity", appName: "antigravity"))
+        XCTAssertTrue(DefaultApplicationFormDetector.isNonFormApplication(bundleID: "com.google.antigravity.helper", appName: "Antigravity Helper"))
+    }
+
+    func testDeveloperToolsAndEditorsAreNeverDetectedAsForms() {
+        let devApps: [(bundle: String, name: String)] = [
+            ("com.microsoft.VSCode", "Code"),
+            ("com.cursor.Cursor", "Cursor"),
+            ("com.apple.dt.Xcode", "Xcode"),
+            ("com.sublimetext.4", "Sublime Text"),
+            ("com.jetbrains.intellij", "IntelliJ IDEA"),
+            ("com.jetbrains.pycharm", "PyCharm"),
+            ("com.apple.Terminal", "Terminal"),
+            ("com.googlecode.iterm2", "iTerm2"),
+            ("dev.warp.Warp-Stable", "Warp"),
+            ("com.tinyspeck.slackmacgap", "Slack"),
+            ("com.hnc.Discord", "Discord"),
+            ("us.zoom.xos", "zoom.us")
+        ]
+        
+        for app in devApps {
+            XCTAssertTrue(
+                DefaultApplicationFormDetector.isNonFormApplication(bundleID: app.bundle, appName: app.name),
+                "Expected \(app.name) (\(app.bundle)) to be classified as non-form app"
+            )
+        }
+    }
+
+    func testIsFormTitleRejectsAntigravityTitles() {
+        XCTAssertFalse(DefaultApplicationFormDetector.isFormTitle("Antigravity"))
+        XCTAssertFalse(DefaultApplicationFormDetector.isFormTitle("Antigravity - morph"))
+        XCTAssertFalse(DefaultApplicationFormDetector.isFormTitle("ApplicationFormModel.swift — Antigravity"))
+        XCTAssertFalse(DefaultApplicationFormDetector.isFormTitle("Antigravity Application"))
+    }
+
+    func testIsFormTitleRejectsSourceCodeAndProjectFiles() {
+        let codeFiles = [
+            "ApplicationFormModel.swift",
+            "ApplicationFormTrackerView.swift",
+            "FormClearAndBeforehandTests.swift",
+            "application_form_controller.py",
+            "RegistrationForm.tsx",
+            "survey_feedback.js",
+            "schema_form.json",
+            "EvaluationReview.md",
+            "QuizController.kt",
+            "FormSubmission.java",
+            "Application.cpp",
+            "CMakeLists.txt",
+            "form.yaml",
+            "Package.swift"
+        ]
+        
+        for file in codeFiles {
+            XCTAssertFalse(
+                DefaultApplicationFormDetector.isFormTitle(file),
+                "Expected source file \(file) to NOT be treated as a form title"
+            )
+        }
+    }
+
+    func testGoogleFormsAllQuestionTypesParsedCorrectly() {
+        let rawJSON = """
+        [null, [
+            "Test Form Description",
+            [
+                [null, "Full Name", null, 0, [[101, null, 1]]],
+                [null, "Tell us about yourself", null, 1, [[102, null, 0]]],
+                [null, "Preferred Department", null, 2, [[103, [["Engineering"], ["Design"], ["Marketing"]], 1]]],
+                [null, "Years of Experience", null, 3, [[104, [["1-2"], ["3-5"], ["5+"]], 0]]],
+                [null, "Technical Skills", null, 4, [[105, [["Swift"], ["Python"], ["Rust"]], 1]]],
+                [null, "Rate your satisfaction (1-5)", null, 5, [[106, [["1"], ["2"], ["3"], ["4"], ["5"]], 1]]],
+                [null, "Date of Birth", null, 9, [[107, null, 0]]],
+                [null, "Best Time to Contact", null, 10, [[108, null, 0]]]
+            ],
+            null, null, null, null, null, null,
+            "Engineering Application Form - Google Forms"
+        ]]
+        """
+
+        let schema = FormContentRetriever.parseGoogleFormPublicLoadData(rawJSON)
+        XCTAssertNotNil(schema)
+        XCTAssertEqual(schema?.title, "Engineering Application Form - Google Forms")
+        XCTAssertEqual(schema?.fields.count, 8)
+
+        guard let fields = schema?.fields else { return }
+
+        // Question 0: Short Answer
+        XCTAssertEqual(fields[0].label, "Full Name")
+        XCTAssertEqual(fields[0].questionType, "shortAnswer")
+        XCTAssertTrue(fields[0].isRequired)
+
+        // Question 1: Paragraph
+        XCTAssertEqual(fields[1].label, "Tell us about yourself")
+        XCTAssertEqual(fields[1].questionType, "paragraph")
+        XCTAssertFalse(fields[1].isRequired)
+
+        // Question 2: Multiple Choice
+        XCTAssertEqual(fields[2].label, "Preferred Department")
+        XCTAssertEqual(fields[2].questionType, "multipleChoice")
+        XCTAssertEqual(fields[2].options, ["Engineering", "Design", "Marketing"])
+        XCTAssertTrue(fields[2].isRequired)
+
+        // Question 3: Dropdown
+        XCTAssertEqual(fields[3].label, "Years of Experience")
+        XCTAssertEqual(fields[3].questionType, "dropdown")
+        XCTAssertEqual(fields[3].options, ["1-2", "3-5", "5+"])
+
+        // Question 4: Checkboxes
+        XCTAssertEqual(fields[4].label, "Technical Skills")
+        XCTAssertEqual(fields[4].questionType, "checkboxes")
+        XCTAssertEqual(fields[4].options, ["Swift", "Python", "Rust"])
+        XCTAssertTrue(fields[4].isRequired)
+
+        // Question 5: Linear Scale / Rating
+        XCTAssertEqual(fields[5].label, "Rate your satisfaction (1-5)")
+        XCTAssertEqual(fields[5].questionType, "linearScale")
+        XCTAssertTrue(fields[5].isRequired)
+
+        // Question 6: Date
+        XCTAssertEqual(fields[6].label, "Date of Birth")
+        XCTAssertEqual(fields[6].questionType, "date")
+
+        // Question 7: Time
+        XCTAssertEqual(fields[7].label, "Best Time to Contact")
+        XCTAssertEqual(fields[7].questionType, "time")
+    }
+
+    func testActiveFieldIndexAdvancesAccuratelyWhenTypingInFields() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(title: "Google Form", appName: "Polar")
+        model.isFormDetected = true
+        model.isAutoCaptureEnabled = true
+
+        let field1 = FormInputField(label: "First Name", value: "", questionType: "shortAnswer", isRequired: true, entryKey: "entry.1")
+        let field2 = FormInputField(label: "Bio", value: "", questionType: "paragraph", isRequired: true, entryKey: "entry.2")
+        let field3 = FormInputField(label: "Role", value: "", options: ["Dev", "Design"], questionType: "multipleChoice", isRequired: true, entryKey: "entry.3")
+        model.activeSession?.fields = [field1, field2, field3]
+
+        let tracker = FormInputAutoTracker(model: model)
+
+        // Confirm focus on field1 (First Name)
+        tracker.confirmFocus(fieldID: field1.id)
+        XCTAssertEqual(model.activeFieldIndex, 0)
+
+        // Type into field1
+        for char in "Alice" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(char))
+        }
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Alice")
+
+        // Move focus to field2 (Bio)
+        tracker.confirmFocus(fieldID: field2.id)
+        XCTAssertEqual(model.activeFieldIndex, 1)
+
+        // Type into field2
+        for char in "iOS Developer" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(char))
+        }
+        XCTAssertEqual(model.activeSession?.fields[1].value, "iOS Developer")
+
+        // First Name should NOT have been corrupted
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Alice")
+
+        // Move focus to field3 (Multiple choice)
+        tracker.confirmFocus(fieldID: field3.id)
+        XCTAssertEqual(model.activeFieldIndex, 2)
+
+        // Typing characters should NEVER be appended to multipleChoice
+        tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "xyz")
+        XCTAssertEqual(model.activeSession?.fields[2].value, "")
+    }
+
+    func testAntigravityChatWindowWithGoogleFormTitleIsNeverDetectedAsForm() {
+        // Even if Antigravity's task window is titled "Automate Google Form Resp..."
+        let antBundle = "com.google.antigravity"
+        let antApp = "Antigravity"
+        
+        // 1. Must be recognized as non-form app
+        XCTAssertTrue(DefaultApplicationFormDetector.isNonFormApplication(bundleID: antBundle, appName: antApp))
+        XCTAssertTrue(DefaultApplicationFormDetector.isNonFormApplication(bundleID: "com.google.antigravity-ide", appName: "Antigravity IDE"))
+        
+        // 2. Must NEVER be recognized as a browser
+        XCTAssertFalse(DefaultApplicationFormDetector.isBrowserName(antApp))
+        XCTAssertEqual(PersonalizedBrowserDetector.engineFamily(for: antBundle, name: antApp), .unknown)
+    }
+
+    func testDraftStorageAutomaticallyPurgesAnyAntigravitySessions() {
+        let model1 = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model1.clearSavedDrafts()
+        
+        // Simulate corrupted Antigravity session
+        let antigravitySession = ApplicationFormSession(
+            formTitle: "Automate Google Form Resp...",
+            sourceAppName: "Antigravity",
+            sourceURL: nil,
+            recipientEmail: "test@example.com",
+            fields: [
+                FormInputField(label: "Chat Prompt", value: "hello", category: .custom, questionType: "shortAnswer")
+            ]
+        )
+        let validSession = ApplicationFormSession(
+            formTitle: "Student Volunteer Application",
+            sourceAppName: "Google Chrome",
+            sourceURL: "https://docs.google.com/forms/d/e/123/viewform",
+            recipientEmail: "test@example.com",
+            fields: [
+                FormInputField(label: "Full Name", value: "Minh Nguyen", category: .personal, questionType: "shortAnswer")
+            ]
+        )
+        
+        // Directly save both
+        let allDrafts = [antigravitySession, validSession]
+        let data = try! JSONEncoder().encode(allDrafts)
+        UserDefaults.standard.set(data, forKey: ApplicationFormModel.draftsStorageKey)
+        
+        // Second model loads drafts: MUST purge Antigravity session completely
+        let model2 = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model2.loadDrafts()
+        
+        XCTAssertEqual(model2.historySessions.count, 1)
+        XCTAssertEqual(model2.historySessions[0].formTitle, "Student Volunteer Application")
+        XCTAssertEqual(model2.historySessions[0].sourceAppName, "Google Chrome")
+        
+        model2.clearSavedDrafts()
+    }
+
+    func testEmptyBrowserInputReconcilesAndClearsPhantomKeystroke() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(title: "Laguna Schools BP 2026: IA/SA Application Form", appName: "Polar")
+        model.isFormDetected = true
+        model.isAutoCaptureEnabled = true
+
+        let field1 = FormInputField(label: "Full Name", value: "Aar", category: .personal, questionType: "shortAnswer", isRequired: true)
+        let field2 = FormInputField(label: "Tab Name", value: "", category: .custom, questionType: "shortAnswer", isRequired: true)
+        model.activeSession?.fields = [field1, field2]
+        model.markBrowserCaptured(field1.id)
+
+        // When the live scan runs and detects that "Full Name" is empty in the browser DOM/accessibility tree:
+        let snapshot = [
+            (label: "Full Name", value: ""),
+            (label: "Tab Name", value: "")
+        ]
+        let cleared = model.applyLiveSnapshot(snapshot)
+
+        // Must reconcile and clear "Aar" to ""
+        XCTAssertGreaterThanOrEqual(cleared, 1)
+        XCTAssertEqual(model.activeSession?.fields[0].value, "")
+        XCTAssertEqual(model.activeSession?.fields[1].value, "")
+    }
+
+    func testPolarBrowserFormScanClearsEmptyFieldsWhenFormIsEmptyOnScreen() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(title: "Laguna Schools BP 2026: IA/SA Application Form", appName: "Polar")
+        model.isFormDetected = true
+        model.isAutoCaptureEnabled = true
+
+        let field1 = FormInputField(label: "Full Name", value: "Aar", category: .personal, questionType: "shortAnswer", isRequired: true)
+        let field2 = FormInputField(label: "Tab Name", value: "on Na", category: .custom, questionType: "shortAnswer", isRequired: true)
+        model.activeSession?.fields = [field1, field2]
+        model.markBrowserCaptured(field1.id)
+        model.markBrowserCaptured(field2.id)
+
+        // User cleared the form in Polar (or form is freshly opened with no answers)
+        let snapshot = [
+            (label: "Full Name", value: ""),
+            (label: "Tab Name", value: "")
+        ]
+        model.applyLiveSnapshot(snapshot)
+
+        XCTAssertEqual(model.activeSession?.fields[0].value, "")
+        XCTAssertEqual(model.activeSession?.fields[1].value, "")
     }
 }

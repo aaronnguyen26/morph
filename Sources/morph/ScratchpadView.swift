@@ -2,72 +2,113 @@ import SwiftUI
 
 public struct ScratchpadView: View {
     @ObservedObject var scratchpad: ScratchpadModel
+    @ObservedObject var theme: MorphTheme = .shared
+    
+    public init(scratchpad: ScratchpadModel, theme: MorphTheme? = nil) {
+        self.scratchpad = scratchpad
+        self.theme = theme ?? .shared
+    }
     
     public var body: some View {
-        VStack(spacing: 8) {
-            // Text Editor Area
+        VStack(spacing: 7) {
+            // Full-Width Widened Text Editor Canvas
             ZStack(alignment: .topLeading) {
                 if scratchpad.text.isEmpty {
                     Text("Type quick notes, thoughts, tasks, or paste links here...")
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(Color.white.opacity(0.3))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .foregroundColor(theme.textTertiary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                 }
                 
                 TextEditor(text: $scratchpad.text)
-                    .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundColor(.white)
+                    .font(.system(size: 12.5, weight: .regular, design: .default))
+                    .foregroundColor(theme.textPrimary)
                     .scrollContentBackground(.hidden)
                     .background(Color.clear)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
             }
-            .frame(maxHeight: .infinity)
-            .background(Color(white: 0.07))
-            .cornerRadius(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.canvasSecondary)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
             
-            // Bottom Action Bar
-            HStack(spacing: 10) {
+            // Relocated Bottom Action & Telemetry Toolbar (Relocated from center)
+            HStack(spacing: 8) {
+                // Micro Indicator: Live Status & Word/Char Counter
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(theme.textTertiary.opacity(0.8))
+                        .frame(width: 4, height: 4)
+                    
+                    Text("Auto-saved")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textTertiary)
+                    
+                    Text("•")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.textTertiary.opacity(0.5))
+                    
+                    Text("\(scratchpad.wordCount) \(scratchpad.wordCount == 1 ? "word" : "words")")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textSecondary)
+                    
+                    Text("•")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.textTertiary.opacity(0.5))
+                    
+                    Text("\(scratchpad.charCount) chars")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textTertiary)
+                }
+                
+                Spacer(minLength: 0)
+                
                 // Copy All Button
                 Button(action: {
                     scratchpad.copyAll()
                 }) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         Image(systemName: scratchpad.showCopiedAlert ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9.5))
-                        Text(scratchpad.showCopiedAlert ? "Copied to Clipboard" : "Copy All")
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: 8.5, weight: .semibold))
+                        Text(scratchpad.showCopiedAlert ? "Copied" : "Copy All")
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                     }
-                    .foregroundColor(scratchpad.showCopiedAlert ? .white : Color.white.opacity(0.85))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(scratchpad.showCopiedAlert ? Color.white.opacity(0.25) : Color.white.opacity(0.1))
-                    .cornerRadius(5)
+                    .foregroundColor(scratchpad.showCopiedAlert ? theme.activePillText : theme.textPrimary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(scratchpad.showCopiedAlert ? theme.activePillBackground : theme.cardBackground)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                    )
                 }
                 .buttonStyle(.plain)
                 .help("Copy All Notes (⌘⇧C)")
                 
-                // Clear / Undo Clear Button
+                // Undo Clear or Clear Button
                 if scratchpad.canUndoClear {
                     Button(action: {
                         scratchpad.undoClear()
                     }) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 3.5) {
                             Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 9.5))
+                                .font(.system(size: 8.5, weight: .bold))
                             Text("Undo Clear")
-                                .font(.system(size: 10.5, weight: .bold))
+                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.25))
-                        .cornerRadius(5)
+                        .foregroundColor(theme.textPrimary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(theme.cardBackgroundElevated)
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                        )
                     }
                     .buttonStyle(.plain)
                     .help("Undo Clear (⌘Z)")
@@ -75,36 +116,29 @@ public struct ScratchpadView: View {
                     Button(action: {
                         scratchpad.clear()
                     }) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 3.5) {
                             Image(systemName: "trash")
-                                .font(.system(size: 9.5))
+                                .font(.system(size: 8.5))
                             Text("Clear")
-                                .font(.system(size: 10.5, weight: .medium))
+                                .font(.system(size: 9.5, weight: .medium, design: .rounded))
                         }
-                        .foregroundColor(Color.white.opacity(0.6))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.08))
-                        .cornerRadius(5)
+                        .foregroundColor(theme.textTertiary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(theme.cardBackground)
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                        )
                     }
                     .buttonStyle(.plain)
                     .help("Clear / New Note (⌘N)")
                 }
-                
-                Spacer()
-                
-                // Micro Counter
-                HStack(spacing: 5) {
-                    Text("\(scratchpad.wordCount) \(scratchpad.wordCount == 1 ? "word" : "words")")
-                    Text("•")
-                    Text("\(scratchpad.charCount) characters")
-                }
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                .foregroundColor(Color.white.opacity(0.4))
             }
+            .padding(.horizontal, 2)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

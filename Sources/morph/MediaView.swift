@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct MediaView: View {
     @ObservedObject var media: MediaControllerModel
+    public var model: NotchModel?
     
     @State private var isScrubbing: Bool = false
     @State private var scrubFraction: Double = 0.0
@@ -10,8 +11,9 @@ public struct MediaView: View {
     @FocusState private var playlistSearchFocused: Bool
     @FocusState private var songSearchFocused: Bool
     
-    public init(media: MediaControllerModel) {
+    public init(media: MediaControllerModel, model: NotchModel? = nil) {
         self.media = media
+        self.model = model
     }
     
     private var effectiveProgress: Double {
@@ -37,8 +39,17 @@ public struct MediaView: View {
     
     // MARK: - Left Deck (Now Playing Engine)
     private var nowPlayingDeck: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             nowPlayingHeaderRow
+            
+            // Integrated Upcoming Calendar Sync Banner (if meeting within 30m)
+            if let nextEvent = model?.calendar.nextUpcomingEvent {
+                let diffSeconds = nextEvent.startTime.timeIntervalSince(Date())
+                let minutes = Int(ceil(diffSeconds / 60.0))
+                if minutes >= 0 && minutes <= 30 {
+                    upcomingMeetingIntegrationBanner(event: nextEvent, minutes: minutes)
+                }
+            }
             
             albumArtAndMetadataRow
             
@@ -57,6 +68,55 @@ public struct MediaView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+    
+    // Calendar Integration Pill within Mini Player Deck
+    private func upcomingMeetingIntegrationBanner(event: CalendarEvent, minutes: Int) -> some View {
+        HStack(spacing: 4.5) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundColor(Color(red: 1.0, green: 0.85, blue: 0.4))
+            
+            Text("In \(minutes)m: \(event.title)")
+                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            
+            Spacer(minLength: 2)
+            
+            Button(action: {
+                if media.isPlaying {
+                    media.pause()
+                }
+                if let controller = model?.meetingController {
+                    _ = controller.openMeetLink(event: event, inApp: true)
+                } else if let link = event.meetLink, !link.isEmpty {
+                    model?.calendar.engine.openMeet(link: link)
+                }
+            }) {
+                HStack(spacing: 2) {
+                    Text("Join")
+                        .font(.system(size: 7, weight: .bold))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 5.5, weight: .bold))
+                }
+                .foregroundColor(.black)
+                .padding(.horizontal, 4.5)
+                .padding(.vertical, 1.5)
+                .background(Color.white)
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Join Google Meet (Music auto-pauses)")
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2.5)
+        .background(Color.white.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
         )
     }
     

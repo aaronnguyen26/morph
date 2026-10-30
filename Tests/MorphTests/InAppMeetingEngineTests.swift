@@ -292,4 +292,123 @@ final class InAppMeetingEngineTests: XCTestCase {
         notch.meetingController.endCall()
         XCTAssertFalse(notch.meetingController.isInCall)
     }
+    
+    // MARK: - 9. Context Awareness & Window Title Parsing Tests
+    
+    func testContextAwareMeetingWindowTitleParsing() {
+        // Active Google Meet in Chrome
+        let meetActive = DefaultMeetingAppDetector.parseMeetingWindowTitle("Meet – Weekly Engineering Sync - Google Chrome")
+        XCTAssertNotNil(meetActive)
+        XCTAssertEqual(meetActive?.service, .googleMeet)
+        XCTAssertFalse(meetActive?.isLobby ?? true)
+        
+        // Google Meet pre-join Lobby
+        let meetLobby = DefaultMeetingAppDetector.parseMeetingWindowTitle("Meet – Ready to join - Arc")
+        XCTAssertNotNil(meetLobby)
+        XCTAssertEqual(meetLobby?.service, .googleMeet)
+        XCTAssertTrue(meetLobby?.isLobby ?? false)
+        
+        // Google Meet after call ended / left -> Should NOT detect
+        let meetEnded = DefaultMeetingAppDetector.parseMeetingWindowTitle("Meet – You left the meeting - Google Chrome")
+        XCTAssertNil(meetEnded)
+        
+        // Active Zoom Meeting window
+        let zoomActive = DefaultMeetingAppDetector.parseMeetingWindowTitle("Zoom Meeting")
+        XCTAssertNotNil(zoomActive)
+        XCTAssertEqual(zoomActive?.service, .zoom)
+        XCTAssertFalse(zoomActive?.isLobby ?? true)
+        
+        // Zoom pre-meeting Launching window
+        let zoomLobby = DefaultMeetingAppDetector.parseMeetingWindowTitle("Zoom - Launching...")
+        XCTAssertNotNil(zoomLobby)
+        XCTAssertEqual(zoomLobby?.service, .zoom)
+        XCTAssertTrue(zoomLobby?.isLobby ?? false)
+        
+        // Irrelevant browser window
+        let githubWindow = DefaultMeetingAppDetector.parseMeetingWindowTitle("Pull Request #42 · GitHub - Safari")
+        XCTAssertNil(githubWindow)
+    }
+    
+    // MARK: - 10. Strict UI Visibility: Hide When Not In Meet or Zoom
+    
+    func testStrictUIVisibilityWhenMeetingNotActiveOrDetected() {
+        let notch = NotchModel()
+        let controller = notch.meetingController
+        
+        // Verify initial state: no meeting active or detected
+        XCTAssertFalse(controller.isInCall)
+        XCTAssertFalse(controller.isMeetingDetected)
+        XCTAssertFalse(controller.isMeetingActiveOrDetected)
+        
+        // Notch HUD Mode must NOT be meetingFlight when idle
+        XCTAssertNotEqual(notch.compactHUDMode, .meetingFlight)
+        
+        // Wings must render EmptyView when not detected or active
+        let leftWing = CompactMeetingWingLeft(controller: controller, model: notch)
+        let rightWing = CompactMeetingWingRight(controller: controller, model: notch)
+        XCTAssertNotNil(leftWing.body)
+        XCTAssertNotNil(rightWing.body)
+    }
+    
+    // MARK: - 11. Context-Aware HUD Mode & Dynamic Notch Activation
+    
+    func testContextAwareHUDModeDynamicActivationAndDismissal() {
+        let notch = NotchModel()
+        let controller = notch.meetingController
+        
+        // 1. Idle -> HUD mode is not meetingFlight
+        XCTAssertNotEqual(notch.compactHUDMode, .meetingFlight)
+        
+        // 2. Google Meet detected -> HUD mode automatically promotes to meetingFlight
+        let detectedMeet = DetectedMeetingInfo(
+            isDetected: true,
+            service: .googleMeet,
+            title: "Sprint Planning",
+            url: URL(string: "https://meet.google.com/abc-defg-hij"),
+            browserBundleID: "com.google.Chrome",
+            browserName: "Google Chrome",
+            isLobbyOrPreJoin: false,
+            isInCall: true
+        )
+        controller.detectedMeetingInfo = detectedMeet
+        XCTAssertTrue(controller.isMeetingActiveOrDetected)
+        XCTAssertEqual(notch.compactHUDMode, .meetingFlight)
+        
+        // 3. User leaves call -> Detected info cleared -> HUD mode dismisses meetingFlight
+        controller.detectedMeetingInfo = nil
+        XCTAssertFalse(controller.isMeetingActiveOrDetected)
+        XCTAssertNotEqual(notch.compactHUDMode, .meetingFlight)
+    }
+    
+    // MARK: - 12. Join & End Call Wiring Integration
+    
+    func testJoinAndEndCallWiring() {
+        let controller = MeetingFlightControllerModel()
+        
+        // Simulate detecting Google Meet lobby
+        controller.detectedMeetingInfo = DetectedMeetingInfo(
+            isDetected: true,
+            service: .googleMeet,
+            title: "Design Review",
+            url: URL(string: "https://meet.google.com/xyz-uvw-rst"),
+            browserBundleID: "com.google.Chrome",
+            browserName: "Google Chrome",
+            isLobbyOrPreJoin: true,
+            isInCall: false
+        )
+        
+        XCTAssertTrue(controller.isMeetingActiveOrDetected)
+        XCTAssertTrue(controller.isLobbyOrPreJoin)
+        
+        // Trigger Join Call Wiring
+        controller.joinDetectedMeeting()
+        XCTAssertFalse(controller.isLobbyOrPreJoin)
+        XCTAssertTrue(controller.isInCall)
+        
+        // Trigger End Call Wiring
+        controller.endCall()
+        XCTAssertFalse(controller.isInCall)
+        XCTAssertNil(controller.detectedMeetingInfo)
+        XCTAssertFalse(controller.isMeetingActiveOrDetected)
+    }
 }

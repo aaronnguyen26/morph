@@ -39,6 +39,7 @@ public enum CompactHUDMode: String, Equatable {
     case pomodoroOnly
     case mediaOnly
     case dualActive
+    case calendarAndMedia
     case notesPinned
     case calendarAlert
     case meetingFlight
@@ -81,6 +82,7 @@ public final class NotchModel: ObservableObject {
     public let dropShelf: DropShelfModel
     public let meetingController: MeetingFlightControllerModel
     public let formTracker: ApplicationFormModel
+    public let theme: MorphTheme = .shared
     
     @Published public var hasPhysicalNotch: Bool = false
     @Published public var screenName: String = "Main Display"
@@ -88,23 +90,23 @@ public final class NotchModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     public init(
-        pomodoro: PomodoroModel = PomodoroModel(),
-        media: MediaControllerModel = MediaControllerModel(),
-        scratchpad: ScratchpadModel = ScratchpadModel(),
-        calendar: CalendarModel = CalendarModel(),
-        supabase: SupabaseService = .shared,
-        dropShelf: DropShelfModel = DropShelfModel(),
-        meetingController: MeetingFlightControllerModel = MeetingFlightControllerModel(),
-        formTracker: ApplicationFormModel = ApplicationFormModel()
+        pomodoro: PomodoroModel? = nil,
+        media: MediaControllerModel? = nil,
+        scratchpad: ScratchpadModel? = nil,
+        calendar: CalendarModel? = nil,
+        supabase: SupabaseService? = nil,
+        dropShelf: DropShelfModel? = nil,
+        meetingController: MeetingFlightControllerModel? = nil,
+        formTracker: ApplicationFormModel? = nil
     ) {
-        self.pomodoro = pomodoro
-        self.media = media
-        self.scratchpad = scratchpad
-        self.calendar = calendar
-        self.supabase = supabase
-        self.dropShelf = dropShelf
-        self.meetingController = meetingController
-        self.formTracker = formTracker
+        self.pomodoro = pomodoro ?? PomodoroModel()
+        self.media = media ?? MediaControllerModel()
+        self.scratchpad = scratchpad ?? ScratchpadModel()
+        self.calendar = calendar ?? CalendarModel()
+        self.supabase = supabase ?? .shared
+        self.dropShelf = dropShelf ?? DropShelfModel()
+        self.meetingController = meetingController ?? MeetingFlightControllerModel()
+        self.formTracker = formTracker ?? ApplicationFormModel()
         
         detectScreenNotch()
         observeSubmodels()
@@ -211,8 +213,8 @@ public final class NotchModel: ObservableObject {
             return .dropShelfActive
         }
         
-        // Priority 2: Meeting Flight
-        if meetingController.isInCall || meetingController.isPreMeetingWindow {
+        // Priority 2: Meeting Flight (Strictly context-aware: only when Google Meet or Zoom is active or detected)
+        if meetingController.isMeetingActiveOrDetected {
             return .meetingFlight
         }
         
@@ -233,10 +235,12 @@ public final class NotchModel: ObservableObject {
             return .dualActive
         } else if timerRunning {
             return .pomodoroOnly
-        } else if musicPlaying {
-            return .mediaOnly
+        } else if musicPlaying && calendarAlert {
+            return .calendarAndMedia
         } else if calendarAlert {
             return .calendarAlert
+        } else if musicPlaying {
+            return .mediaOnly
         } else if dropShelf.hasItems {
             return .dropShelfActive
         } else {
@@ -258,7 +262,7 @@ public final class NotchModel: ObservableObject {
             return max(idleWidth + 240, 440)
         case .mediaOnly:
             return max(idleWidth + 260, 460)
-        case .dualActive:
+        case .dualActive, .calendarAndMedia:
             return max(idleWidth + 320, 520)
         case .notesPinned:
             return max(idleWidth + 200, 400)
@@ -278,7 +282,7 @@ public final class NotchModel: ObservableObject {
         switch compactHUDMode {
         case .notesPinned:
             return max(idleHeight + 24, 56)
-        case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAlert,
+        case .none, .pomodoroOnly, .mediaOnly, .dualActive, .calendarAndMedia, .calendarAlert,
              .meetingFlight, .dropShelfActive, .formTrackerActive:
             return idleHeight
         }
@@ -338,6 +342,7 @@ public final class NotchModel: ObservableObject {
         dropShelf.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         meetingController.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         formTracker.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
+        theme.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
         
         // Track the latest feature tab used by the user
@@ -374,6 +379,9 @@ public final class NotchModel: ObservableObject {
             guard let self = self else { return false }
             let started = self.meetingController.engine.startCall(url: url, title: "Meeting Call", scratchpadModel: self.scratchpad)
             if started {
+                if self.media.isPlaying {
+                    self.media.pause()
+                }
                 self.meetingController.startCall(title: "Meeting Call")
             }
             return started
@@ -386,6 +394,31 @@ public final class NotchModel: ObservableObject {
                 self.closeDropShelfAndRestoreContext()
             }
         }
+        
+        // Auto-surface Meeting Flight when Google Meet or Zoom is detected, and auto-dismiss when closed
+        meetingController.$isMeetingActiveOrDetected
+            .dropFirst()
+            .sink { [weak self] detected in
+                guard let self = self else { return }
+                if detected {
+                    if self.media.isPlaying {
+                        self.media.pause()
+                    }
+                    if self.isExpanded && (self.selectedTab == .home || self.activeContextFeature == nil) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                            self.activeContextFeature = .meetingFlight
+                        }
+                    }
+                } else {
+                    if self.activeContextFeature == .meetingFlight {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) {
+                            self.activeContextFeature = nil
+                            self.selectedTab = .home
+                        }
+                    }
+                }
+            }
+            .store(in: &cancellables)
         
         // Restore context when an application form session ends
         formTracker.onFormClosed = { [weak self] in
@@ -449,6 +482,10 @@ public final class NotchModel: ObservableObject {
                 selectedTab = .music
             }
             activeContextFeature = nil
+        case .calendarAndMedia:
+            // Calendar is primary when alert is firing, music controls remain active in background
+            selectedTab = .calendar
+            activeContextFeature = nil
         case .notesPinned:
             selectedTab = .notes
             activeContextFeature = nil
@@ -456,7 +493,12 @@ public final class NotchModel: ObservableObject {
             selectedTab = .calendar
             activeContextFeature = nil
         case .meetingFlight:
-            activeContextFeature = .meetingFlight
+            if meetingController.isMeetingActiveOrDetected {
+                activeContextFeature = .meetingFlight
+            } else {
+                activeContextFeature = nil
+                selectedTab = .home
+            }
         case .dropShelfActive:
             activeContextFeature = .dropShelf
         case .formTrackerActive:
@@ -472,6 +514,10 @@ public final class NotchModel: ObservableObject {
             syncExpandedFeatureWithActiveContext()
         }
         isExpanded.toggle()
+    }
+    
+    public func toggleTheme() {
+        theme.toggleTheme()
     }
     
     public func togglePin() {
@@ -531,7 +577,7 @@ public final class NotchModel: ObservableObject {
             activeContextFeature = nil
             
             // 1. Live Contextual Awareness Priority:
-            if meetingController.isInCall || meetingController.isPreMeetingWindow {
+            if meetingController.isMeetingActiveOrDetected {
                 activeContextFeature = .meetingFlight
                 return
             }

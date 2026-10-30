@@ -32,11 +32,12 @@ public final class MenuBarManager: NSObject {
     }
     
     private func observeModel() {
-        Publishers.Merge4(
+        Publishers.Merge5(
             model.$isExpanded.map { _ in () },
             model.$isPinned.map { _ in () },
             model.$selectedTab.map { _ in () },
-            model.pomodoro.$isRunning.map { _ in () }
+            model.pomodoro.$isRunning.map { _ in () },
+            model.theme.$mode.map { _ in () }
         )
         .receive(on: RunLoop.main)
         .sink { [weak self] in
@@ -113,6 +114,23 @@ public final class MenuBarManager: NSObject {
         notesItem.target = self
         menu.addItem(notesItem)
         
+        menu.addItem(NSMenuItem.separator())
+        
+        // Appearance / Theme Submenu
+        let themeSubmenu = NSMenu()
+        for tMode in MorphThemeMode.allCases {
+            let item = NSMenuItem(
+                title: "\(tMode.rawValue) \(tMode == model.theme.mode ? "✓" : "")",
+                action: #selector(selectThemeMode(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = tMode
+            item.target = self
+            themeSubmenu.addItem(item)
+        }
+        let themeItem = NSMenuItem(title: "Appearance (\(model.theme.mode.rawValue))", action: nil, keyEquivalent: "")
+        themeItem.submenu = themeSubmenu
+        menu.addItem(themeItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -154,6 +172,12 @@ public final class MenuBarManager: NSObject {
     
     @objc private func copyNotes() {
         model.scratchpad.copyAll()
+    }
+    
+    @objc private func selectThemeMode(_ sender: NSMenuItem) {
+        if let mode = sender.representedObject as? MorphThemeMode {
+            model.theme.setMode(mode)
+        }
     }
     
     @objc private func quitApp() {
