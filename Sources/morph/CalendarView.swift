@@ -7,6 +7,7 @@ public struct CalendarView: View {
     @State private var newEventTitle: String = ""
     @State private var newEventDurationMinutes: Int = 30
     @State private var newEventHour: Int = 14
+    @State private var newEventMinute: Int = 0
     @State private var newEventIsAllDay: Bool = false
     @State private var newEventHasMeet: Bool = true
     @State private var newEventLocation: String = ""
@@ -14,6 +15,7 @@ public struct CalendarView: View {
     @State private var isSubmittingEvent: Bool = false
     @State private var showNotificationSettings: Bool = false
     @State private var deletingEventID: String? = nil
+    @State private var hoveredDay: Date? = nil
     public var meetingController: MeetingFlightControllerModel?
     public var onTakeCall: ((CalendarEvent) -> Void)?
     
@@ -201,6 +203,7 @@ public struct CalendarView: View {
                 if let date = date {
                     let isSelected = cal.isDate(date, inSameDayAs: calendar.selectedDate)
                     let isToday = cal.isDateInToday(date)
+                    let isHovered = hoveredDay.map { cal.isDate($0, inSameDayAs: date) } ?? false
                     let hasEvents = !calendar.eventsForDate(date).isEmpty
                     
                     Button(action: {
@@ -222,10 +225,23 @@ public struct CalendarView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 16.5)
                         .contentShape(Rectangle())
-                        .background(isSelected ? theme.activePillBackground : (isToday ? theme.focusAccent.opacity(theme.isDark ? 0.18 : 0.12) : Color.clear))
+                        .background(
+                            isSelected
+                                ? theme.activePillBackground
+                                : (isToday
+                                    ? theme.focusAccent.opacity(theme.isDark ? 0.18 : 0.12)
+                                    : (isHovered ? theme.cardBackgroundElevated : Color.clear))
+                        )
                         .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                .stroke(isToday && !isSelected ? theme.activeBorder : Color.clear, lineWidth: 1)
+                        )
                     }
                     .buttonStyle(.plain)
+                    .onHover { hovering in
+                        hoveredDay = hovering ? date : (hoveredDay == date ? nil : hoveredDay)
+                    }
                 } else {
                     Color.clear
                         .frame(height: 16.5)
@@ -239,7 +255,7 @@ public struct CalendarView: View {
         VStack(alignment: .leading, spacing: 5) {
             // Header - Perfectly leveled with Month Header
             HStack(spacing: 5) {
-                Text(calendar.isAddingEvent ? "NEW EVENT" : "AGENDA")
+                Text(calendar.isAddingEvent ? "NEW EVENT" : agendaHeaderTitle(for: calendar.selectedDate))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
@@ -340,12 +356,12 @@ public struct CalendarView: View {
                                 Text("Sign In with Google")
                                     .font(.system(size: 9.5, weight: .bold))
                             }
-                            .foregroundColor(.black)
+                            .foregroundColor(theme.activePillText)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 5.5)
-                            .background(Color.white)
+                            .background(theme.activePillBackground)
                             .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(0.25), radius: 2, y: 1)
+                            .shadow(color: theme.windowShadow.opacity(0.25), radius: 2, y: 1)
                         }
                         .buttonStyle(.plain)
                         .help("Sign in to Google in your browser")
@@ -367,16 +383,16 @@ public struct CalendarView: View {
                         Spacer(minLength: 2)
                         Image(systemName: "calendar.badge.clock")
                             .font(.system(size: 15))
-                            .foregroundColor(Color.white.opacity(0.3))
+                            .foregroundColor(theme.textTertiary)
                         
                         if let email = calendar.configuredUserEmail, !email.isEmpty {
                             Text(calendar.events.isEmpty ? "No events found for \(email)" : "No events scheduled for this day")
                                 .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.55))
+                                .foregroundColor(theme.textSecondary)
                         } else {
                             Text(calendar.events.isEmpty ? "No Google Calendar events loaded" : "No events scheduled for this day")
                                 .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(Color.white.opacity(0.55))
+                                .foregroundColor(theme.textSecondary)
                         }
                         
                         HStack(spacing: 6) {
@@ -483,11 +499,11 @@ public struct CalendarView: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white.opacity(0.04))
+        .background(theme.cardBackgroundSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.09), lineWidth: 0.8)
+                .stroke(theme.hairlineBorder, lineWidth: 0.8)
         )
     }
     
@@ -497,7 +513,7 @@ public struct CalendarView: View {
             HStack(spacing: 3.5) {
                 Image(systemName: "calendar")
                     .font(.system(size: 8))
-                    .foregroundColor(Color.white.opacity(0.75))
+                    .foregroundColor(theme.textSecondary)
                 
                 let df: DateFormatter = {
                     let f = DateFormatter()
@@ -506,7 +522,7 @@ public struct CalendarView: View {
                 }()
                 Text(df.string(from: calendar.selectedDate))
                     .font(.system(size: 8, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.9))
+                    .foregroundColor(theme.textPrimary)
             }
             
             Spacer()
@@ -528,31 +544,31 @@ public struct CalendarView: View {
                             .lineLimit(1)
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 5.5))
-                            .foregroundColor(Color.white.opacity(0.55))
+                            .foregroundColor(theme.textTertiary)
                     }
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(theme.textPrimary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.08))
+                    .background(theme.cardBackground)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .help("Click to switch target Google Calendar")
             } else {
                 HStack(spacing: 3) {
-                    Text(newEventIsAllDay ? "All-Day" : formatHourDisplay(newEventHour))
+                    Text(newEventIsAllDay ? "All-Day" : formatTimeDisplay(hour: newEventHour, minute: newEventMinute))
                         .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(theme.textPrimary)
                 }
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color.white.opacity(0.10))
+                .background(theme.cardBackgroundElevated)
                 .clipShape(Capsule())
             }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3.5)
-        .background(Color.white.opacity(0.04))
+        .background(theme.cardBackgroundSubtle)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     
@@ -569,10 +585,10 @@ public struct CalendarView: View {
                     Text("Timed Event")
                         .font(.system(size: 7.2, weight: !newEventIsAllDay ? .bold : .medium))
                 }
-                .foregroundColor(!newEventIsAllDay ? .black : Color.white.opacity(0.65))
+                .foregroundColor(!newEventIsAllDay ? theme.activePillText : theme.textSecondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 3)
-                .background(!newEventIsAllDay ? Color.white : Color.white.opacity(0.06))
+                .background(!newEventIsAllDay ? theme.activePillBackground : theme.cardBackgroundSubtle)
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -588,16 +604,16 @@ public struct CalendarView: View {
                     Text("All Day / Deadline")
                         .font(.system(size: 7.2, weight: newEventIsAllDay ? .bold : .medium))
                 }
-                .foregroundColor(newEventIsAllDay ? .black : Color.white.opacity(0.65))
+                .foregroundColor(newEventIsAllDay ? theme.activePillText : theme.textSecondary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 3)
-                .background(newEventIsAllDay ? Color.white : Color.white.opacity(0.06))
+                .background(newEventIsAllDay ? theme.activePillBackground : theme.cardBackgroundSubtle)
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
         }
         .padding(2)
-        .background(Color.white.opacity(0.05))
+        .background(theme.cardBackgroundSubtle)
         .clipShape(Capsule())
     }
     
@@ -605,12 +621,12 @@ public struct CalendarView: View {
         HStack(spacing: 5) {
             Image(systemName: newEventIsAllDay ? "target" : "pencil.line")
                 .font(.system(size: 8))
-                .foregroundColor(newEventIsAllDay ? Color.orange.opacity(0.8) : Color.white.opacity(0.6))
+                .foregroundColor(newEventIsAllDay ? theme.textPrimary : theme.textSecondary)
             
             TextField(newEventIsAllDay ? "Deadline / all-day event title..." : "Event title...", text: $newEventTitle)
                 .textFieldStyle(.plain)
                 .font(.system(size: 8.8, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
                 .onSubmit {
                     submitNewEvent()
                 }
@@ -619,18 +635,18 @@ public struct CalendarView: View {
                 Button(action: { newEventTitle = "" }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 7))
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .foregroundColor(theme.textTertiary)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
-        .background(Color.white.opacity(0.07))
+        .background(theme.surfaceInset)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
+                .stroke(theme.hairlineBorder, lineWidth: 0.6)
         )
     }
     
@@ -639,15 +655,18 @@ public struct CalendarView: View {
             HStack(spacing: 3) {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 7.5))
-                    .foregroundColor(Color.orange.opacity(0.85))
+                    .foregroundColor(theme.badgeText)
                 Text("Full Day Focus")
                     .font(.system(size: 7.2, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(theme.badgeText)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
-            .background(Color.orange.opacity(0.12))
+            .background(theme.badgeBackground)
             .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(theme.activeBorder, lineWidth: 0.5)
+            )
             
             Spacer()
             
@@ -660,10 +679,10 @@ public struct CalendarView: View {
                 }) {
                     Text("+ Deadline")
                         .font(.system(size: 6.8, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2.5)
-                        .background(Color.white.opacity(0.09))
+                        .background(theme.cardBackground)
                         .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -675,10 +694,10 @@ public struct CalendarView: View {
                 }) {
                     Text("+ Goal")
                         .font(.system(size: 6.8, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2.5)
-                        .background(Color.white.opacity(0.09))
+                        .background(theme.cardBackground)
                         .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -689,55 +708,55 @@ public struct CalendarView: View {
     
     private var addEventTimeDurationRow: some View {
         HStack(spacing: 5) {
-            // Stepper Hour Control
+            // Stepper 30-Minute Granularity Control
             HStack(spacing: 2) {
                 Button(action: {
-                    newEventHour = newEventHour > 0 ? newEventHour - 1 : 23
+                    rewindTimeByHalfHour()
                 }) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 6.5, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary)
                         .frame(width: 17, height: 17)
-                        .background(Color.white.opacity(0.10))
+                        .background(theme.cardBackgroundElevated)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Previous hour")
+                .help("Previous 30 minutes")
                 
                 Button(action: {
-                    newEventHour = (newEventHour + 1) % 24
+                    advanceTimeByHalfHour()
                 }) {
                     HStack(spacing: 2.5) {
                         Image(systemName: "clock.fill")
                             .font(.system(size: 6.5))
-                            .foregroundColor(Color.white.opacity(0.8))
-                        Text(formatHourDisplay(newEventHour))
+                            .foregroundColor(theme.textSecondary)
+                        Text(formatTimeDisplay(hour: newEventHour, minute: newEventMinute))
                             .font(.system(size: 7.2, weight: .bold, design: .monospaced))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.textPrimary)
                     }
                     .padding(.horizontal, 4)
                     .frame(height: 17)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Tap to advance hour or use chevrons")
+                .help("Tap to advance by 30 minutes or use chevrons")
                 
                 Button(action: {
-                    newEventHour = newEventHour < 23 ? newEventHour + 1 : 0
+                    advanceTimeByHalfHour()
                 }) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 6.5, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary)
                         .frame(width: 17, height: 17)
-                        .background(Color.white.opacity(0.10))
+                        .background(theme.cardBackgroundElevated)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Next hour")
+                .help("Next 30 minutes")
             }
             .padding(.horizontal, 3)
             .padding(.vertical, 2)
-            .background(Color.white.opacity(0.09))
+            .background(theme.cardBackground)
             .clipShape(Capsule())
             
             Spacer()
@@ -748,10 +767,10 @@ public struct CalendarView: View {
                     Button(action: { newEventDurationMinutes = duration }) {
                         Text(duration >= 60 ? "\(duration / 60)h" : "\(duration)m")
                             .font(.system(size: 7, weight: newEventDurationMinutes == duration ? .bold : .medium))
-                            .foregroundColor(newEventDurationMinutes == duration ? .black : Color.white.opacity(0.75))
+                            .foregroundColor(newEventDurationMinutes == duration ? theme.activePillText : theme.textSecondary)
                             .padding(.horizontal, 4.5)
                             .frame(height: 17)
-                            .background(newEventDurationMinutes == duration ? Color.white : Color.white.opacity(0.08))
+                            .background(newEventDurationMinutes == duration ? theme.activePillBackground : theme.cardBackground)
                             .clipShape(Capsule())
                             .contentShape(Capsule())
                     }
@@ -767,20 +786,24 @@ public struct CalendarView: View {
             HStack(spacing: 3) {
                 Image(systemName: "mappin.and.ellipse")
                     .font(.system(size: 6.8))
-                    .foregroundColor(Color.white.opacity(0.55))
+                    .foregroundColor(theme.textSecondary)
                 
                 TextField(newEventIsAllDay ? "Notes / details (optional)" : "Location (optional)", text: $newEventLocation)
                     .textFieldStyle(.plain)
                     .font(.system(size: 7.2, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .onSubmit {
                         submitNewEvent()
                     }
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 3.5)
-            .background(Color.white.opacity(0.06))
+            .background(theme.surfaceInset)
             .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
+            )
             
             // Google Meet Toggle (Only relevant for timed meetings)
             if !newEventIsAllDay {
@@ -795,10 +818,10 @@ public struct CalendarView: View {
                         Text("Meet")
                             .font(.system(size: 6.8, weight: .bold))
                     }
-                    .foregroundColor(newEventHasMeet ? .black : Color.white.opacity(0.7))
+                    .foregroundColor(newEventHasMeet ? theme.activePillText : theme.textSecondary)
                     .padding(.horizontal, 5.5)
                     .padding(.vertical, 3.5)
-                    .background(newEventHasMeet ? Color.white : Color.white.opacity(0.10))
+                    .background(newEventHasMeet ? theme.activePillBackground : theme.cardBackground)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -814,27 +837,28 @@ public struct CalendarView: View {
                 newEventLocation = ""
                 newEventIsAllDay = false
                 newEventDurationMinutes = 30
+                newEventMinute = 0
                 withAnimation(.easeInOut(duration: 0.18)) {
                     calendar.isAddingEvent = false
                 }
             }) {
                 Text("Discard")
                     .font(.system(size: 7.5, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.6))
+                    .foregroundColor(theme.textSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3.5)
-                    .background(Color.white.opacity(0.06))
+                    .background(theme.cardBackground)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
             
             Spacer()
             
+            let isTitleEmpty = newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             Button(action: submitNewEvent) {
                 HStack(spacing: 3.5) {
                     if isSubmittingEvent {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
                             .scaleEffect(0.5)
                             .frame(width: 7, height: 7)
                     } else {
@@ -845,23 +869,47 @@ public struct CalendarView: View {
                     Text(isSubmittingEvent ? "Saving..." : (newEventIsAllDay ? "Add Deadline" : "Add to Calendar"))
                         .font(.system(size: 7.5, weight: .bold))
                 }
-                .foregroundColor(.black)
+                .foregroundColor(isTitleEmpty ? theme.textTertiary : theme.activePillText)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3.5)
-                .background(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.25) : Color.white)
+                .background(isTitleEmpty ? theme.cardBackgroundElevated : theme.activePillBackground)
                 .clipShape(Capsule())
-                .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
+                .shadow(color: theme.windowShadow.opacity(0.2), radius: 2, y: 1)
             }
             .buttonStyle(.plain)
-            .disabled(newEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingEvent)
+            .disabled(isTitleEmpty || isSubmittingEvent)
             .help(newEventIsAllDay ? "Save all-day event or deadline" : "Save event to Google Calendar")
         }
     }
     
-    private func formatHourDisplay(_ hour: Int) -> String {
+    private func advanceTimeByHalfHour() {
+        if newEventMinute == 0 {
+            newEventMinute = 30
+        } else {
+            newEventMinute = 0
+            newEventHour = (newEventHour + 1) % 24
+        }
+        MorphHaptics.alignment()
+    }
+    
+    private func rewindTimeByHalfHour() {
+        if newEventMinute == 30 {
+            newEventMinute = 0
+        } else {
+            newEventMinute = 30
+            newEventHour = newEventHour > 0 ? newEventHour - 1 : 23
+        }
+        MorphHaptics.alignment()
+    }
+    
+    private func formatTimeDisplay(hour: Int, minute: Int) -> String {
         let period = hour >= 12 ? "PM" : "AM"
         let displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
-        return "\(displayHour):00 \(period)"
+        return String(format: "%d:%02d %@", displayHour, minute, period)
+    }
+    
+    private func formatHourDisplay(_ hour: Int) -> String {
+        formatTimeDisplay(hour: hour, minute: 0)
     }
     
     private func submitNewEvent() {
@@ -884,7 +932,7 @@ public struct CalendarView: View {
             title: title,
             durationMinutes: newEventDurationMinutes,
             startHour: newEventIsAllDay ? nil : newEventHour,
-            startMinute: 0,
+            startMinute: newEventMinute,
             isAllDay: newEventIsAllDay,
             addMeetLink: newEventIsAllDay ? false : newEventHasMeet,
             description: desc,
@@ -899,6 +947,7 @@ public struct CalendarView: View {
             newEventLocation = ""
             newEventIsAllDay = false
             newEventDurationMinutes = 30
+            newEventMinute = 0
             withAnimation(.easeInOut(duration: 0.18)) {
                 calendar.isAddingEvent = false
             }
@@ -916,11 +965,15 @@ public struct CalendarView: View {
                         Text(event.title.localizedCaseInsensitiveContains("deadline") ? "DEADLINE" : "ALL DAY")
                             .font(.system(size: 7.5, weight: .bold, design: .rounded))
                     }
-                    .foregroundColor(Color.orange.opacity(0.95))
+                    .foregroundColor(theme.badgeText)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.15))
+                    .background(theme.badgeBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(theme.activeBorder, lineWidth: 0.5)
+                    )
                 } else {
                     Text(event.formattedTimeRange)
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
@@ -1055,6 +1108,18 @@ public struct CalendarView: View {
     }
     
     // MARK: - Helpers
+    private func agendaHeaderTitle(for date: Date) -> String {
+        let cal = Calendar.current
+        let f = DateFormatter()
+        if cal.isDateInToday(date) {
+            f.dateFormat = "MMM d"
+            return "TODAY • \(f.string(from: date).uppercased())"
+        } else {
+            f.dateFormat = "EEE, MMM d"
+            return f.string(from: date).uppercased()
+        }
+    }
+    
     private func monthYearString(for date: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = "MMMM yyyy"

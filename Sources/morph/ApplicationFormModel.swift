@@ -1950,7 +1950,8 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
     private func checkSafariBrowser() -> FormDetectionResult? {
         let isSafariAlive = NSWorkspace.shared.runningApplications.contains { app in
             !app.isTerminated && kill(app.processIdentifier, 0) == 0 &&
-            (app.bundleIdentifier?.lowercased().contains("com.apple.safari") ?? false ||
+            app.activationPolicy == .regular &&
+            (app.bundleIdentifier?.lowercased() == "com.apple.safari" ||
              app.localizedName?.lowercased() == "safari")
         }
         guard isSafariAlive else { return nil }
@@ -2981,11 +2982,16 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     // Typed characters are NEVER written to a guessed field. They go to the field whose browser focus has been
     // confirmed through Accessibility (focused element -> question label -> schema field). While focus is unknown
     // (after a click, Tab, Enter...) typing is held briefly in `pendingText` and flushed once focus is confirmed.
+    // For browsers that render web pages in an out-of-process CAContext layer without exposing an AXWebArea tree
+    // (such as Polar Browser), `isHeadlessBrowserActive` confirms focus onto the active actionable text-entry field
+    // and advances synchronously on Tab, Shift+Tab, Enter, or vertical viewport clicks.
     public private(set) var confirmedFieldID: UUID?
     private var confirmedElement: AXUIElement?
     public private(set) var pendingText: String = ""
     private var pendingSince: Date?
     public static let pendingTTL: TimeInterval = 30.0
+    public var isHeadlessWebLayerMode: Bool = false
+    public private(set) var lastHeadlessFieldClickLocation: CGPoint? = nil
     
     /// Question types whose answer is produced by typing text (as opposed to picking an option).
     public static func isTextEntryType(_ questionType: String) -> Bool {
@@ -3005,6 +3011,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         confirmedElement = nil
         pendingText = ""
         pendingSince = nil
+        lastHeadlessFieldClickLocation = nil
     }
     
     /// Records that the browser's focused input belongs to `fieldID`, aligns the active field and flushes any
@@ -3032,6 +3039,151 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         }
         pendingText = ""
         pendingSince = nil
+    }
+    
+    /// Returns true when the active browser renders web pages in a headless layer without exposing an AXWebArea
+    /// tree (such as Polar Browser), or when `isHeadlessWebLayerMode` is explicitly enabled in tests.
+    @MainActor
+    public func isHeadlessBrowserActive(frontApp: NSRunningApplication?, model: ApplicationFormModel) -> Bool {
+        if isHeadlessWebLayerMode { return true }
+        guard !MorphEnvironment.isTestingEnvironment else { return false }
+        if model.detectedBrowserFamily == .polar ||
+           model.detectedAppName.lowercased() == "polar" ||
+           model.activeSession?.sourceAppName.lowercased() == "polar" {
+            return true
+        }
+        if let frontApp = frontApp {
+            let bid = frontApp.bundleIdentifier?.lowercased() ?? ""
+            let name = frontApp.localizedName?.lowercased() ?? ""
+            if bid.contains("com.polar.browser") || name == "polar" {
+                return true
+            }
+            if DefaultApplicationFormDetector.isBrowserApplication(frontApp) {
+                let appElem = AXUIElementCreateApplication(frontApp.processIdentifier)
+                if let win = DefaultApplicationFormDetector.getBrowserWindowElement(appElem: appElem),
+                   Self.findWebAreaElement(in: win) == nil {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    /// Returns true if the browser's native UI chrome (such as the address bar / search bar) currently holds AX focus.
+    public static func isBrowserChromeInputFocused(for frontApp: NSRunningApplication?) -> Bool {
+        guard let app = frontApp ?? NSWorkspace.shared.frontmostApplication else { return false }
+        let appElem = AXUIElementCreateApplication(app.processIdentifier)
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElem, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef else { return false }
+        let elem = focused as! AXUIElement
+        var roleRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(elem, kAXRoleAttribute as CFString, &roleRef)
+        let role = (roleRef as? String) ?? ""
+        if role == "AXTextField" || role == "AXSearchField" || role == "AXComboBox" {
+            if !isElementInsideWebArea(elem) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    /// Ensures focus is confirmed on an actionable text-entry field in headless web-layer mode (e.g. Polar).
+    @MainActor
+    @discardableResult
+    public func ensureHeadlessTextEntryFocus(in model: ApplicationFormModel) -> Int? {
+        guard let fields = model.activeSession?.fields, !fields.isEmpty else { return nil }
+        if let cur = confirmedFieldIndex(in: model),
+           fields[cur].isActionableQuestion,
+           Self.isTextEntryType(fields[cur].questionType) {
+            return cur
+        }
+        let start = max(0, min(model.activeFieldIndex, fields.count - 1))
+        if fields[start].isActionableQuestion && Self.isTextEntryType(fields[start].questionType) {
+            confirmFocus(fieldID: fields[start].id)
+            return start
+        }
+        // Prefer the first unanswered text-entry field at or after activeFieldIndex
+        if let idx = (start..<fields.count).first(where: {
+            fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType) && !fields[$0].isAnswered
+        }) ?? fields.indices.first(where: {
+            fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType) && !fields[$0].isAnswered
+        }) ?? (start..<fields.count).first(where: {
+            fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType)
+        }) ?? fields.indices.first(where: {
+            fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType)
+        }) {
+            confirmFocus(fieldID: fields[idx].id)
+            return idx
+        }
+        return nil
+    }
+    
+    /// Advances or reverses focus to the next/previous actionable text-entry field in headless web-layer mode.
+    @MainActor
+    @discardableResult
+    public func advanceHeadlessFocus(in model: ApplicationFormModel, backward: Bool = false) -> Int? {
+        guard let fields = model.activeSession?.fields, !fields.isEmpty else { return nil }
+        let cur = confirmedFieldIndex(in: model) ?? max(0, min(model.activeFieldIndex, fields.count - 1))
+        if backward {
+            if cur > 0, let prev = (0..<cur).reversed().first(where: {
+                fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType)
+            }) {
+                lastHeadlessFieldClickLocation = nil
+                confirmFocus(fieldID: fields[prev].id)
+                return prev
+            }
+        } else {
+            if cur + 1 < fields.count, let next = ((cur + 1)..<fields.count).first(where: {
+                fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType)
+            }) {
+                lastHeadlessFieldClickLocation = nil
+                confirmFocus(fieldID: fields[next].id)
+                return next
+            }
+        }
+        return confirmedFieldIndex(in: model)
+    }
+    
+    /// Handles a mouse click inside the web content viewport of a headless web-layer browser (e.g. Polar).
+    /// When the current text-entry field is still empty, keeps focus on it and records the click coordinate;
+    /// when the current text-entry field has already been answered and the user clicks a vertically distinct
+    /// question card (> 45pt away), advances focus to the next unanswered text-entry question.
+    @MainActor
+    public func handleHeadlessViewportClick(at location: CGPoint, in model: ApplicationFormModel) {
+        guard let fields = model.activeSession?.fields, !fields.isEmpty else { return }
+        if let curIdx = confirmedFieldIndex(in: model),
+           fields[curIdx].isActionableQuestion,
+           Self.isTextEntryType(fields[curIdx].questionType) {
+            if !fields[curIdx].isAnswered {
+                // Current field is still unanswered: keep focus here and record click position
+                lastHeadlessFieldClickLocation = location
+                return
+            }
+            // Current field is already answered: check if user clicked onto a different question card
+            let movedToAnotherCard: Bool
+            if let lastLoc = lastHeadlessFieldClickLocation {
+                movedToAnotherCard = abs(location.y - lastLoc.y) > 45
+            } else {
+                movedToAnotherCard = true
+            }
+            if movedToAnotherCard {
+                if curIdx + 1 < fields.count,
+                   let nextIdx = ((curIdx + 1)..<fields.count).first(where: {
+                       fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType) && !fields[$0].isAnswered
+                   }) ?? ((curIdx + 1)..<fields.count).first(where: {
+                       fields[$0].isActionableQuestion && Self.isTextEntryType(fields[$0].questionType)
+                   }) {
+                    confirmFocus(fieldID: fields[nextIdx].id)
+                    lastHeadlessFieldClickLocation = location
+                    return
+                }
+            }
+            lastHeadlessFieldClickLocation = location
+        } else {
+            _ = ensureHeadlessTextEntryFocus(in: model)
+            lastHeadlessFieldClickLocation = location
+        }
     }
     
     public init(model: ApplicationFormModel) {
@@ -3337,14 +3489,30 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     @MainActor
     public func handleMouseDown(at location: CGPoint) {
         guard let model = formModel, model.isFormDetected, model.isAutoCaptureEnabled else { return }
-        guard let frontApp = NSWorkspace.shared.frontmostApplication,
-              DefaultApplicationFormDetector.isBrowserApplication(frontApp) else { return }
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        if !MorphEnvironment.isTestingEnvironment {
+            guard let frontApp = frontApp,
+                  DefaultApplicationFormDetector.isBrowserApplication(frontApp) else { return }
+        }
+        
+        let headless = isHeadlessBrowserActive(frontApp: frontApp, model: model)
+        if MorphEnvironment.isTestingEnvironment && headless {
+            handleHeadlessViewportClick(at: location, in: model)
+            return
+        }
         
         // Check if user clicked 'Clear form', navigation button, or dialog confirm
         let sys = AXUIElementCreateSystemWide()
         var hitRef: AXUIElement?
         if AXUIElementCopyElementAtPosition(sys, Float(location.x), Float(location.y), &hitRef) == .success,
            let hit = hitRef {
+            var hitPid: pid_t = 0
+            AXUIElementGetPid(hit, &hitPid)
+            if hitPid == ProcessInfo.processInfo.processIdentifier { return }
+            if let hApp = NSRunningApplication(processIdentifier: hitPid),
+               let bid = hApp.bundleIdentifier?.lowercased(),
+               bid.contains("com.morph.") || bid == "morph" { return }
+            
             let (isClear, isDialogConfirm) = Self.isClearFormElement(hit)
             if isDialogConfirm {
                 // User confirmed clearing the form in dialog: clear all answers immediately!
@@ -3360,6 +3528,26 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 // before the page unloads!
                 self.formModel?.syncLiveFormInputValues(isBackground: false)
             }
+            
+            if headless {
+                var rRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(hit, kAXRoleAttribute as CFString, &rRef)
+                let hitRole = (rRef as? String) ?? ""
+                if hitRole == "AXTextField" || hitRole == "AXSearchField" || hitRole == "AXComboBox" {
+                    // Clicked native browser address bar / search bar
+                    invalidateFocus()
+                    return
+                }
+                if hitRole == "AXButton" || hitRole == "AXRadioButton" || hitRole == "AXMenuButton" {
+                    // Clicked native browser toolbar / tab button
+                    return
+                }
+                handleHeadlessViewportClick(at: location, in: model)
+                return
+            }
+        } else if headless {
+            handleHeadlessViewportClick(at: location, in: model)
+            return
         }
         
         // 1. Immediately attempt hit test at click coordinate
@@ -3398,6 +3586,12 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                               frontName.contains(model.detectedAppName.lowercased()) ||
                               model.detectedAppName.lowercased().contains(frontName)
             guard isTargetApp else { return }
+            
+            // Never capture keystrokes typed into the browser's native address bar / search bar
+            if Self.isBrowserChromeInputFocused(for: frontApp) {
+                invalidateFocus()
+                return
+            }
         }
         
         // If Cmd or Ctrl is pressed:
@@ -3418,10 +3612,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         }
         guard (model.activeSession?.fields.count ?? 0) > 0 else { return }
         
-        let confirmedIdx = confirmedFieldIndex(in: model)
+        let headless = isHeadlessBrowserActive(frontApp: frontApp, model: model)
+        var confirmedIdx = confirmedFieldIndex(in: model)
         
         // 1. Backspace / Delete (KeyCode 51)
         if keyCode == 51 {
+            if confirmedIdx == nil && headless {
+                confirmedIdx = ensureHeadlessTextEntryFocus(in: model)
+            }
             if let idx = confirmedIdx {
                 if Self.isTextEntryType(model.activeSession?.fields[idx].questionType ?? ""),
                    !(model.activeSession?.fields[idx].value.isEmpty ?? true) {
@@ -3438,9 +3636,23 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             return
         }
         
-        // 2. Keys that move browser focus (Tab, Shift+Tab, arrows): the destination is unknown until
-        //    Accessibility reports the newly focused element, so never guess an index.
-        if keyCode == 48 || (123...126).contains(keyCode) {
+        // 2. Keys that move browser focus (Tab, Shift+Tab, arrows)
+        if keyCode == 48 {
+            if headless {
+                _ = advanceHeadlessFocus(in: model, backward: flags.contains(.maskShift))
+                return
+            }
+            invalidateFocus()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 25_000_000)
+                self?.syncFocusedElement()
+            }
+            return
+        }
+        if (123...126).contains(keyCode) {
+            if headless {
+                return
+            }
             invalidateFocus()
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 25_000_000)
@@ -3451,12 +3663,19 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         
         // 3. Return / Enter (KeyCode 36, 76)
         if keyCode == 36 || keyCode == 76 {
+            if confirmedIdx == nil && headless {
+                confirmedIdx = ensureHeadlessTextEntryFocus(in: model)
+            }
             if let idx = confirmedIdx, model.activeSession?.fields[idx].questionType == "paragraph" {
                 model.objectWillChange.send()
                 model.activeSession?.fields[idx].value.append("\n")
                 model.lastAutoCapturedAt = Date()
                 model.lastKeystrokeAt = Date()
                 model.saveDrafts()
+            } else if headless {
+                if let idx = confirmedIdx, !(model.activeSession?.fields[idx].value.isEmpty ?? true) {
+                    _ = advanceHeadlessFocus(in: model, backward: false)
+                }
             } else {
                 // Enter may submit, advance or toggle depending on the widget: re-resolve focus
                 invalidateFocus()
@@ -3475,6 +3694,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             return sc.value >= 32 && sc.value != 127 && (sc.value < 0xF700 || sc.value > 0xF8FF)
         }
         guard !printable.isEmpty else { return }
+        
+        if headless {
+            if let cur = confirmedIdx, !Self.isTextEntryType(model.activeSession?.fields[cur].questionType ?? "") {
+                confirmedIdx = ensureHeadlessTextEntryFocus(in: model)
+            } else if confirmedIdx == nil {
+                confirmedIdx = ensureHeadlessTextEntryFocus(in: model)
+            }
+        }
         
         guard let idx = confirmedIdx else {
             // Focus not confirmed yet: hold the text; it is flushed to the right field on confirmation
@@ -3806,8 +4033,8 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     private static let genericTitleNoise: Set<String> = [
         "your answer", "address and search bar", "search", "text", "edit", "input",
         "*", "required question", "clear selection", "other:", "other option", "required", "choose", "clear",
-        "tab", "tab name", "tab bar", "tabs", "new tab", "close tab", "active tab",
-        "window", "main window", "browser window", "address", "address bar",
+        "tab", "tab bar", "tabs", "new tab", "close tab", "active tab",
+        "window", "main window", "browser window", "address bar",
         "search or enter website name", "url", "polar", "google chrome", "chrome",
         "safari", "brave", "arc", "edge", "firefox", "ask polar", "morph",
         "back", "forward", "reload", "refresh", "home", "sidebar", "show sidebar", "hide sidebar",
@@ -4368,6 +4595,183 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         return snapshot.filter { !$0.value.isEmpty }
     }
     
+    /// Parses Mojo-serialized `Blink serialized form state version 10` records from Chromium/Polar SNSS session data
+    /// and maps any non-empty values for the given `formURL` onto the matching schema `fields`.
+    /// Only the LAST (most recent) record in the session data for each form page signature is used.
+    public static func extractBlinkFormStatePairs(
+        from sessionData: Data,
+        formURL: String,
+        fields: [FormInputField]
+    ) -> [(label: String, value: String)] {
+        guard !fields.isEmpty,
+              let targetFormID = DefaultApplicationFormDetector.extractFormIdentifier(from: formURL),
+              !targetFormID.isEmpty else { return [] }
+        
+        guard let needle = "Blink serialized form state".data(using: .utf16LittleEndian) else { return [] }
+        let mojoStringHeader = Data([0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                     0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        
+        var latestStringsBySignature: [String: [String]] = [:]
+        var signatureOrder: [String] = []
+        
+        var searchStart = sessionData.startIndex
+        while searchStart < sessionData.endIndex,
+              let range = sessionData.range(of: needle, options: [], in: searchStart..<sessionData.endIndex) {
+            let pos = range.lowerBound
+            searchStart = range.upperBound
+            
+            let lookbackStart = max(sessionData.startIndex, pos - 64)
+            let lookbackEnd = min(sessionData.endIndex, pos + 16)
+            guard let headerRange = sessionData.range(of: mojoStringHeader, options: .backwards, in: lookbackStart..<lookbackEnd) else {
+                continue
+            }
+            
+            var strings: [String] = []
+            var cur = headerRange.lowerBound
+            while cur + 24 <= sessionData.endIndex {
+                if sessionData.subdata(in: cur..<(cur + 16)) != mojoStringHeader {
+                    break
+                }
+                let byteLen = sessionData.subdata(in: (cur + 16)..<(cur + 20)).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
+                let charLen = sessionData.subdata(in: (cur + 20)..<(cur + 24)).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
+                if charLen > 10_000 || byteLen != 8 + charLen * 2 {
+                    break
+                }
+                let strEnd = cur + 24 + Int(charLen) * 2
+                guard strEnd <= sessionData.endIndex else { break }
+                let strBytes = sessionData.subdata(in: (cur + 24)..<strEnd)
+                let str = String(data: strBytes, encoding: .utf16LittleEndian) ?? ""
+                strings.append(str)
+                let alignedArray = (8 + Int(charLen) * 2 + 7) & ~7
+                cur += 16 + alignedArray
+            }
+            
+            guard strings.count >= 3 else { continue }
+            let formSig = strings[1]
+            guard DefaultApplicationFormDetector.extractFormIdentifier(from: formSig) == targetFormID else { continue }
+            if !signatureOrder.contains(formSig) {
+                signatureOrder.append(formSig)
+            }
+            latestStringsBySignature[formSig] = strings
+        }
+        
+        var extracted: [(label: String, value: String)] = []
+        for sig in signatureOrder {
+            guard let strs = latestStringsBySignature[sig], strs.count >= 3,
+                  let controlCount = Int(strs[2]), controlCount > 0 else { continue }
+            
+            var controls: [(name: String, type: String, value: String)] = []
+            var idx = 3
+            for _ in 0..<controlCount {
+                guard idx + 2 < strs.count else { break }
+                let cName = strs[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+                let cType = strs[idx + 1].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let valCount = Int(strs[idx + 2]) ?? 0
+                idx += 3
+                var val = ""
+                if valCount > 0 && idx < strs.count {
+                    val = strs[idx]
+                }
+                idx += max(0, valCount)
+                controls.append((name: cName, type: cType, value: val))
+            }
+            
+            // Determine page slice in `fields` from `[entry.XXXX ...]` in `sig`
+            var firstEntryKey: String? = nil
+            if let bracketStart = sig.range(of: "[entry."),
+               let bracketEnd = sig.range(of: "]", range: bracketStart.lowerBound..<sig.endIndex) {
+                let inside = String(sig[bracketStart.lowerBound..<bracketEnd.lowerBound]).replacingOccurrences(of: "[", with: "")
+                let tokens = inside.components(separatedBy: .whitespaces).filter { $0.hasPrefix("entry.") }
+                firstEntryKey = tokens.first
+            }
+            
+            let pageStartIdx: Int
+            if let fek = firstEntryKey, let foundIdx = fields.firstIndex(where: { $0.entryKey == fek }) {
+                pageStartIdx = foundIdx
+            } else {
+                pageStartIdx = 0
+            }
+            var pageEndIdx = fields.count
+            if pageStartIdx + 1 < fields.count {
+                for j in (pageStartIdx + 1)..<fields.count {
+                    if fields[j].questionType == "section" {
+                        pageEndIdx = j
+                        break
+                    }
+                }
+            }
+            let pageFields = Array(fields[pageStartIdx..<pageEndIdx])
+            
+            // 1. Named controls matching `entryKey` or `label`
+            for ctrl in controls where !ctrl.name.isEmpty && !ctrl.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let match = pageFields.first(where: { $0.entryKey?.lowercased() == ctrl.name.lowercased() }) ??
+                               fields.first(where: { $0.entryKey?.lowercased() == ctrl.name.lowercased() }) {
+                    extracted.append((label: match.label, value: ctrl.value.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+            }
+            
+            // 2. Unnamed `<textarea>` controls on this page matching `paragraph` fields on this page
+            let unnamedTextareas = controls.filter { $0.name.isEmpty && $0.type == "textarea" }
+            let pageParagraphs = pageFields.filter { $0.questionType == "paragraph" }
+            if !unnamedTextareas.isEmpty && unnamedTextareas.count == pageParagraphs.count {
+                for k in 0..<unnamedTextareas.count {
+                    let cleanVal = unnamedTextareas[k].value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanVal.isEmpty {
+                        extracted.append((label: pageParagraphs[k].label, value: cleanVal))
+                    }
+                }
+            }
+        }
+        return extracted
+    }
+    
+    /// Reads the most recently modified Polar `Session_*` file (only if modified during the active session window)
+    /// and extracts any non-empty Blink form state values for `formURL`.
+    public static func extractLatestPolarBlinkFormValues(
+        formURL: String,
+        fields: [FormInputField],
+        sessionStartedAt: Date
+    ) -> [(label: String, value: String)] {
+        guard !fields.isEmpty, !formURL.isEmpty else { return [] }
+        let polarBase = ("~/Library/Application Support/com.polar.browser.host" as NSString).expandingTildeInPath
+        var possibleDirs: [String] = [
+            (polarBase as NSString).appendingPathComponent("Sessions"),
+            (polarBase as NSString).appendingPathComponent("Default/Sessions")
+        ]
+        if let subdirs = try? FileManager.default.contentsOfDirectory(atPath: polarBase) {
+            for sub in subdirs {
+                let sessionDir = (polarBase as NSString).appendingPathComponent("\(sub)/Sessions")
+                var isDir: ObjCBool = false
+                if FileManager.default.fileExists(atPath: sessionDir, isDirectory: &isDir), isDir.boolValue {
+                    if !possibleDirs.contains(sessionDir) {
+                        possibleDirs.append(sessionDir)
+                    }
+                }
+            }
+        }
+        
+        // Strictly restrict to Session_* files modified after (sessionStartedAt - 15s) to prevent stale leakage
+        let minMtime = sessionStartedAt.addingTimeInterval(-15.0)
+        var candidates: [(path: String, mtime: Date)] = []
+        for dir in possibleDirs {
+            guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { continue }
+            for file in files where file.hasPrefix("Session_") {
+                let fullPath = (dir as NSString).appendingPathComponent(file)
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: fullPath),
+                   let mtime = attrs[.modificationDate] as? Date,
+                   mtime >= minMtime {
+                    candidates.append((fullPath, mtime))
+                }
+            }
+        }
+        candidates.sort { $0.mtime > $1.mtime }
+        guard let newest = candidates.first,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: newest.path)) else {
+            return []
+        }
+        return extractBlinkFormStatePairs(from: data, formURL: formURL, fields: fields)
+    }
+    
     private static func executeAppleScript(_ source: String) -> String? {
         if let script = NSAppleScript(source: source) {
             var errorDict: NSDictionary?
@@ -4548,6 +4952,7 @@ public final class ApplicationFormModel: ObservableObject {
             }
             for sessionIdx in loaded.indices {
                 loaded[sessionIdx].fields.removeAll { field in
+                    guard field.entryKey == nil else { return false }
                     let lbl = field.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
                     return bogusLabels.contains(lbl) || lbl.hasPrefix("all,") || lbl.hasPrefix("required,")
                 }
@@ -4576,9 +4981,14 @@ public final class ApplicationFormModel: ObservableObject {
         let fields = session.fields
         let isReqFilter = (filterMode == .requiredOnly && session.hasRequiredFields)
         
-        // If current index is valid, unanswered, and matches current filter mode, keep it
+        // If current index is valid, keep it when:
+        // 1. autoTracker has confirmed focus on this exact question (so activeFieldIndex never jumps mid-typing), OR
+        // 2. it is unanswered and matches current filter mode.
         if curIdx >= 0 && curIdx < fields.count {
             let curField = fields[curIdx]
+            if curField.isActionableQuestion, autoTracker?.confirmedFieldID == curField.id {
+                return
+            }
             if !curField.isAnswered && curField.isActionableQuestion {
                 if !isReqFilter || curField.isRequired {
                     return
@@ -5098,6 +5508,40 @@ public final class ApplicationFormModel: ObservableObject {
             }
         }
         
+        // 3b. Polar Chromium host Blink serialized form state synchronization (active session window only)
+        let isPolarHost = detectedBrowserFamily == .polar ||
+                          detectedAppName.lowercased() == "polar" ||
+                          session.sourceAppName.lowercased() == "polar"
+        if isPolarHost, !MorphEnvironment.isTestingEnvironment,
+           let formURL = session.sourceURL, !formURL.isEmpty, !schemaFields.isEmpty {
+            let startedAt = session.startedAt
+            if isBackground {
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    let blinkPairs = FormInputAutoTracker.extractLatestPolarBlinkFormValues(
+                        formURL: formURL,
+                        fields: schemaFields,
+                        sessionStartedAt: startedAt
+                    )
+                    guard !blinkPairs.isEmpty else { return }
+                    Task { @MainActor [weak self] in
+                        guard let self = self else { return }
+                        for pair in blinkPairs {
+                            self.applyExtractedInput(label: pair.label, value: pair.value)
+                        }
+                    }
+                }
+            } else {
+                let blinkPairs = FormInputAutoTracker.extractLatestPolarBlinkFormValues(
+                    formURL: formURL,
+                    fields: schemaFields,
+                    sessionStartedAt: startedAt
+                )
+                for pair in blinkPairs {
+                    applyExtractedInput(label: pair.label, value: pair.value)
+                }
+            }
+        }
+        
         // 4. Auto-detect recipient email from any field containing email
         for field in activeSession?.fields ?? [] {
             if (field.category == .contact || field.label.lowercased().contains("email")) && !field.value.isEmpty && field.value.contains("@") {
@@ -5238,20 +5682,36 @@ public final class ApplicationFormModel: ObservableObject {
         let cleanLbl = Self.cleanQuestionTitle(label)
         guard !cleanVal.isEmpty, !cleanLbl.isEmpty else { return false }
         
-        let ignoredTitles: Set<String> = [
-            "address", "address and search bar", "search", "search or enter website name",
-            "back", "forward", "reload", "refresh", "home", "sidebar", "show sidebar", "hide sidebar",
-            "extensions", "extension", "profiles", "profiles and menu", "profile", "bookmarks", "bookmark",
-            "bookmark this page", "downloads", "history", "settings", "options", "menu", "close", "minimize",
-            "zoom", "fullscreen", "new tab", "tab", "tab name", "all", "required", "ask polar", "polar", "morph"
+        let alwaysIgnoredChrome: Set<String> = [
+            "address and search bar", "search or enter website name", "ask polar", "morph"
         ]
         let lowerLbl = cleanLbl.lowercased()
-        if ignoredTitles.contains(lowerLbl) || lowerLbl.hasPrefix("all,") || lowerLbl.hasPrefix("required,") {
+        if alwaysIgnoredChrome.contains(lowerLbl) || lowerLbl.hasPrefix("all,") || lowerLbl.hasPrefix("required,") {
             return false
         }
         
+        let matchedIdx = Self.strictMatchingFieldIndex(for: cleanLbl, in: session.fields)
+        let matchesAuthoritativeSchemaField: Bool = {
+            guard let idx = matchedIdx else { return false }
+            return session.fields[idx].entryKey != nil ||
+                   session.fields[idx].label.caseInsensitiveCompare(cleanLbl) == .orderedSame
+        }()
+        
+        if !matchesAuthoritativeSchemaField {
+            let ignoredTitles: Set<String> = [
+                "address", "address and search bar", "search", "search or enter website name",
+                "back", "forward", "reload", "refresh", "home", "sidebar", "show sidebar", "hide sidebar",
+                "extensions", "extension", "profiles", "profiles and menu", "profile", "bookmarks", "bookmark",
+                "bookmark this page", "downloads", "history", "settings", "options", "menu", "close", "minimize",
+                "zoom", "fullscreen", "new tab", "tab", "tab name", "all", "required", "ask polar", "polar", "morph"
+            ]
+            if ignoredTitles.contains(lowerLbl) {
+                return false
+            }
+        }
+        
         var didUpdate = false
-        if let idx = Self.strictMatchingFieldIndex(for: cleanLbl, in: session.fields) {
+        if let idx = matchedIdx {
             if activeSession?.fields[idx].value != cleanVal {
                 objectWillChange.send()
                 activeSession?.fields[idx].value = cleanVal
@@ -5366,10 +5826,11 @@ public final class ApplicationFormModel: ObservableObject {
         advanceToFirstUnansweredFieldIfNeeded()
     }
 
-        public func selectActiveField(_ index: Int) {
+    public func selectActiveField(_ index: Int) {
         guard let fields = activeSession?.fields, index >= 0 && index < fields.count else { return }
         objectWillChange.send()
         self.activeFieldIndex = index
+        self.autoTracker?.confirmFocus(fieldID: fields[index].id)
     }
     
     public func updateFieldByIndex(_ index: Int, value: String) {

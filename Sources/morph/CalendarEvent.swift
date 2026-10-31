@@ -62,4 +62,9 @@ public struct CalendarEvent: Identifiable, Codable, Equatable {
         let diff = startTime.timeIntervalSinceNow
         return max(0, Int(diff / 60))
     }
+    
+    public var hasMeetLink: Bool {
+        guard let link = meetLink?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !link.isEmpty
+    }
 }

@@ -391,6 +391,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             let request = URLRequest(url: url)
             self.webView.load(request)
         }
+        showPlayerWindow()
     }
     
     public func goBack() {
@@ -557,7 +558,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
         
         let previousSignedIn = self.isSignedIn
-        self.isSignedIn = signedIn
+        if signedIn {
+            self.isSignedIn = true
+        } else if !self.currentURLString.contains("accounts.google.com") {
+            self.isSignedIn = false
+        }
         
         self.trackData = YTMTrackData(
             title: title.isEmpty ? "YouTube Music" : title,
@@ -574,17 +579,55 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             repeatMode: repeatMode,
             queue: parsedQueue,
             playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists,
-            isSignedIn: signedIn
+            isSignedIn: self.isSignedIn
         )
         
         // Auto-sync playlists and quick picks immediately when transitioning from not signed in to signed in
-        if signedIn && !previousSignedIn {
+        if self.isSignedIn && !previousSignedIn {
+            self.lastLibrarySync = nil
+            self.lastQuickPicksSync = nil
+            self.libraryError = nil
             fetchRealUserPlaylists()
             fetchQuickPicks()
         }
         
         if !title.isEmpty && title != "YouTube Music" {
             self.connectionState = "Connected • Direct WebKit"
+        }
+    }
+    
+    /// Checks WebKit's persistent cookie store for valid YouTube / Google session cookies
+    /// (`SAPISID`, `__Secure-3PAPISID`, `SID`, `__Secure-3PSID`) so `isSignedIn` transitions immediately upon login.
+    public func checkAuthCookies(completion: (@MainActor @Sendable (Bool) -> Void)? = nil) {
+        guard !MorphEnvironment.isTestingEnvironment else {
+            completion?(self.isSignedIn)
+            return
+        }
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { [weak self] cookies in
+            let authNames: Set<String> = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID", "SID", "__Secure-3PSID"]
+            let now = Date()
+            let hasValidAuthCookie = cookies.contains { cookie in
+                let domain = cookie.domain.lowercased()
+                guard domain.contains("youtube.com") || domain.contains("google.com") else { return false }
+                guard authNames.contains(cookie.name), !cookie.value.isEmpty else { return false }
+                if let expires = cookie.expiresDate, expires < now { return false }
+                return true
+            }
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if hasValidAuthCookie && !self.currentURLString.contains("accounts.google.com/ServiceLogin") {
+                    let prev = self.isSignedIn
+                    self.isSignedIn = true
+                    if !prev {
+                        self.lastLibrarySync = nil
+                        self.lastQuickPicksSync = nil
+                        self.libraryError = nil
+                        self.fetchRealUserPlaylists()
+                        self.fetchQuickPicks()
+                    }
+                }
+                completion?(self.isSignedIn)
+            }
         }
     }
     
@@ -600,26 +643,30 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         injectPeriodicObserver()
         self.isOffline = false
         
-        // Ensure cookies are synchronized and flushed to persistent store
-        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { _ in }
+        // Inspect and flush persistent auth cookies
+        checkAuthCookies()
         
         // Auto-detect if user just returned from Google Sign-In or arrived at YouTube Music
         if let url = webView.url?.absoluteString {
             if url.contains("music.youtube.com") {
+                // Force an immediate DOM state scrape so Morph UI updates without waiting
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    self?.evaluate("if (typeof window.morphSendUpdate === 'function') window.morphSendUpdate(true);")
+                }
                 // If watch URL was loaded directly, automatically start playback once page finishes loading
                 if url.contains("/watch") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                         self?.play()
                     }
                 }
-                // If returning from Google OAuth redirect, automatically fetch real library playlists
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                // Automatically fetch real library playlists and personalized quick picks
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
                     guard let self = self else { return }
-                    // Don't re-sync on every watch-page navigation; only when empty or stale (> 5 min).
+                    self.evaluate("if (typeof window.morphSendUpdate === 'function') window.morphSendUpdate(true);")
                     if self.userPlaylists.isEmpty || Date().timeIntervalSince(self.lastLibrarySync ?? .distantPast) > 300 {
                         self.fetchRealUserPlaylists()
                     }
-                    if self.quickPicks.isEmpty || Date().timeIntervalSince(self.lastQuickPicksSync ?? .distantPast) > 300 {
+                    if self.quickPicks.isEmpty || self.quickPicks == YTMParser.defaultQuickPicks || Date().timeIntervalSince(self.lastQuickPicksSync ?? .distantPast) > 300 {
                         self.fetchQuickPicks()
                     }
                 }
@@ -2390,7 +2437,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         if (!isSignedIn) {
                             var hasAvatar = document.querySelector('button#avatar-btn, img#avatar-btn, ytmusic-settings-button, tp-yt-paper-icon-button#avatar-btn, ytmusic-sign-in-button[hidden]');
                             var signInBtn = document.querySelector('ytmusic-sign-in-button:not([hidden]), a[href*="accounts.google.com/ServiceLogin"]:not([hidden])');
-                            if (hasAvatar && !signInBtn) {
+                            var hasAuthCookie = /(?:^|;\\s*)(?:SAPISID|__Secure-3PAPISID|__Secure-1PAPISID)=([^;]+)/.test(document.cookie || '');
+                            if ((hasAvatar || hasAuthCookie) && !signInBtn) {
                                 isSignedIn = true;
                             }
                         }
@@ -2731,18 +2779,40 @@ public struct PlayerWindowToolbarView: View {
             
             // Direct Google Sign-In Action Button / Signed In Indicator
             if engine.isSignedIn {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundColor(Color.green)
-                    Text("Signed In")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
+                HStack(spacing: 6) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundColor(Color.green)
+                        Text("Signed In")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Capsule())
+                    
+                    Button(action: {
+                        engine.fetchRealUserPlaylists()
+                        engine.fetchQuickPicks()
+                        engine.hidePlayerWindow()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("Done • Sync to Morph")
+                                .font(.system(size: 10.5, weight: .bold))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sync playlists & return to Morph Mini Player")
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.white.opacity(0.12))
-                .clipShape(Capsule())
             } else {
                 Button(action: {
                     engine.loadGoogleSignIn()

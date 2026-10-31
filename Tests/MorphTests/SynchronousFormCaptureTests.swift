@@ -140,4 +140,138 @@ final class SynchronousFormCaptureTests: XCTestCase {
         tracker.stop()
         XCTAssertFalse(tracker.isRunning)
     }
+
+    // MARK: - Polar Headless Web-Layer Real-Time Capture & Question Transitions
+
+    func testHeadlessPolarTypingAndMovingToNextQuestionViaTabAndClick() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(title: "Laguna Schools BP 2026: IA/SA Application Form", appName: "Polar")
+        model.isFormDetected = true
+        model.isAutoCaptureEnabled = true
+
+        model.activeSession?.fields = [
+            FormInputField(label: "PRIVACY NOTICE", value: "", questionType: "info"),
+            FormInputField(label: "I consent to sharing the information in this form", value: "", options: ["Yes"], questionType: "multipleChoice", isRequired: true, entryKey: "entry.236482357"),
+            FormInputField(label: "Basic Information", value: "", questionType: "section"),
+            FormInputField(label: "Full Name", value: "", category: .personal, questionType: "paragraph", isRequired: true, entryKey: "entry.2066173020"),
+            FormInputField(label: "Tab Name", value: "", category: .personal, questionType: "shortAnswer", isRequired: true, entryKey: "entry.576216565"),
+            FormInputField(label: "Institution", value: "", category: .experience, questionType: "shortAnswer", isRequired: true, entryKey: "entry.1333393381")
+        ]
+
+        let tracker = FormInputAutoTracker(model: model)
+        tracker.isHeadlessWebLayerMode = true
+        model.autoTracker = tracker
+
+        // 1. User clicks into Full Name in Polar's web viewport (y = 320) and types "Minh Nguyen"
+        tracker.handleMouseDown(at: CGPoint(x: 400, y: 320))
+        for ch in "Minh Nguyen" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(ch))
+            // Simulate periodic 0.5s poll firing while user is mid-typing: must NOT yank activeFieldIndex away!
+            model.advanceToFirstUnansweredFieldIfNeeded()
+        }
+
+        XCTAssertEqual(model.activeSession?.fields[3].value, "Minh Nguyen", "Full Name must capture typed characters synchronously without staying at Awaiting input")
+        XCTAssertEqual(model.activeFieldIndex, 3)
+
+        // 2. User moves onto Question 2 ("Tab Name") by clicking the next question card (y = 480) and types "Minh"
+        tracker.handleMouseDown(at: CGPoint(x: 400, y: 480))
+        for ch in "Minh" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(ch))
+        }
+
+        XCTAssertEqual(model.activeSession?.fields[3].value, "Minh Nguyen", "Previous question answer must be preserved")
+        XCTAssertEqual(model.activeSession?.fields[4].value, "Minh", "Second question (Tab Name) must capture answer synchronously")
+        XCTAssertEqual(model.activeFieldIndex, 4)
+
+        // 3. User presses Tab (keyCode 48) to advance to Question 3 ("Institution") and types "Stanford"
+        tracker.handleKeyStroke(keyCode: 48, flags: [], characters: "\t")
+        for ch in "Stanford" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(ch))
+        }
+
+        XCTAssertEqual(model.activeSession?.fields[3].value, "Minh Nguyen")
+        XCTAssertEqual(model.activeSession?.fields[4].value, "Minh")
+        XCTAssertEqual(model.activeSession?.fields[5].value, "Stanford")
+        XCTAssertEqual(model.activeFieldIndex, 5)
+    }
+
+    func testTabNameSchemaQuestionIsCapturedAndPersistedAcrossDraftReload() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(
+            title: "Laguna Schools BP 2026: IA/SA Application Form",
+            appName: "Polar",
+            url: "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform"
+        )
+        model.isFormDetected = true
+        model.activeSession?.fields = [
+            FormInputField(label: "Full Name", value: "Minh Nguyen", category: .personal, questionType: "paragraph", isRequired: true, entryKey: "entry.2066173020"),
+            FormInputField(label: "Tab Name", value: "", category: .personal, questionType: "shortAnswer", isRequired: true, entryKey: "entry.576216565")
+        ]
+
+        // Extracting an answer for "Tab Name" must succeed when "Tab Name" is an authoritative schema field
+        XCTAssertTrue(model.applyExtractedInput(label: "Tab Name", value: "Minh N."))
+        XCTAssertEqual(model.activeSession?.fields[1].value, "Minh N.")
+
+        // Saving and reloading drafts must NOT strip the "Tab Name" schema question
+        model.saveDrafts()
+        let reloaded = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        reloaded.loadDrafts()
+        let savedSession = reloaded.historySessions.first
+        XCTAssertEqual(savedSession?.fields.count, 2)
+        XCTAssertEqual(savedSession?.fields.first(where: { $0.label == "Tab Name" })?.value, "Minh N.")
+    }
+
+    func testBlinkSerializedFormStateExtractionMapsGoogleFormPageParagraphs() {
+        func encodeMojoString16(_ str: String) -> Data {
+            var out = Data([0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+            let utf16 = Array(str.utf16)
+            var byteLen = UInt32(8 + utf16.count * 2)
+            var charLen = UInt32(utf16.count)
+            out.append(Data(bytes: &byteLen, count: 4))
+            out.append(Data(bytes: &charLen, count: 4))
+            for u in utf16 {
+                var le = u.littleEndian
+                out.append(Data(bytes: &le, count: 2))
+            }
+            let aligned = (8 + utf16.count * 2 + 7) & ~7
+            let pad = aligned - (8 + utf16.count * 2)
+            if pad > 0 {
+                out.append(Data(repeating: 0, count: pad))
+            }
+            return out
+        }
+
+        let strings = [
+            "\n\r?% Blink serialized form state version 10 \n\r=&",
+            "https://docs.google.com/forms/u/0/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/formResponse [entry.2066173020 entry.576216565 ] #0",
+            "2",
+            "", "textarea", "1", "Minh Nguyen",
+            "", "textarea", "0"
+        ]
+        var blob = Data(repeating: 0, count: 32)
+        for s in strings {
+            blob.append(encodeMojoString16(s))
+        }
+        blob.append(Data(repeating: 0, count: 32))
+
+        let fields = [
+            FormInputField(label: "PRIVACY NOTICE", value: "", questionType: "info"),
+            FormInputField(label: "I consent", value: "", questionType: "multipleChoice", isRequired: true, entryKey: "entry.236482357"),
+            FormInputField(label: "Basic Information", value: "", questionType: "section"),
+            FormInputField(label: "Full Name", value: "", questionType: "paragraph", isRequired: true, entryKey: "entry.2066173020"),
+            FormInputField(label: "Tab Name", value: "", questionType: "shortAnswer", isRequired: true, entryKey: "entry.576216565"),
+            FormInputField(label: "Alternative Contact", value: "", questionType: "paragraph", isRequired: false, entryKey: "entry.1966844551")
+        ]
+
+        let pairs = FormInputAutoTracker.extractBlinkFormStatePairs(
+            from: blob,
+            formURL: "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform",
+            fields: fields
+        )
+
+        XCTAssertEqual(pairs.count, 1)
+        XCTAssertEqual(pairs.first?.label, "Full Name")
+        XCTAssertEqual(pairs.first?.value, "Minh Nguyen")
+    }
 }
