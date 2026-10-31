@@ -526,9 +526,10 @@ public struct MorphIslandView: View {
                     .buttonStyle(.plain)
                     .help("Profile & Preferences (⌘5 or ⌘,)")
                     
-                    Text(model.selectedTab == .timer ? "Focus" : model.selectedTab.rawValue)
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    Text((model.selectedTab == .timer ? "Focus" : model.selectedTab.rawValue).uppercased())
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                         .foregroundColor(model.theme.textTertiary)
+                        .tracking(1.0)
                         .lineLimit(1)
                 }
                 
