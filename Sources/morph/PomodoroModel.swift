@@ -64,9 +64,14 @@ public final class PomodoroModel: ObservableObject {
     }
     
     public var formattedTime: String {
-        let minutes = Int(timeRemaining) / 60
+        let hours = Int(timeRemaining) / 3600
+        let minutes = (Int(timeRemaining) % 3600) / 60
         let seconds = Int(timeRemaining) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%02d:%02d", minutes, seconds)
+        }
     }
     
     public var progress: Double {

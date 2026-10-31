@@ -22,27 +22,18 @@ public struct PomodoroView: View {
     
     // MARK: - Computed Dial Metrics
     
-    /// Visual fraction of the circle to render as active arc (0.05 ... 1.0)
+    /// Visual fraction of the circle to render as active arc (0.04 ... 1.0 on a 120m clock)
     private var arcFraction: Double {
         if let dragMinutes = dragMinutes {
-            // Dragging: map 5m...60m to 0...1 (or 120m clock)
-            if dragMinutes <= 60 {
-                return max(0.06, min(1.0, Double(dragMinutes) / 60.0))
-            } else {
-                return max(0.06, min(1.0, Double(dragMinutes) / 120.0))
-            }
+            return max(0.04, min(1.0, Double(dragMinutes) / 120.0))
         } else if pomodoro.isRunning {
             // Running: arc represents remaining time fraction down to 0
             guard pomodoro.totalDuration > 0 else { return 0 }
             return max(0.02, min(1.0, pomodoro.timeRemaining / pomodoro.totalDuration))
         } else {
-            // Idle/Ready: arc represents the dialed session duration on a 60m clock
+            // Idle/Ready: arc represents the dialed session duration on a 120m clock
             let minutes = Double(pomodoro.currentMinutes)
-            if minutes <= 60 {
-                return max(0.06, min(1.0, minutes / 60.0))
-            } else {
-                return max(0.06, min(1.0, minutes / 120.0))
-            }
+            return max(0.04, min(1.0, minutes / 120.0))
         }
     }
     
@@ -57,7 +48,13 @@ public struct PomodoroView: View {
     
     private var displayedTime: String {
         if let dragMinutes = dragMinutes {
-            return String(format: "%02d:00", dragMinutes)
+            let hours = dragMinutes / 60
+            let mins = dragMinutes % 60
+            if hours > 0 {
+                return String(format: "%d:%02d:00", hours, mins)
+            } else {
+                return String(format: "%02d:00", dragMinutes)
+            }
         }
         return pomodoro.formattedTime
     }
@@ -210,8 +207,10 @@ public struct PomodoroView: View {
                     
                     // Large Bold Tabular Digits
                     Text(displayedTime)
-                        .font(.system(size: 25, weight: .bold, design: .monospaced))
+                        .font(.system(size: displayedTime.count > 5 ? 20 : 25, weight: .bold, design: .monospaced))
                         .foregroundColor(theme.textPrimary)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
                         .tracking(-0.5)
                     
                     // Status / Action Indicator
@@ -251,13 +250,13 @@ public struct PomodoroView: View {
         if theta < 0 { theta += 2 * .pi }
         let fraction = theta / (2 * .pi)
         
-        // Map 0...1 to 5...60 minutes (or beyond 60 if extending)
-        let rawMinutes = Int(round(fraction * 60.0))
+        // Map 0...1 to 5...120 minutes (up to 2 hours) in 5m steps
+        let rawMinutes = Int(round(fraction * 120.0))
         let snappedMinutes: Int
         if rawMinutes <= 0 {
             snappedMinutes = 5
-        } else if rawMinutes >= 60 {
-            snappedMinutes = 60
+        } else if rawMinutes >= 120 {
+            snappedMinutes = 120
         } else {
             snappedMinutes = max(5, ((rawMinutes + 2) / 5) * 5)
         }

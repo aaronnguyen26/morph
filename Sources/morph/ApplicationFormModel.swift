@@ -3027,6 +3027,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             model.activeSession?.fields[idx].value.append(pendingText)
             model.markBrowserCaptured(fieldID)
             model.lastAutoCapturedAt = Date()
+            model.lastKeystrokeAt = Date()
             model.saveDrafts()
         }
         pendingText = ""
@@ -3380,6 +3381,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     model.objectWillChange.send()
                     model.activeSession?.fields[idx].value.removeLast()
                     model.lastAutoCapturedAt = Date()
+                    model.lastKeystrokeAt = Date()
                     model.saveDrafts()
                 }
             } else if !pendingText.isEmpty {
@@ -3406,6 +3408,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 model.objectWillChange.send()
                 model.activeSession?.fields[idx].value.append("\n")
                 model.lastAutoCapturedAt = Date()
+                model.lastKeystrokeAt = Date()
                 model.saveDrafts()
             } else {
                 // Enter may submit, advance or toggle depending on the widget: re-resolve focus
@@ -3441,6 +3444,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         model.activeSession?.fields[idx].value.append(printable)
         if let fid = model.activeSession?.fields[idx].id { model.markBrowserCaptured(fid) }
         model.lastAutoCapturedAt = Date()
+        model.lastKeystrokeAt = Date()
         model.saveDrafts()
         
         // Email detection: if user types email in any field, auto-update recipientEmail
@@ -3648,7 +3652,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         if elemRole == "AXTextField" || elemRole == "AXTextArea" || elemRole == "AXSearchField" || elemRole == "AXComboBox" {
             let tv = textVal ?? ""
             let current = model.activeSession?.fields[activeIdx].value ?? ""
-            let isQuiet = model.lastAutoCapturedAt.map { Date().timeIntervalSince($0) >= 0.35 } ?? true
+            let isQuiet = model.lastKeystrokeAt.map { Date().timeIntervalSince($0) >= 0.35 } ?? true
             
             if current != tv {
                 if !tv.isEmpty {
@@ -3787,7 +3791,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         func add(_ raw: String?, minLength: Int = 1) {
             guard out.count < limit, let raw = raw else { return }
             let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty, !t.hasPrefix("http"), t != "*" else { return }
+            guard !t.isEmpty, !t.hasPrefix("http"), t != "*", !t.contains("@") else { return }
             let c = ApplicationFormModel.cleanQuestionTitle(t)
             guard c.count >= minLength, !genericTitleNoise.contains(c.lowercased()), !genericTitleNoise.contains(t.lowercased()) else { return }
             if !out.contains(c) { out.append(c) }
@@ -4355,6 +4359,7 @@ public final class ApplicationFormModel: ObservableObject {
     @Published public var activeFieldIndex: Int = 0
     @Published public var isAutoRetrievingSchema: Bool = false
     @Published public var lastAutoCapturedAt: Date? = nil
+    @Published public var lastKeystrokeAt: Date? = nil
     @Published public var filterMode: FormFieldFilterMode = .requiredOnly
     @Published public var consecutiveMissedDetections: Int = 0
     
@@ -4363,8 +4368,8 @@ public final class ApplicationFormModel: ObservableObject {
     /// into Morph are never wiped by a background scan.
     public private(set) var browserCapturedFieldIDs: Set<UUID> = []
     public private(set) var manuallyEditedFieldIDs: Set<UUID> = []
-    /// Minimum quiet period after any capture before an empty browser read may clear a field.
-    public static let clearGuardInterval: TimeInterval = 1.5
+    /// Minimum quiet period after a keystroke before an empty browser read may clear a field.
+    public static let clearGuardInterval: TimeInterval = 0.35
     
     public var visibleFields: [FormInputField] {
         guard let session = activeSession else { return [] }
@@ -4459,12 +4464,21 @@ public final class ApplicationFormModel: ObservableObject {
         guard let data = UserDefaults.standard.data(forKey: Self.draftsStorageKey) else { return }
         do {
             var loaded = try JSONDecoder().decode([ApplicationFormSession].self, from: data)
-            let bogusLabels: Set<String> = ["all", "required", "polar", "morph", "ask polar"]
+            let bogusLabels: Set<String> = [
+                "all", "required", "polar", "morph", "ask polar",
+                "tab name", "tab", "tab bar", "address and search bar", "address",
+                "search or enter website name", "search", "new tab", "close tab", "active tab"
+            ]
             // Strictly exclude any drafts that were erroneously captured from Antigravity, code editors, or non-form apps
             loaded.removeAll { session in
                 let app = session.sourceAppName.lowercased()
                 let title = session.formTitle.lowercased()
+                let url = session.sourceURL?.lowercased() ?? ""
                 return app.contains("antigravity") || title.contains("antigravity") ||
+                       title.contains("youtube") || url.contains("youtube.com") ||
+                       url.contains("instructure.com") || url.contains("canvas") ||
+                       url.contains("blackboard") || url.contains("moodle") ||
+                       url.contains("brightspace") ||
                        DefaultApplicationFormDetector.isNonFormApplication(bundleID: "", appName: session.sourceAppName)
             }
             for sessionIdx in loaded.indices {
@@ -4480,6 +4494,7 @@ public final class ApplicationFormModel: ObservableObject {
                 }
             }
             self.historySessions = loaded
+            self.saveDrafts()
         } catch {
             NSLog("[MORPH-FORM] Failed to decode form drafts: %@", error.localizedDescription)
         }
@@ -5201,25 +5216,23 @@ public final class ApplicationFormModel: ObservableObject {
         let nonEmpties = pairs.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
         // 1. Check if the entire form was cleared in the browser (all scanned inputs are empty while Morph had answers)
-        let isQuiet = lastAutoCapturedAt.map { now.timeIntervalSince($0) >= Self.clearGuardInterval } ?? true
+        let lastCapture = lastKeystrokeAt ?? lastAutoCapturedAt
+        let isQuiet = lastCapture.map { now.timeIntervalSince($0) >= Self.clearGuardInterval } ?? true
         if nonEmpties.isEmpty && !pairs.isEmpty && session.answeredCount > 0 {
             // Ensure the empty pairs in the snapshot actually correspond to the answered fields of this form
             let answeredFields = session.fields.filter { $0.isAnswered }
+            let hasNoManualEdits = answeredFields.allSatisfy { !self.manuallyEditedFieldIDs.contains($0.id) }
             let matchedAnsweredCount = answeredFields.filter { field in
                 pairs.contains(where: { ApplicationFormModel.strictMatchingFieldIndex(for: $0.label, in: [field]) != nil }) ||
                 pairs.contains(where: { Self.normalizeFieldLabel($0.label) == Self.normalizeFieldLabel(field.label) })
             }.count
             
-            // Only consider full-form clear if none of the answered fields were manually edited in Morph
-            let hasNoManualEdits = answeredFields.allSatisfy { !self.manuallyEditedFieldIDs.contains($0.id) }
+            // Multi-field clear (e.g. "Clear form" clicked clearing 2+ questions simultaneously):
+            let isMultiFieldClear = (matchedAnsweredCount >= 2 && hasNoManualEdits)
+            // Single-field full clear during quiet period:
+            let isQuietFullClear = (isQuiet && matchedAnsweredCount > 0 && hasNoManualEdits)
             
-            // Simultaneous multi-field clear (e.g. "Clear form" button clicked clearing 2+ questions):
-            let isMultiFieldFormClear = (matchedAnsweredCount >= 2 && matchedAnsweredCount == session.answeredCount && hasNoManualEdits)
-            
-            // For single answered field or quiet period: require guard interval to elapse and no manual edits
-            let isQuietFullClear = (isQuiet && matchedAnsweredCount > 0 && matchedAnsweredCount == session.answeredCount && hasNoManualEdits)
-            
-            if isMultiFieldFormClear || isQuietFullClear {
+            if isMultiFieldClear || isQuietFullClear {
                 let clearedCount = session.answeredCount
                 clearAllFormAnswers()
                 return clearedCount
@@ -5242,7 +5255,7 @@ public final class ApplicationFormModel: ObservableObject {
             let field = session.fields[idx]
             guard !field.value.isEmpty else { continue }
             guard !manuallyEditedFieldIDs.contains(field.id) else { continue }
-            if let last = lastAutoCapturedAt, now.timeIntervalSince(last) < Self.clearGuardInterval { continue }
+            if let last = lastCapture, now.timeIntervalSince(last) < Self.clearGuardInterval { continue }
             objectWillChange.send()
             activeSession?.fields[idx].value = ""
             browserCapturedFieldIDs.remove(field.id)

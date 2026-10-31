@@ -444,8 +444,10 @@ public final class NotchModel: ObservableObject {
         pomodoro.$completedSessionsCount
             .dropFirst()
             .sink { [weak self] _ in
+                guard let self = self else { return }
+                let minutes = max(1, Int(self.pomodoro.totalDuration / 60))
                 Task { [weak self] in
-                    await self?.supabase.recordFocusSession(minutes: 25)
+                    await self?.supabase.recordFocusSession(minutes: minutes, mode: "focus", label: "Focus Session")
                 }
             }
             .store(in: &cancellables)

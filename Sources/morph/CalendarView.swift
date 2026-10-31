@@ -78,10 +78,10 @@ public struct CalendarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    // MARK: - Left Deck (Mini Month Grid, Urgency Bar & Notification Hub)
+    // MARK: - Left Deck (Full Month Grid & Status Footer)
     private var leftMonthDeck: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Month Header with Seamless Jump & Nav Buttons
+        VStack(alignment: .leading, spacing: 3) {
+            // Month Header with Nav Buttons
             HStack(spacing: 4) {
                 Text(monthYearString(for: calendar.displayedMonth))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -92,9 +92,9 @@ public struct CalendarView: View {
                 HStack(spacing: 3) {
                     Button(action: { calendar.previousMonth() }) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 7.5, weight: .bold))
+                            .font(.system(size: 7, weight: .bold))
                             .foregroundColor(Color.white.opacity(0.7))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 18, height: 18)
                             .background(Color.white.opacity(0.08))
                             .clipShape(Circle())
                     }
@@ -103,10 +103,10 @@ public struct CalendarView: View {
                     
                     Button(action: { calendar.goToToday() }) {
                         Text("Today")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 7.5, weight: .bold))
                             .foregroundColor(.black)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
                             .background(Color.white)
                             .clipShape(Capsule())
                     }
@@ -115,9 +115,9 @@ public struct CalendarView: View {
                     
                     Button(action: { calendar.nextMonth() }) {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 7.5, weight: .bold))
+                            .font(.system(size: 7, weight: .bold))
                             .foregroundColor(Color.white.opacity(0.7))
-                            .frame(width: 20, height: 20)
+                            .frame(width: 18, height: 18)
                             .background(Color.white.opacity(0.08))
                             .clipShape(Circle())
                     }
@@ -125,166 +125,60 @@ public struct CalendarView: View {
                     .help("Next Month")
                 }
             }
+            .padding(.bottom, 1)
             
             // Day of Week Header (M T W T F S S)
             let weekdays = ["M", "T", "W", "T", "F", "S", "S"]
             HStack(spacing: 0) {
                 ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
                     Text(day)
-                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.4))
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.35))
                         .frame(maxWidth: .infinity)
                 }
             }
-            .padding(.vertical, 1)
+            .padding(.vertical, 0.5)
             
-            // 7-Column Calendar Grid with Broad Touch Targets
+            // 7-Column Full Month Calendar Grid (All 6 rows 100% visible)
             calendarGrid
             
-            Spacer(minLength: 2)
+            Spacer(minLength: 0)
             
-            // Upcoming Meeting Countdown / Live Dynamic Status Pill
-            if let next = calendar.nextUpcomingEvent {
-                HStack(spacing: 5) {
-                    Image(systemName: next.isStartingSoon ? "bell.badge.fill" : "calendar.badge.clock")
-                        .font(.system(size: 7.5))
-                        .foregroundColor(next.isStartingSoon ? .white : Color.white.opacity(0.7))
-                    
-                    Text(next.minutesUntilStart == 0 ? "Now: \(next.title)" : "In \(next.minutesUntilStart)m: \(next.title)")
-                        .font(.system(size: 8, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
+            // Footer: User Email / Status, Selected Day Count & Quick Sync
+            HStack(spacing: 4) {
+                if let email = calendar.configuredUserEmail, !email.isEmpty {
+                    Text(email)
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.55))
                         .lineLimit(1)
-                    
-                    Spacer(minLength: 2)
-                    
-                    if let callURL = resolvedMeetingURL(for: next) {
-                        let service = MeetingService.detect(url: callURL)
-                        Button(action: { triggerTakeCall(event: next) }) {
-                            HStack(spacing: 2.5) {
-                                Image(systemName: service.iconName)
-                                    .font(.system(size: 6))
-                                Text("Take Call")
-                                    .font(.system(size: 7, weight: .bold))
-                            }
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(Color.white)
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Take \(service.rawValue) Call in Morph")
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3.5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white.opacity(next.isStartingSoon ? 0.12 : 0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.white.opacity(next.isStartingSoon ? 0.25 : 0.08), lineWidth: 0.5)
-                )
-            }
-            
-            // Seamless Multi-Action Bar (Notification Toggle & Lead Time, Sync, Browser)
-            VStack(spacing: 4) {
-                // Row 1: Account status & Instant Sync (Zero status dots)
-                HStack(spacing: 5) {
-                    if let email = calendar.configuredUserEmail, !email.isEmpty {
-                        Text(email)
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.85))
-                            .lineLimit(1)
-                    } else {
-                        Text(calendar.isSignedIn ? "Google Calendar" : "Calendar Sync")
-                            .font(.system(size: 8, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.75))
-                    }
-                    
-                    Spacer()
-                    
-                    // Notification Bell Quick-Toggle
-                    Button(action: { calendar.toggleNotifications() }) {
-                        HStack(spacing: 2) {
-                            Image(systemName: calendar.notificationsEnabled ? "bell.fill" : "bell.slash")
-                                .font(.system(size: 7))
-                            Text("\(calendar.notificationLeadMinutes)m")
-                                .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        }
-                        .foregroundColor(calendar.notificationsEnabled ? .white : Color.white.opacity(0.4))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(calendar.notificationsEnabled ? 0.14 : 0.05))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help(calendar.notificationsEnabled ? "Alerts enabled \(calendar.notificationLeadMinutes)m before. Tap to toggle." : "Alerts muted. Tap to enable.")
-                    
-                    // Instant Manual Refresh Button
-                    Button(action: { calendar.syncWithGoogle() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.85))
-                            .frame(width: 20, height: 20)
-                            .background(Color.white.opacity(0.08))
-                            .clipShape(Circle())
-                            .contentShape(Circle())
-                            .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
-                            .animation(calendar.isSyncing ? Animation.linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Sync Calendar Events Now")
+                } else {
+                    Text(calendar.isSignedIn ? "Google Calendar" : "Local Calendar")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.55))
+                        .lineLimit(1)
                 }
                 
-                // Row 2: Direct Action Capsules (Alert Lead Time & Sign In / Google Web)
-                HStack(spacing: 4) {
-                    // Alert Lead Time Selector
-                    Button(action: { calendar.cycleNotificationLeadMinutes() }) {
-                        HStack(spacing: 2) {
-                            Image(systemName: "timer")
-                                .font(.system(size: 6.5))
-                            Text("\(calendar.notificationLeadMinutes)m lead")
-                                .font(.system(size: 7, weight: .semibold))
-                        }
-                        .foregroundColor(Color.white.opacity(0.8))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Cycle Notification Lead Time (5m, 10m, 15m, 30m)")
-                    
-                    Spacer()
-                    
-                    // Single Sign In / Open Google Calendar Tab Button
-                    Button(action: {
-                        if calendar.isSignedIn {
-                            calendar.openGoogleCalendarInBrowser()
-                        } else {
-                            calendar.signInWithGoogle()
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: calendar.isSignedIn ? "arrow.up.right" : "globe")
-                                .font(.system(size: 6.5, weight: .bold))
-                            Text(calendar.isSignedIn ? "Google" : "Sign In")
-                                .font(.system(size: 7.5, weight: .bold))
-                        }
-                        .foregroundColor(calendar.isSignedIn ? .white : .black)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(calendar.isSignedIn ? Color.white.opacity(0.16) : Color.white)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help(calendar.isSignedIn ? "Open Google Calendar in Browser (reusing tab)" : "Sign in to Google Account")
+                Spacer()
+                
+                let count = calendar.eventsForSelectedDate.count
+                Text(count == 0 ? "No events" : "\(count) \(count == 1 ? "event" : "events")")
+                    .font(.system(size: 7, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.55))
+                
+                Button(action: { calendar.syncWithGoogle() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.7))
+                        .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
+                        .animation(calendar.isSyncing ? Animation.linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
                 }
+                .buttonStyle(.plain)
+                .help("Sync Calendar Events Now")
             }
             .padding(.top, 1)
         }
-        .padding(9)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
         .frame(maxHeight: .infinity)
         .background(Color(white: 0.07))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -299,7 +193,7 @@ public struct CalendarView: View {
         let days = generateDaysInMonth(for: calendar.displayedMonth)
         let cal = Calendar.current
         
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 7), spacing: 2) {
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 1.5), count: 7), spacing: 1.5) {
             ForEach(Array(days.enumerated()), id: \.offset) { _, date in
                 if let date = date {
                     let isSelected = cal.isDate(date, inSameDayAs: calendar.selectedDate)
@@ -309,29 +203,29 @@ public struct CalendarView: View {
                     Button(action: {
                         calendar.selectedDate = date
                     }) {
-                        VStack(spacing: 1) {
+                        VStack(spacing: 0.5) {
                             Text("\(cal.component(.day, from: date))")
-                                .font(.system(size: 8.5, weight: (isToday || isSelected) ? .bold : .medium))
+                                .font(.system(size: 8, weight: (isToday || isSelected) ? .bold : .medium))
                                 .foregroundColor(isSelected ? .black : (isToday ? .white : Color.white.opacity(0.85)))
                             
                             if hasEvents {
-                                Capsule()
-                                    .fill(isSelected ? Color.black : Color.white.opacity(0.8))
-                                    .frame(width: 5, height: 1.5)
+                                Circle()
+                                    .fill(isSelected ? Color.black : (isToday ? Color.white : Color.white.opacity(0.7)))
+                                    .frame(width: 2.5, height: 2.5)
                             } else {
-                                Color.clear.frame(width: 5, height: 1.5)
+                                Color.clear.frame(width: 2.5, height: 2.5)
                             }
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .frame(height: 22)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 16.5)
                         .contentShape(Rectangle())
                         .background(isSelected ? Color.white : (isToday ? Color.white.opacity(0.18) : Color.clear))
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 } else {
                     Color.clear
-                        .frame(height: 22)
+                        .frame(height: 16.5)
                 }
             }
         }
@@ -466,19 +360,19 @@ public struct CalendarView: View {
                 // Events List for Signed In User
                 let dayEvents = calendar.eventsForSelectedDate
                 if dayEvents.isEmpty {
-                    VStack(spacing: 5) {
-                        Spacer(minLength: 8)
+                    VStack(spacing: 3.5) {
+                        Spacer(minLength: 2)
                         Image(systemName: "calendar.badge.clock")
-                            .font(.system(size: 18))
+                            .font(.system(size: 15))
                             .foregroundColor(Color.white.opacity(0.3))
                         
                         if let email = calendar.configuredUserEmail, !email.isEmpty {
                             Text(calendar.events.isEmpty ? "No events found for \(email)" : "No events scheduled for this day")
-                                .font(.system(size: 8.5, weight: .medium))
+                                .font(.system(size: 8, weight: .medium))
                                 .foregroundColor(Color.white.opacity(0.55))
                         } else {
                             Text(calendar.events.isEmpty ? "No Google Calendar events loaded" : "No events scheduled for this day")
-                                .font(.system(size: 8.5, weight: .medium))
+                                .font(.system(size: 8, weight: .medium))
                                 .foregroundColor(Color.white.opacity(0.55))
                         }
                         
@@ -499,7 +393,7 @@ public struct CalendarView: View {
                                 }
                                 .foregroundColor(.black)
                                 .padding(.horizontal, 8)
-                                .padding(.vertical, 3.5)
+                                .padding(.vertical, 2.5)
                                 .background(Color.white)
                                 .clipShape(Capsule())
                             }
@@ -515,21 +409,21 @@ public struct CalendarView: View {
                                 }
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 7)
-                                .padding(.vertical, 3.5)
+                                .padding(.vertical, 2.5)
                                 .background(Color.white.opacity(0.12))
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
                             .help("Open Google Calendar in Browser")
                         }
-                        .padding(.top, 2)
+                        .padding(.top, 1)
                         
-                        Spacer(minLength: 8)
+                        Spacer(minLength: 4)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView(.vertical, showsIndicators: true) {
-                        LazyVStack(spacing: 5) {
+                        LazyVStack(spacing: 4) {
                             ForEach(dayEvents) { event in
                                 eventCardRow(event: event)
                             }
@@ -540,7 +434,8 @@ public struct CalendarView: View {
                 }
             }
         }
-        .padding(9)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
         .frame(maxHeight: .infinity)
         .background(Color(white: 0.07))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1157,7 +1052,7 @@ public struct CalendarView: View {
         return f.string(from: date)
     }
     
-    private func generateDaysInMonth(for date: Date) -> [Date?] {
+    public func generateDaysInMonth(for date: Date) -> [Date?] {
         let cal = Calendar.current
         guard let range = cal.range(of: .day, in: .month, for: date),
               let firstDay = cal.date(from: cal.dateComponents([.year, .month], from: date)) else {
