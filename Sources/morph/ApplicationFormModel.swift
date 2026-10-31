@@ -2985,7 +2985,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     private var confirmedElement: AXUIElement?
     public private(set) var pendingText: String = ""
     private var pendingSince: Date?
-    public static let pendingTTL: TimeInterval = 2.0
+    public static let pendingTTL: TimeInterval = 30.0
     
     /// Question types whose answer is produced by typing text (as opposed to picking an option).
     public static func isTextEntryType(_ questionType: String) -> Bool {
@@ -3020,7 +3020,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             model.objectWillChange.send()
             model.activeFieldIndex = idx
         }
-        let fresh = pendingSince.map { Date().timeIntervalSince($0) < Self.pendingTTL } ?? false
+        let fresh = pendingSince.map { Date().timeIntervalSince($0) < Self.pendingTTL } ?? true
         if fresh, !pendingText.isEmpty,
            let field = model.activeSession?.fields[idx], Self.isTextEntryType(field.questionType) {
             model.objectWillChange.send()
@@ -3177,8 +3177,8 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     }
     
     private func setupAXSync() {
-        // Fast 0.2s poll to sync focused element value and active field alignment
-        axSyncTimer = Timer.publish(every: 0.2, on: .main, in: .common)
+        // Fast 0.1s poll to sync focused element value and active field alignment
+        axSyncTimer = Timer.publish(every: 0.1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -3188,14 +3188,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 }
             }
         
-        // Periodic 1.5s background scan of all browser window inputs & AppleScript fallback
-        fullScanTimer = Timer.publish(every: 1.5, on: .main, in: .common)
+        // High-frequency 0.5s background scan of all browser window inputs & AppleScript fallback
+        fullScanTimer = Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self, let model = self.formModel,
                           model.isFormDetected, model.isAutoCaptureEnabled else { return }
-                    self.formModel?.syncLiveFormInputValues()
+                    self.formModel?.syncLiveFormInputValues(isBackground: true)
                 }
             }
     }
@@ -3240,12 +3240,21 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     AXUIElementCopyAttributeValue(innerElem, kAXRoleAttribute as CFString, &innerRoleRef)
                     let innerRole = (innerRoleRef as? String) ?? ""
                     if isInteractiveInputRole(innerRole) {
-                        var isFocusedRef: CFTypeRef?
-                        if AXUIElementCopyAttributeValue(innerElem, kAXFocusedAttribute as CFString, &isFocusedRef) == .success,
-                           let isFocused = isFocusedRef as? Bool, !isFocused {
-                            return nil
-                        }
                         return (innerElem, innerRole)
+                    }
+                }
+                // If direct focused element query failed on AXWindow/AXScrollArea (Chromium/Polar), locate AXWebArea
+                if role != "AXWebArea", let webArea = findWebAreaElement(in: elem) {
+                    var webFocusedRef: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(webArea, kAXFocusedUIElementAttribute as CFString, &webFocusedRef) == .success,
+                       let webFocused = webFocusedRef {
+                        let innerElem = webFocused as! AXUIElement
+                        var innerRoleRef: CFTypeRef?
+                        AXUIElementCopyAttributeValue(innerElem, kAXRoleAttribute as CFString, &innerRoleRef)
+                        let innerRole = (innerRoleRef as? String) ?? ""
+                        if isInteractiveInputRole(innerRole) {
+                            return (innerElem, innerRole)
+                        }
                     }
                 }
             }
@@ -3272,16 +3281,57 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 AXUIElementCopyAttributeValue(innerElem, kAXRoleAttribute as CFString, &innerRoleRef)
                 let innerRole = (innerRoleRef as? String) ?? ""
                 if isInteractiveInputRole(innerRole) {
-                    var isFocusedRef: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(innerElem, kAXFocusedAttribute as CFString, &isFocusedRef) == .success,
-                       let isFocused = isFocusedRef as? Bool, !isFocused {
-                        return nil
-                    }
                     return (innerElem, innerRole)
+                }
+            }
+            // Locate AXWebArea if appFocused is window
+            if let webArea = findWebAreaElement(in: elem) {
+                var webFocusedRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(webArea, kAXFocusedUIElementAttribute as CFString, &webFocusedRef) == .success,
+                   let webFocused = webFocusedRef {
+                    let innerElem = webFocused as! AXUIElement
+                    var innerRoleRef: CFTypeRef?
+                    AXUIElementCopyAttributeValue(innerElem, kAXRoleAttribute as CFString, &innerRoleRef)
+                    let innerRole = (innerRoleRef as? String) ?? ""
+                    if isInteractiveInputRole(innerRole) {
+                        return (innerElem, innerRole)
+                    }
                 }
             }
         }
         return nil
+    }
+    
+    /// Detects whether an accessibility element is a page navigation button (Next, Submit, Back, Continue, etc.)
+    public static func isPageNavigationElement(_ elem: AXUIElement) -> Bool {
+        var cur = elem
+        for _ in 0..<6 {
+            var rRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(cur, kAXRoleAttribute as CFString, &rRef)
+            let role = (rRef as? String) ?? ""
+            
+            var titleRef: CFTypeRef?, descRef: CFTypeRef?, valRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(cur, kAXTitleAttribute as CFString, &titleRef)
+            AXUIElementCopyAttributeValue(cur, kAXDescriptionAttribute as CFString, &descRef)
+            AXUIElementCopyAttributeValue(cur, kAXValueAttribute as CFString, &valRef)
+            
+            let label = ((titleRef as? String) ?? (descRef as? String) ?? (valRef as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            
+            let navKeywords = ["next", "tiếp", "tiếp theo", "tiếp tục", "submit", "gửi", "back", "quay lại", "continue", "siguiente", "enviar", "atrás", "suivant", "soumettre", "retour", "weiter", "senden", "zurück"]
+            if role == "AXButton" || role == "AXLink" || !label.isEmpty {
+                for kw in navKeywords {
+                    if label == kw || label.hasPrefix("\(kw) ") || label.hasSuffix(" \(kw)") {
+                        return true
+                    }
+                }
+            }
+            
+            var pRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(cur, kAXParentAttribute as CFString, &pRef) == .success,
+                  let p = pRef else { break }
+            cur = (p as! AXUIElement)
+        }
+        return false
     }
     
     @MainActor
@@ -3290,10 +3340,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         guard let frontApp = NSWorkspace.shared.frontmostApplication,
               DefaultApplicationFormDetector.isBrowserApplication(frontApp) else { return }
         
-        // Focus is about to move: stop attributing typing to the previous field until re-confirmed
-        invalidateFocus()
-        
-        // Check if user clicked 'Clear form' or confirmed clearing in dialog
+        // Check if user clicked 'Clear form', navigation button, or dialog confirm
         let sys = AXUIElementCreateSystemWide()
         var hitRef: AXUIElement?
         if AXUIElementCopyElementAtPosition(sys, Float(location.x), Float(location.y), &hitRef) == .success,
@@ -3308,15 +3355,23 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     try? await Task.sleep(nanoseconds: 120_000_000)
                     self?.formModel?.syncLiveFormInputValues()
                 }
+            } else if Self.isPageNavigationElement(hit) {
+                // User is navigating to another page/section: instantly capture all inputs on current page
+                // before the page unloads!
+                self.formModel?.syncLiveFormInputValues(isBackground: false)
             }
         }
         
         // 1. Immediately attempt hit test at click coordinate
         syncFocusedElement(at: location)
         
-        // 2. Schedule follow-up after 60ms once browser finalizes internal focus and state changes
+        // 2. Schedule follow-ups after 25ms and 75ms once browser settles internal focus
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 60_000_000)
+            try? await Task.sleep(nanoseconds: 25_000_000)
+            self?.syncFocusedElement()
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 75_000_000)
             self?.syncFocusedElement()
         }
     }
@@ -3327,9 +3382,10 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         guard model.isFormDetected && model.isAutoCaptureEnabled,
               let session = model.activeSession else { return }
         
+        let frontApp = NSWorkspace.shared.frontmostApplication
         // Only capture if frontmost application is the detected browser / form host (bypassed in unit tests)
         if !MorphEnvironment.isTestingEnvironment {
-            guard let frontApp = NSWorkspace.shared.frontmostApplication else { return }
+            guard let frontApp = frontApp else { return }
             let frontBundle = frontApp.bundleIdentifier?.lowercased() ?? ""
             let frontName = frontApp.localizedName?.lowercased() ?? ""
             
@@ -3346,10 +3402,10 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         
         // If Cmd or Ctrl is pressed:
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
-            // If Cmd+V (paste into browser field), trigger immediate AX sync in 80ms
+            // If Cmd+V (paste into browser field), trigger immediate AX sync in 50ms
             if keyCode == 9 {
                 Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    try? await Task.sleep(nanoseconds: 50_000_000)
                     self?.syncFocusedElement()
                 }
             }
@@ -3361,15 +3417,6 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             self.syncFocusedElement()
         }
         guard (model.activeSession?.fields.count ?? 0) > 0 else { return }
-        
-        // Cheap guard against focus changes we did not see (programmatic focus, shortcuts, tab switches):
-        // if the focused element differs from the one we confirmed, re-resolve before attributing anything.
-        if !MorphEnvironment.isTestingEnvironment, let confirmed = confirmedElement,
-           let current = Self.resolveFocusedElement(for: NSWorkspace.shared.frontmostApplication),
-           !CFEqual(confirmed, current.element) {
-            invalidateFocus()
-            syncFocusedElement()
-        }
         
         let confirmedIdx = confirmedFieldIndex(in: model)
         
@@ -3396,7 +3443,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         if keyCode == 48 || (123...126).contains(keyCode) {
             invalidateFocus()
             Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 60_000_000)
+                try? await Task.sleep(nanoseconds: 25_000_000)
                 self?.syncFocusedElement()
             }
             return
@@ -3414,7 +3461,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 // Enter may submit, advance or toggle depending on the widget: re-resolve focus
                 invalidateFocus()
                 Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    try? await Task.sleep(nanoseconds: 35_000_000)
                     self?.syncFocusedElement()
                 }
             }
@@ -3433,6 +3480,20 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             // Focus not confirmed yet: hold the text; it is flushed to the right field on confirmation
             if pendingText.isEmpty { pendingSince = Date() }
             if pendingText.count < 500 { pendingText.append(printable) }
+            
+            // In live browser environment, attempt immediate synchronous focus resolution
+            if !MorphEnvironment.isTestingEnvironment, let frontApp = frontApp,
+               let resolved = Self.resolveFocusedElement(for: frontApp) {
+                let candidates = FormInputAutoTracker.candidateQuestionTitles(for: resolved.element)
+                for cand in candidates {
+                    let c = ApplicationFormModel.cleanQuestionTitle(cand)
+                    if let i = ApplicationFormModel.strictMatchingFieldIndex(for: c, in: session.fields) {
+                        confirmFocus(fieldID: session.fields[i].id, element: resolved.element)
+                        break
+                    }
+                }
+            }
+            
             self.scheduleDebouncedAXSync()
             return
         }
@@ -3440,8 +3501,12 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         // Typing does not change radio/checkbox/dropdown answers in the browser, so never record it for them
         guard Self.isTextEntryType(model.activeSession?.fields[idx].questionType ?? "") else { return }
         
+        let toAppend = pendingText.isEmpty ? printable : (pendingText + printable)
+        pendingText = ""
+        pendingSince = nil
+        
         model.objectWillChange.send()
-        model.activeSession?.fields[idx].value.append(printable)
+        model.activeSession?.fields[idx].value.append(toAppend)
         if let fid = model.activeSession?.fields[idx].id { model.markBrowserCaptured(fid) }
         model.lastAutoCapturedAt = Date()
         model.lastKeystrokeAt = Date()
@@ -3517,9 +3582,9 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     targetElem = hit
                     elemRole = r
                 } else {
-                    // Check up to 4 ancestors if clicked element was a label, text, or icon inside an input
+                    // Check up to 8 ancestors if clicked element was a label, text, or icon inside an input
                     var cur = hit
-                    for _ in 0..<4 {
+                    for _ in 0..<8 {
                         var pRef: CFTypeRef?
                         guard AXUIElementCopyAttributeValue(cur, kAXParentAttribute as CFString, &pRef) == .success,
                               let p = pRef else { break }
@@ -4960,7 +5025,7 @@ public final class ApplicationFormModel: ObservableObject {
     
     // MARK: - Live Input Hydration & Synchronization
     @MainActor
-    public func syncLiveFormInputValues() {
+    public func syncLiveFormInputValues(isBackground: Bool = false) {
         guard isFormDetected, isAutoCaptureEnabled,
               let session = activeSession else { return }
         
@@ -4989,10 +5054,27 @@ public final class ApplicationFormModel: ObservableObject {
         let targetApps = Self.formHostBrowsers(detectedAppName: detectedAppName)
         let schemaFields = activeSession?.fields ?? []
         
-        for app in targetApps {
-            let appElem = AXUIElementCreateApplication(app.processIdentifier)
-            if let pairs = FormInputAutoTracker.scanBrowserWindowInputs(appElem: appElem, fields: schemaFields), !pairs.isEmpty {
-                applyLiveSnapshot(pairs)
+        if isBackground {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                var allPairs: [(label: String, value: String)] = []
+                for app in targetApps {
+                    let appElem = AXUIElementCreateApplication(app.processIdentifier)
+                    if let pairs = FormInputAutoTracker.scanBrowserWindowInputs(appElem: appElem, fields: schemaFields), !pairs.isEmpty {
+                        allPairs.append(contentsOf: pairs)
+                    }
+                }
+                if !allPairs.isEmpty {
+                    Task { @MainActor [weak self] in
+                        self?.applyLiveSnapshot(allPairs)
+                    }
+                }
+            }
+        } else {
+            for app in targetApps {
+                let appElem = AXUIElementCreateApplication(app.processIdentifier)
+                if let pairs = FormInputAutoTracker.scanBrowserWindowInputs(appElem: appElem, fields: schemaFields), !pairs.isEmpty {
+                    applyLiveSnapshot(pairs)
+                }
             }
         }
         

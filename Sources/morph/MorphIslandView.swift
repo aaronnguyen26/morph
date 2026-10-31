@@ -429,21 +429,20 @@ public struct MorphIslandView: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundColor(model.selectedTab == tab ? Color.black : Color.white.opacity(0.85))
+                    .foregroundColor(model.selectedTab == tab ? model.theme.activePillText : model.theme.inactivePillText)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
                     .background(
                         model.selectedTab == tab
-                            ? Color.white
+                            ? model.theme.activePillBackground
                             : model.theme.inactivePillBackground
                     )
                     .clipShape(Capsule())
-                    .environment(\.colorScheme, model.selectedTab == tab ? .light : .dark)
                     .overlay(
                         Capsule()
                             .stroke(
                                 model.selectedTab == tab
-                                    ? Color.clear
+                                    ? (model.theme.isDark ? Color.clear : Color.black.opacity(0.12))
                                     : model.theme.hairlineBorder,
                                 lineWidth: 0.5
                             )

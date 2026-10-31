@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct MediaView: View {
     @ObservedObject var media: MediaControllerModel
+    @ObservedObject public var theme: MorphTheme = .shared
     public var model: NotchModel?
     
     @State private var isScrubbing: Bool = false
@@ -11,9 +12,10 @@ public struct MediaView: View {
     @FocusState private var playlistSearchFocused: Bool
     @FocusState private var songSearchFocused: Bool
     
-    public init(media: MediaControllerModel, model: NotchModel? = nil) {
+    public init(media: MediaControllerModel, model: NotchModel? = nil, theme: MorphTheme? = nil) {
         self.media = media
         self.model = model
+        self.theme = theme ?? .shared
     }
     
     private var effectiveProgress: Double {
@@ -63,11 +65,11 @@ public struct MediaView: View {
         }
         .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(white: 0.07))
+        .background(theme.canvasSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(theme.hairlineBorder, lineWidth: 1)
         )
     }
     
@@ -201,12 +203,12 @@ public struct MediaView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(media.trackTitle.isEmpty ? "No Track Selected" : media.trackTitle)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(media.trackTitle.isEmpty ? Color.white.opacity(0.6) : .white)
+                    .foregroundColor(media.trackTitle.isEmpty ? theme.textTertiary : theme.textPrimary)
                     .lineLimit(1)
                 
                 Text(media.artistName.isEmpty ? "YouTube Music" : media.artistName)
                     .font(.system(size: 8.5, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.6))
+                    .foregroundColor(theme.textSecondary)
                     .lineLimit(1)
                 
                 HStack(spacing: 3.5) {
@@ -347,11 +349,11 @@ public struct MediaView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(0.14))
+                        .fill(theme.dialTrack)
                         .frame(height: 3)
                     
                     Capsule()
-                        .fill(Color.white)
+                        .fill(theme.focusAccent)
                         .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(effectiveProgress))), height: 3)
                 }
                 .contentShape(Rectangle())
@@ -374,7 +376,7 @@ public struct MediaView: View {
             HStack {
                 Text(effectiveCurrentTime)
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(theme.textTertiary)
                 
                 Spacer()
                 
@@ -382,7 +384,7 @@ public struct MediaView: View {
                 HStack(alignment: .bottom, spacing: 1.5) {
                     ForEach(0..<3, id: \.self) { i in
                         RoundedRectangle(cornerRadius: 0.5)
-                            .fill(Color.white.opacity(0.8))
+                            .fill(theme.textPrimary)
                             .frame(width: 1.8, height: max(2, 7 * media.visualizerBars[i]))
                     }
                 }
@@ -392,7 +394,7 @@ public struct MediaView: View {
                 
                 Text(media.formattedDuration)
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(theme.textTertiary)
             }
         }
     }
@@ -407,9 +409,9 @@ public struct MediaView: View {
             }) {
                 Image(systemName: "shuffle")
                     .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(media.isShuffle ? Color.white : Color.white.opacity(0.35))
+                    .foregroundColor(media.isShuffle ? theme.textPrimary : theme.textTertiary)
                     .frame(width: 19, height: 19)
-                    .background(media.isShuffle ? Color.white.opacity(0.2) : Color.white.opacity(0.06))
+                    .background(media.isShuffle ? theme.cardBackgroundElevated : theme.cardBackground)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -420,9 +422,9 @@ public struct MediaView: View {
             }) {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(theme.textPrimary)
                     .frame(width: 21, height: 21)
-                    .background(Color.white.opacity(0.08))
+                    .background(theme.cardBackgroundElevated)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -433,11 +435,11 @@ public struct MediaView: View {
             }) {
                 Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 10.5, weight: .bold))
-                    .foregroundColor(.black)
+                    .foregroundColor(theme.activePillText)
                     .frame(width: 28, height: 28)
-                    .background(Color.white)
+                    .background(theme.activePillBackground)
                     .clipShape(Circle())
-                    .shadow(color: Color.white.opacity(0.25), radius: 3, x: 0, y: 1)
+                    .shadow(color: theme.isDark ? Color.white.opacity(0.25) : Color.black.opacity(0.15), radius: 3, x: 0, y: 1)
             }
             .buttonStyle(.plain)
             .help(media.isPlaying ? "Pause Music (⌘⏎)" : "Play Music (⌘⏎)")
@@ -447,9 +449,9 @@ public struct MediaView: View {
             }) {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(theme.textPrimary)
                     .frame(width: 21, height: 21)
-                    .background(Color.white.opacity(0.08))
+                    .background(theme.cardBackgroundElevated)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -462,9 +464,9 @@ public struct MediaView: View {
             }) {
                 Image(systemName: media.repeatMode.iconName)
                     .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(media.repeatMode != .off ? Color.white : Color.white.opacity(0.35))
+                    .foregroundColor(media.repeatMode != .off ? theme.textPrimary : theme.textTertiary)
                     .frame(width: 19, height: 19)
-                    .background(media.repeatMode != .off ? Color.white.opacity(0.2) : Color.white.opacity(0.06))
+                    .background(media.repeatMode != .off ? theme.cardBackgroundElevated : theme.cardBackground)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -475,9 +477,9 @@ public struct MediaView: View {
             }) {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.65))
+                    .foregroundColor(theme.textTertiary)
                     .frame(width: 19, height: 19)
-                    .background(Color.white.opacity(0.06))
+                    .background(theme.cardBackground)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -554,11 +556,11 @@ public struct MediaView: View {
         }
         .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(white: 0.07))
+        .background(theme.canvasSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(theme.hairlineBorder, lineWidth: 1)
         )
     }
     
@@ -614,10 +616,10 @@ public struct MediaView: View {
                                 .lineLimit(1)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
-                        .foregroundColor(isSelected ? .black : Color.white.opacity(0.68))
+                        .foregroundColor(isSelected ? theme.activePillText : theme.textSecondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(isSelected ? Color.white : Color.white.opacity(0.06))
+                        .background(isSelected ? theme.activePillBackground : theme.cardBackground)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -635,16 +637,16 @@ public struct MediaView: View {
                 HStack(spacing: 3) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary)
                     Text("Quick Picks")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                         .lineLimit(1)
                 }
                 
                 Text("• Recommended")
                     .font(.system(size: 7, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.45))
+                    .foregroundColor(theme.textTertiary)
                     .lineLimit(1)
                 
                 Spacer(minLength: 4)
@@ -1701,7 +1703,7 @@ public struct MediaView: View {
                         HStack(alignment: .bottom, spacing: 1.2) {
                             ForEach(0..<3, id: \.self) { barIdx in
                                 RoundedRectangle(cornerRadius: 0.5)
-                                    .fill(Color.white)
+                                    .fill(theme.textPrimary)
                                     .frame(width: 1.8, height: max(2, 8 * media.visualizerBars[barIdx]))
                             }
                         }
@@ -1709,14 +1711,14 @@ public struct MediaView: View {
                     } else if isPausedSong {
                         Image(systemName: "pause.fill")
                             .font(.system(size: 7.5))
-                            .foregroundColor(Color.white.opacity(0.85))
+                            .foregroundColor(theme.textPrimary)
                             .frame(width: 14)
                     } else if let thumb = song.thumbnailURL {
                         artworkThumb(url: thumb, size: 20, fallbackIcon: "music.note")
                     } else {
                         Text("\(index + 1)")
                             .font(.system(size: 8, weight: .medium, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.35))
+                            .foregroundColor(theme.textTertiary)
                             .frame(width: 14)
                     }
                 }
@@ -1725,13 +1727,13 @@ public struct MediaView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(song.title)
                         .font(.system(size: 9.5, weight: (isCurrentSong || isPausedSong) ? .bold : .medium, design: .rounded))
-                        .foregroundColor((isCurrentSong || isPausedSong) ? .white : Color.white.opacity(0.85))
+                        .foregroundColor(theme.textPrimary)
                         .lineLimit(1)
                     
                     if !song.artist.isEmpty {
                         Text(song.artist)
                             .font(.system(size: 8, weight: .regular))
-                            .foregroundColor((isCurrentSong || isPausedSong) ? Color.white.opacity(0.7) : Color.white.opacity(0.45))
+                            .foregroundColor((isCurrentSong || isPausedSong) ? theme.textSecondary : theme.textTertiary)
                             .lineLimit(1)
                     }
                 }
@@ -1742,16 +1744,16 @@ public struct MediaView: View {
                 if !song.duration.isEmpty {
                     Text(song.duration)
                         .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor((isCurrentSong || isPausedSong) ? Color.white.opacity(0.8) : Color.white.opacity(0.35))
+                        .foregroundColor(theme.textTertiary)
                 }
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
-            .background(isCurrentSong ? Color.white.opacity(0.14) : (isPausedSong ? Color.white.opacity(0.08) : Color.white.opacity(0.03)))
+            .background(isCurrentSong ? theme.cardBackgroundElevated : (isPausedSong ? theme.cardBackground : theme.cardBackgroundSubtle))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(isCurrentSong ? Color.white.opacity(0.2) : (isPausedSong ? Color.white.opacity(0.12) : Color.clear), lineWidth: 0.5)
+                    .stroke(isCurrentSong ? theme.activeBorder : (isPausedSong ? theme.hairlineBorder : Color.clear), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)

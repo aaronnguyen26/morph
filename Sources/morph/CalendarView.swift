@@ -3,6 +3,7 @@ import WebKit
 
 public struct CalendarView: View {
     @ObservedObject var calendar: CalendarModel
+    @ObservedObject public var theme: MorphTheme = .shared
     @State private var newEventTitle: String = ""
     @State private var newEventDurationMinutes: Int = 30
     @State private var newEventHour: Int = 14
@@ -19,10 +20,12 @@ public struct CalendarView: View {
     public init(
         calendar: CalendarModel,
         meetingController: MeetingFlightControllerModel? = nil,
+        theme: MorphTheme? = nil,
         onTakeCall: ((CalendarEvent) -> Void)? = nil
     ) {
         self.calendar = calendar
         self.meetingController = meetingController
+        self.theme = theme ?? .shared
         self.onTakeCall = onTakeCall
     }
     
@@ -85,7 +88,7 @@ public struct CalendarView: View {
             HStack(spacing: 4) {
                 Text(monthYearString(for: calendar.displayedMonth))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                 
                 Spacer()
                 
@@ -93,9 +96,9 @@ public struct CalendarView: View {
                     Button(action: { calendar.previousMonth() }) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.7))
+                            .foregroundColor(theme.textSecondary)
                             .frame(width: 18, height: 18)
-                            .background(Color.white.opacity(0.08))
+                            .background(theme.cardBackgroundElevated)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -104,10 +107,10 @@ public struct CalendarView: View {
                     Button(action: { calendar.goToToday() }) {
                         Text("Today")
                             .font(.system(size: 7.5, weight: .bold))
-                            .foregroundColor(.black)
+                            .foregroundColor(theme.activePillText)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.white)
+                            .background(theme.activePillBackground)
                             .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -116,9 +119,9 @@ public struct CalendarView: View {
                     Button(action: { calendar.nextMonth() }) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.7))
+                            .foregroundColor(theme.textSecondary)
                             .frame(width: 18, height: 18)
-                            .background(Color.white.opacity(0.08))
+                            .background(theme.cardBackgroundElevated)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -133,7 +136,7 @@ public struct CalendarView: View {
                 ForEach(Array(weekdays.enumerated()), id: \.offset) { _, day in
                     Text(day)
                         .font(.system(size: 7, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.35))
+                        .foregroundColor(theme.textTertiary)
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -149,12 +152,12 @@ public struct CalendarView: View {
                 if let email = calendar.configuredUserEmail, !email.isEmpty {
                     Text(email)
                         .font(.system(size: 7, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.55))
+                        .foregroundColor(theme.textTertiary)
                         .lineLimit(1)
                 } else {
                     Text(calendar.isSignedIn ? "Google Calendar" : "Local Calendar")
                         .font(.system(size: 7, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.55))
+                        .foregroundColor(theme.textTertiary)
                         .lineLimit(1)
                 }
                 
@@ -163,12 +166,12 @@ public struct CalendarView: View {
                 let count = calendar.eventsForSelectedDate.count
                 Text(count == 0 ? "No events" : "\(count) \(count == 1 ? "event" : "events")")
                     .font(.system(size: 7, weight: .medium, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.55))
+                    .foregroundColor(theme.textTertiary)
                 
                 Button(action: { calendar.syncWithGoogle() }) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.7))
+                        .foregroundColor(theme.textSecondary)
                         .rotationEffect(.degrees(calendar.isSyncing ? 360 : 0))
                         .animation(calendar.isSyncing ? Animation.linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: calendar.isSyncing)
                 }
@@ -180,11 +183,11 @@ public struct CalendarView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .frame(maxHeight: .infinity)
-        .background(Color(white: 0.07))
+        .background(theme.canvasSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(theme.hairlineBorder, lineWidth: 1)
         )
     }
     
@@ -206,11 +209,11 @@ public struct CalendarView: View {
                         VStack(spacing: 0.5) {
                             Text("\(cal.component(.day, from: date))")
                                 .font(.system(size: 8, weight: (isToday || isSelected) ? .bold : .medium))
-                                .foregroundColor(isSelected ? .black : (isToday ? .white : Color.white.opacity(0.85)))
+                                .foregroundColor(isSelected ? theme.activePillText : (isToday ? theme.focusAccent : theme.textPrimary))
                             
                             if hasEvents {
                                 Circle()
-                                    .fill(isSelected ? Color.black : (isToday ? Color.white : Color.white.opacity(0.7)))
+                                    .fill(isSelected ? theme.activePillText : (isToday ? theme.focusAccent : theme.textSecondary))
                                     .frame(width: 2.5, height: 2.5)
                             } else {
                                 Color.clear.frame(width: 2.5, height: 2.5)
@@ -219,7 +222,7 @@ public struct CalendarView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 16.5)
                         .contentShape(Rectangle())
-                        .background(isSelected ? Color.white : (isToday ? Color.white.opacity(0.18) : Color.clear))
+                        .background(isSelected ? theme.activePillBackground : (isToday ? theme.focusAccent.opacity(theme.isDark ? 0.18 : 0.12) : Color.clear))
                         .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
                     }
                     .buttonStyle(.plain)
@@ -238,7 +241,7 @@ public struct CalendarView: View {
             HStack(spacing: 5) {
                 Text(calendar.isAddingEvent ? "NEW EVENT" : "AGENDA")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
                     .fixedSize()
                 
@@ -246,10 +249,10 @@ public struct CalendarView: View {
                     if !calendar.isAddingEvent {
                         Text("\(calendar.eventsForSelectedDate.count)")
                             .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.6))
+                            .foregroundColor(theme.textTertiary)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1.5)
-                            .background(Color.white.opacity(0.08))
+                            .background(theme.cardBackgroundElevated)
                             .clipShape(Capsule())
                     }
                     
@@ -272,11 +275,11 @@ public struct CalendarView: View {
                                     .font(.system(size: 7.5, weight: .semibold))
                             }
                         }
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                         .padding(.horizontal, calendar.isAddingEvent ? 7 : 0)
                         .frame(height: 20)
                         .frame(minWidth: 20)
-                        .background(Color.white.opacity(calendar.isAddingEvent ? 0.14 : 0.12))
+                        .background(theme.cardBackgroundElevated)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -286,9 +289,9 @@ public struct CalendarView: View {
                     Button(action: { calendar.openGoogleCalendarInBrowser() }) {
                         Image(systemName: "arrow.up.right.square")
                             .font(.system(size: 8))
-                            .foregroundColor(Color.white.opacity(0.85))
+                            .foregroundColor(theme.textSecondary)
                             .frame(width: 20, height: 20)
-                            .background(Color.white.opacity(0.08))
+                            .background(theme.cardBackgroundElevated)
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -298,10 +301,10 @@ public struct CalendarView: View {
                     
                     Text("Not Connected")
                         .font(.system(size: 7.5, weight: .semibold))
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .foregroundColor(theme.textTertiary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.06))
+                        .background(theme.cardBackgroundSubtle)
                         .clipShape(Capsule())
                 }
             }
@@ -313,16 +316,16 @@ public struct CalendarView: View {
                     
                     Image(systemName: "calendar.badge.plus")
                         .font(.system(size: 24))
-                        .foregroundColor(Color.white.opacity(0.75))
+                        .foregroundColor(theme.textTertiary)
                     
                     VStack(spacing: 3) {
                         Text("Connect Your Google Calendar")
                             .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.textPrimary)
                         
                         Text("Sign in with your Google account in your browser to view upcoming agendas and sync your schedule in Morph.")
                             .font(.system(size: 8.5, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.5))
+                            .foregroundColor(theme.textSecondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 16)
                     }
@@ -391,11 +394,14 @@ public struct CalendarView: View {
                                     Text("Add Event")
                                         .font(.system(size: 7.5, weight: .bold))
                                 }
-                                .foregroundColor(.black)
+                                .foregroundColor(theme.activePillText)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2.5)
-                                .background(Color.white)
+                                .background(theme.activePillBackground)
                                 .clipShape(Capsule())
+                                .overlay(
+                                    Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                                )
                             }
                             .buttonStyle(.plain)
                             .help("Quickly create a new event in Google Calendar")
@@ -407,11 +413,14 @@ public struct CalendarView: View {
                                     Text("Open Google")
                                         .font(.system(size: 7.5, weight: .semibold))
                                 }
-                                .foregroundColor(.white)
+                                .foregroundColor(theme.textPrimary)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2.5)
-                                .background(Color.white.opacity(0.12))
+                                .background(theme.cardBackgroundElevated)
                                 .clipShape(Capsule())
+                                .overlay(
+                                    Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                                )
                             }
                             .buttonStyle(.plain)
                             .help("Open Google Calendar in Browser")
@@ -437,11 +446,11 @@ public struct CalendarView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .frame(maxHeight: .infinity)
-        .background(Color(white: 0.07))
+        .background(theme.canvasSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(theme.hairlineBorder, lineWidth: 1)
         )
     }
     
@@ -915,20 +924,20 @@ public struct CalendarView: View {
                 } else {
                     Text(event.formattedTimeRange)
                         .font(.system(size: 8, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.white)
+                        .foregroundColor(theme.textPrimary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.white.opacity(0.12))
+                        .background(theme.cardBackgroundElevated)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 }
                 
                 if event.isStartingSoon && !event.isAllDay {
                     Text("STARTING SOON")
                         .font(.system(size: 7, weight: .heavy, design: .rounded))
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.activePillText)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background(Color.white)
+                        .background(theme.activePillBackground)
                         .clipShape(Capsule())
                 }
                 
@@ -945,10 +954,10 @@ public struct CalendarView: View {
                             Text("Take Call")
                                 .font(.system(size: 8, weight: .bold))
                         }
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.activePillText)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.white)
+                        .background(theme.activePillBackground)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -969,7 +978,7 @@ public struct CalendarView: View {
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.25))
+                                .background(Color.red.opacity(0.85))
                                 .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
@@ -982,9 +991,9 @@ public struct CalendarView: View {
                         }) {
                             Image(systemName: "xmark")
                                 .font(.system(size: 6.5, weight: .bold))
-                                .foregroundColor(Color.white.opacity(0.6))
+                                .foregroundColor(theme.textSecondary)
                                 .frame(width: 16, height: 16)
-                                .background(Color.white.opacity(0.08))
+                                .background(theme.cardBackgroundElevated)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -998,9 +1007,9 @@ public struct CalendarView: View {
                     }) {
                         Image(systemName: "trash")
                             .font(.system(size: 7.5, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.55))
+                            .foregroundColor(theme.textTertiary)
                             .frame(width: 20, height: 20)
-                            .background(Color.white.opacity(0.08))
+                            .background(theme.cardBackgroundElevated)
                             .clipShape(Circle())
                             .contentShape(Circle())
                     }
@@ -1011,7 +1020,7 @@ public struct CalendarView: View {
             
             Text(event.title)
                 .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
                 .lineLimit(1)
             
             if !event.description.isEmpty || event.location != nil {
@@ -1023,13 +1032,13 @@ public struct CalendarView: View {
                             Text(loc)
                                 .font(.system(size: 7.5, weight: .regular))
                         }
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .foregroundColor(theme.textTertiary)
                     }
                     
                     if !event.description.isEmpty {
                         Text(event.description)
                             .font(.system(size: 7.5, weight: .regular))
-                            .foregroundColor(Color.white.opacity(0.4))
+                            .foregroundColor(theme.textTertiary)
                             .lineLimit(1)
                     }
                 }
@@ -1037,11 +1046,11 @@ public struct CalendarView: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4.5)
-        .background(Color.white.opacity(0.04))
+        .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(event.isStartingSoon ? Color.white.opacity(0.3) : Color.white.opacity(0.06), lineWidth: 0.5)
+                .stroke(event.isStartingSoon ? theme.activeBorder : theme.hairlineBorder, lineWidth: 0.5)
         )
     }
     

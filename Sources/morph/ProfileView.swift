@@ -99,11 +99,11 @@ public struct ProfileView: View {
                 // Avatar Circle / Picture
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(0.12))
+                        .fill(model.theme.cardBackgroundElevated)
                         .frame(width: 42, height: 42)
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 1)
                         )
                     if let base64 = supabase.currentUser.avatarImageBase64,
                        let data = Data(base64Encoded: base64),
@@ -116,7 +116,7 @@ public struct ProfileView: View {
                     } else {
                         Text(supabase.currentUser.displayInitials)
                             .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(model.theme.textPrimary)
                     }
                 }
                 
@@ -124,11 +124,11 @@ public struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(supabase.currentUser.displayName)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                     
                     Text("\(supabase.currentUser.targetRole) • \(supabase.currentUser.email)")
                         .font(.system(size: 10.5, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(model.theme.textSecondary)
                         .lineLimit(1)
                 }
                 
@@ -144,11 +144,14 @@ public struct ProfileView: View {
                         Image(systemName: "arrow.right")
                             .font(.system(size: 8, weight: .bold))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(model.theme.activePillText)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(Color.white)
+                    .background(model.theme.activePillBackground)
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    )
                 }
                 .buttonStyle(.plain)
                 .help("Go to Morph Home")
@@ -163,14 +166,14 @@ public struct ProfileView: View {
                         Text("Customize")
                             .font(.system(size: 10, weight: .semibold))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(model.theme.textPrimary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.12))
+                    .background(model.theme.cardBackgroundElevated)
                     .clipShape(Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(Color.white.opacity(0.16), lineWidth: 0.5)
+                            .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                     )
                 }
                 .buttonStyle(.plain)
@@ -188,7 +191,7 @@ public struct ProfileView: View {
                     .foregroundColor(.red.opacity(0.9))
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(Color.red.opacity(0.12))
+                    .background(Color.red.opacity(model.theme.isDark ? 0.12 : 0.08))
                     .clipShape(Capsule())
                     .overlay(
                         Capsule()
@@ -206,15 +209,15 @@ public struct ProfileView: View {
                 }) {
                     Image(systemName: supabase.isSyncing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(model.theme.textPrimary)
                         .rotationEffect(.degrees(supabase.isSyncing ? 360 : 0))
                         .animation(supabase.isSyncing ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: supabase.isSyncing)
                         .frame(width: 26, height: 26)
-                        .background(Color.white.opacity(0.08))
+                        .background(model.theme.cardBackground)
                         .clipShape(Circle())
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                         )
                 }
                 .buttonStyle(.plain)
@@ -227,76 +230,76 @@ public struct ProfileView: View {
                 VStack(spacing: 2) {
                     Text("INITIALS")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     Text(supabase.currentUser.displayInitials)
                         .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.06))
+                .background(model.theme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.white.opacity(0.09), lineWidth: 0.5)
+                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                 )
                 
                 // Status Card
                 VStack(spacing: 2) {
                     Text("STATUS")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     Text(supabase.currentUser.currentStatus)
                         .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.06))
+                .background(model.theme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.white.opacity(0.09), lineWidth: 0.5)
+                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                 )
                 
                 // Google Calendar SSO Card (Zero status dots)
                 VStack(spacing: 2) {
                     Text("CALENDAR SSO")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.cyan.opacity(0.8))
+                        .foregroundColor(model.theme.isDark ? .cyan.opacity(0.8) : Color.blue.opacity(0.85))
                     HStack(spacing: 3) {
                         Text(model.calendar.isSignedIn ? "Synced" : "Pending")
                             .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(model.theme.textPrimary)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.06))
+                .background(model.theme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.cyan.opacity(0.18), lineWidth: 0.5)
+                        .stroke(model.theme.isDark ? Color.cyan.opacity(0.18) : Color.blue.opacity(0.25), lineWidth: 0.5)
                 )
                 
                 // Cloud Database Card
                 VStack(spacing: 2) {
                     Text("DATABASE")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     Text(supabase.projectName)
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(Color.white.opacity(0.06))
+                .background(model.theme.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(Color.white.opacity(0.09), lineWidth: 0.5)
+                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                 )
             }
             
@@ -304,10 +307,10 @@ public struct ProfileView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(model.theme.textSecondary)
                 Text(supabase.currentUser.currentStatus)
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(model.theme.textPrimary)
                 Spacer()
                 
                 Button(action: {
@@ -319,11 +322,14 @@ public struct ProfileView: View {
                         Text("Shortcuts")
                             .font(.system(size: 9.5, weight: .medium))
                     }
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(model.theme.textPrimary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2.5)
-                    .background(Color.white.opacity(0.08))
+                    .background(model.theme.cardBackgroundElevated)
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    )
                 }
                 .buttonStyle(.plain)
                 .help("View all Mac ⌘ keyboard shortcuts")
@@ -336,17 +342,17 @@ public struct ProfileView: View {
                 }) {
                     Text("Change")
                         .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Color.white.opacity(0.05))
+            .background(model.theme.cardBackgroundSubtle)
             .clipShape(Capsule())
             .overlay(
                 Capsule()
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                    .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
             )
         }
     }

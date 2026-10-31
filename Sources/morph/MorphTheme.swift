@@ -118,19 +118,19 @@ public final class MorphTheme: ObservableObject {
     /// Specular perimeter hairline border
     public var hairlineBorder: Color {
         isDark ? Color.white.opacity(0.10)
-               : Color.black.opacity(0.09)
+               : Color.black.opacity(0.10)
     }
     
     /// Inset separator hairline
     public var hairlineSubtle: Color {
         isDark ? Color.white.opacity(0.05)
-               : Color.black.opacity(0.05)
+               : Color.black.opacity(0.06)
     }
     
     /// Active element perimeter highlight
     public var activeBorder: Color {
         isDark ? Color.white.opacity(0.28)
-               : Color.black.opacity(0.22)
+               : Color.black.opacity(0.25)
     }
     
     /// Primary high-contrast text
@@ -142,13 +142,13 @@ public final class MorphTheme: ObservableObject {
     /// Secondary descriptive text
     public var textSecondary: Color {
         isDark ? Color.white.opacity(0.68)
-               : Color(red: 0.07, green: 0.07, blue: 0.09).opacity(0.64)
+               : Color(red: 0.07, green: 0.07, blue: 0.09).opacity(0.72)
     }
     
     /// Tertiary / placeholder / unit label text
     public var textTertiary: Color {
         isDark ? Color.white.opacity(0.38)
-               : Color(red: 0.07, green: 0.07, blue: 0.09).opacity(0.40)
+               : Color(red: 0.07, green: 0.07, blue: 0.09).opacity(0.52)
     }
     
     /// Active pill button fill
