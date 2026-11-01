@@ -187,6 +187,18 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
             
+        // Observe spotlight typing bar and timer popup state changes to dynamically resize the panel
+        Publishers.Merge(
+            model.$isTimerPopupActive.map { _ in () },
+            model.$isSpotlightBarActive.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            guard let self = self else { return }
+            self.updatePanelGeometry()
+        }
+        .store(in: &cancellables)
+            
         // Explicitly observe formTracker detection state to guarantee immediate panel resizing
         model.formTracker.$isFormDetected
             .receive(on: DispatchQueue.main)
@@ -423,8 +435,8 @@ public final class MorphController: NSObject {
             return panel.frame
         }
         let screen = targetScreen()
-        let w = model.isExpanded ? model.expandedWidth : model.currentWidth
-        let h = model.isExpanded ? model.expandedHeight : model.currentHeight
+        let w = model.currentWidth
+        let h = model.currentHeight
         let x = floor(screen.frame.midX - (w / 2))
         let topBarHeight = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
         let topClearance: CGFloat = 14.0
@@ -434,9 +446,12 @@ public final class MorphController: NSObject {
     
     public func isMouseInsideMorphUI(_ mouseLoc: NSPoint) -> Bool {
         let baseRect = activeUIRect()
-        let hPadding: CGFloat = model.isExpanded ? 16 : (model.isCompactActive ? 14 : 0)
-        let bottomPadding: CGFloat = model.isExpanded ? 16 : (model.isCompactActive ? 12 : 0)
-        let topPadding: CGFloat = model.isExpanded ? 10 : 0
+        let isExtended = (model.interactionMode == .spotlightBar)
+            ? (model.isSpotlightBarActive || model.isTimerPopupActive)
+            : model.isExpanded
+        let hPadding: CGFloat = isExtended ? 16 : (model.isCompactActive ? 14 : 0)
+        let bottomPadding: CGFloat = isExtended ? 16 : (model.isCompactActive ? 12 : 0)
+        let topPadding: CGFloat = isExtended ? 10 : 0
         
         let sensitiveRect = NSRect(
             x: baseRect.origin.x - hPadding,
@@ -463,11 +478,15 @@ public final class MorphController: NSObject {
         lastMousePoint = mouseLoc
         lastMouseTimestamp = now
         
+        let isMorphOpen = (model.interactionMode == .spotlightBar)
+            ? (model.isSpotlightBarActive || model.isTimerPopupActive)
+            : model.isExpanded
+        
         if isInside {
             collapseWorkItem?.cancel()
             collapseWorkItem = nil
             
-            if !model.isExpanded {
+            if !isMorphOpen {
                 // If user interacted recently (< 450ms ago) in ANY background application
                 // (clicks, drags, typing, scrolling, app switches), they are actively working
                 // in their underlying workspace — suppress hover expansion!
@@ -510,11 +529,11 @@ public final class MorphController: NSObject {
             hoverIntentWorkItem?.cancel()
             hoverIntentWorkItem = nil
             
-            if model.isExpanded && !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen {
+            if isMorphOpen && !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen {
                 if collapseWorkItem == nil {
                     handleMouseExit()
                 }
-            } else if !model.isExpanded {
+            } else if !isMorphOpen {
                 model.isHovered = false
                 if !MorphEnvironment.isTestingEnvironment {
                     panel?.ignoresMouseEvents = true
@@ -531,25 +550,32 @@ public final class MorphController: NSObject {
         shrinkWorkItem?.cancel()
         shrinkWorkItem = nil
         
-        guard !model.isExpanded else {
-            model.isHovered = true
-            return
-        }
-        
         model.isHovered = true
-        // Enable mouse interaction when expanded
         if !MorphEnvironment.isTestingEnvironment {
             panel?.ignoresMouseEvents = false
         }
         
-        model.syncExpandedFeatureWithActiveContext()
-        expandPanel()
-        // Fluid Apple Dynamic Island expansion spring: swift organic attack with natural settle
-        withAnimation(MorphUniversalAnimation.stateExpansion) {
-            self.model.isExpanded = true
-        }
-        if !MorphEnvironment.isTestingEnvironment {
-            panel.makeKey()
+        if model.interactionMode == .spotlightBar {
+            withAnimation(MorphUniversalAnimation.stateElongation) {
+                model.isSpotlightBarActive = true
+            }
+            updatePanelGeometry()
+            if !MorphEnvironment.isTestingEnvironment {
+                panel.makeKey()
+            }
+        } else {
+            guard !model.isExpanded else {
+                model.isHovered = true
+                return
+            }
+            model.syncExpandedFeatureWithActiveContext()
+            expandPanel()
+            withAnimation(MorphUniversalAnimation.stateExpansion) {
+                self.model.isExpanded = true
+            }
+            if !MorphEnvironment.isTestingEnvironment {
+                panel.makeKey()
+            }
         }
     }
     
@@ -574,9 +600,15 @@ public final class MorphController: NSObject {
             }
             
             self.model.isHovered = false
-            // Crisp, zero-clutter collapse spring: quick, controlled retraction without bouncing or stutter
             withAnimation(MorphUniversalAnimation.stateRetraction) {
-                self.model.isExpanded = false
+                if self.model.interactionMode == .spotlightBar {
+                    self.model.isSpotlightBarActive = false
+                    if !self.model.pomodoro.isRunning {
+                        self.model.isTimerPopupActive = false
+                    }
+                } else {
+                    self.model.isExpanded = false
+                }
             }
             self.scheduleWindowShrink()
             self.collapseWorkItem = nil
@@ -586,18 +618,26 @@ public final class MorphController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
     
-    private func expandPanel() {
+    public func updatePanelGeometry(animate: Bool = false) {
         let screen = targetScreen()
-        let w = model.expandedWidth
-        let h = model.expandedHeight
-        panel.updatePosition(screen: screen, width: w, height: h, animate: false)
+        let w = model.currentWidth.rounded()
+        let h = model.currentHeight.rounded()
+        panel.updatePosition(screen: screen, width: w, height: h, animate: animate)
+        if !MorphEnvironment.isTestingEnvironment {
+            let isResting = (model.islandState == .resting && model.compactHUDMode == .none)
+            panel.ignoresMouseEvents = isResting
+        }
+    }
+    
+    private func expandPanel() {
+        updatePanelGeometry(animate: false)
     }
     
     private func scheduleWindowShrink() {
         shrinkWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            guard !self.model.isExpanded else { return }
+            guard !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive else { return }
             self.applyRestingPanelGeometry()
             self.shrinkWorkItem = nil
         }

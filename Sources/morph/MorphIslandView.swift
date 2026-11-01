@@ -25,18 +25,28 @@ public struct MorphIslandView: View {
     }
     
     private var cornerRadius: CGFloat {
-        if model.isExpanded {
+        switch model.islandState {
+        case .timerPopup:
+            return 24
+        case .spotlightBar:
+            return 19
+        case .fullExpanded:
             return 28
-        } else {
-            return 18 // Apple Dynamic Island 4-sided squircle pill
+        case .extendedPill, .resting:
+            return 18
         }
     }
     
     private var topRadius: CGFloat {
-        if model.isExpanded {
+        switch model.islandState {
+        case .timerPopup:
+            return 24
+        case .spotlightBar:
+            return 19
+        case .fullExpanded:
             return 28
-        } else {
-            return 18 // Fully rounded 4-sided squircle pill
+        case .extendedPill, .resting:
+            return 18
         }
     }
     
@@ -61,11 +71,13 @@ public struct MorphIslandView: View {
                     style: .continuous
                 )
                 .fill(
-                    model.isExpanded
-                        ? model.theme.canvasBackground
-                        : (model.isCompactActive
-                            ? Color.black
-                            : (model.isHovered ? Color.black : Color.clear))
+                    (model.islandState == .spotlightBar || model.islandState == .timerPopup)
+                        ? Color.black
+                        : (model.isExpanded
+                            ? model.theme.canvasBackground
+                            : (model.isCompactActive
+                                ? Color.black
+                                : (model.isHovered ? Color.black : Color.clear)))
                 )
                 .overlay(
                     // Luxury ambient background texture
@@ -113,17 +125,29 @@ public struct MorphIslandView: View {
                 .shadow(
                     color: model.dropShelf.isDraggingOverNotch
                         ? model.theme.dropTargetGlow
-                        : (model.isExpanded || model.isCompactActive || model.isHovered
+                        : (model.islandState == .spotlightBar || model.islandState == .timerPopup || model.isExpanded || model.isCompactActive || model.isHovered
                             ? Color.black.opacity(0.40)
                             : Color.clear),
-                    radius: model.isExpanded ? 24 : 10,
+                    radius: (model.islandState == .timerPopup || model.isExpanded) ? 24 : 10,
                     x: 0,
-                    y: model.isExpanded ? 10 : 4
+                    y: (model.islandState == .timerPopup || model.isExpanded) ? 10 : 4
                 )
                 
                 // Content: Idle / Compact Notch vs Expanded Island
                 Group {
                     switch model.islandState {
+                    case .spotlightBar:
+                        spotlightTypingBarView
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.95, anchor: .top).combined(with: .opacity),
+                                removal: .scale(scale: 0.95, anchor: .top).combined(with: .opacity)
+                            ))
+                    case .timerPopup:
+                        compactTimerPopupView
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.96, anchor: .top).combined(with: .opacity),
+                                removal: .scale(scale: 0.96, anchor: .top).combined(with: .opacity)
+                            ))
                     case .fullExpanded:
                         expandedView
                             .transition(.asymmetric(
@@ -196,15 +220,156 @@ public struct MorphIslandView: View {
         return didLoadAny
     }
     
+    // MARK: - Spotlight Horizontal Typing Bar (Horizontal expansion on hover: strictly for typing, NO BUTTONS)
+    private var spotlightTypingBarView: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.40))
+                .padding(.leading, 16)
+            
+            TextField(
+                "Type a command or timer (e.g. 25m, timer, focus)...",
+                text: Binding(
+                    get: { model.spotlightQuery },
+                    set: { model.handleSpotlightQueryChanged($0) }
+                )
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, weight: .regular, design: .rounded))
+            .foregroundColor(.white)
+            .tint(.white)
+            .onSubmit {
+                model.handleSpotlightSubmit()
+            }
+            .padding(.trailing, 16)
+        }
+        .frame(width: model.spotlightBarWidth, height: model.spotlightBarHeight)
+    }
+    
+    // MARK: - Compact Shrunk Timer Popup (Horizontal width shrunk to 320 pt)
+    private var compactTimerPopupView: some View {
+        VStack(spacing: 8) {
+            // Header Row: Flame Icon + FOCUS TIMER + Sprint Badge
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text("FOCUS TIMER")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.70))
+                }
+                
+                Spacer()
+                
+                Text("\(model.requestedTimerMinutes)m SPRINT")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.12))
+                    )
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            
+            // Central Timer Display: Large Digital Countdown
+            VStack(spacing: 4) {
+                Text(model.pomodoro.formattedTime)
+                    .font(.system(size: 32, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(.white)
+                
+                // Progress Bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.15))
+                            .frame(height: 3)
+                        Capsule()
+                            .fill(Color.white)
+                            .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(model.pomodoro.progress))), height: 3)
+                    }
+                }
+                .frame(height: 3)
+                .padding(.horizontal, 24)
+            }
+            
+            // Bottom Controls: Play/Pause, Reset, Dismiss hint
+            HStack(spacing: 16) {
+                Button(action: {
+                    model.pomodoro.toggle()
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: model.pomodoro.isRunning ? "pause.fill" : "play.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(model.pomodoro.isRunning ? "Pause" : "Start")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white))
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: {
+                    model.pomodoro.reset()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Reset")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: {
+                    model.dismissTimerPopup()
+                }) {
+                    Text("ESC")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.50))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.white.opacity(0.20), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 10)
+        }
+        .frame(width: model.timerPopupWidth, height: model.timerPopupHeight)
+    }
+    
     // MARK: - 1. Idle Transparent Dynamic Island Outline (No text, no dots, pure whisper outline)
     private var idleFlushNotchView: some View {
         Color.clear
             .frame(width: model.idleWidth, height: model.idleHeight)
             .contentShape(Rectangle())
             .onTapGesture {
-                model.syncExpandedFeatureWithActiveContext()
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                    model.isExpanded = true
+                if model.interactionMode == .spotlightBar {
+                    withAnimation(MorphUniversalAnimation.stateElongation) {
+                        model.isSpotlightBarActive = true
+                    }
+                    if let ctrl = MorphController.shared {
+                        ctrl.updatePanelGeometry()
+                    }
+                } else {
+                    model.syncExpandedFeatureWithActiveContext()
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                        model.isExpanded = true
+                    }
                 }
             }
     }
@@ -971,7 +1136,7 @@ private struct CompactMediaWingRight: View {
                     Image(systemName: "wifi.slash")
                         .font(.system(size: 7.5, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.9))
-                    Text(media.offlineHUDMessage.isEmpty ? "Offline • Downloads Opened" : media.offlineHUDMessage)
+                    Text(media.offlineHUDMessage.isEmpty ? "Offline | Downloads Opened" : media.offlineHUDMessage)
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.9))
                 }
@@ -1138,7 +1303,7 @@ private struct CompactDualWingRight: View {
                     Image(systemName: "wifi.slash")
                         .font(.system(size: 7.5, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.9))
-                    Text(media.offlineHUDMessage.isEmpty ? "Offline • Downloads Opened" : media.offlineHUDMessage)
+                    Text(media.offlineHUDMessage.isEmpty ? "Offline | Downloads Opened" : media.offlineHUDMessage)
                         .font(.system(size: 8, weight: .bold, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.9))
                 }

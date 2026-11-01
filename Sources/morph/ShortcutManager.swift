@@ -286,8 +286,18 @@ public final class ShortcutManager: NSObject, ObservableObject {
             }
         }
         
-        // 2. Escape: Dismiss command bar, close contextual feature, return to home, or collapse island
+        // 2. Escape: Dismiss timer popup, reset spotlight bar, dismiss command bar, close contextual feature, return to home, or collapse island
         if event.keyCode == 53 { // Escape
+            if model.isTimerPopupActive {
+                model.dismissTimerPopup()
+                lastTriggeredShortcut = "Esc Timer"
+                return true
+            }
+            if model.isSpotlightBarActive {
+                model.resetSpotlightBar()
+                lastTriggeredShortcut = "Esc Spotlight"
+                return true
+            }
             if model.isCommandBarPresented {
                 withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                     model.isCommandBarPresented = false
@@ -312,6 +322,18 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 return true
             }
             return false
+        }
+        
+        // Timer Popup Direct Controls (Space to play/pause, Cmd+R to reset)
+        if model.isTimerPopupActive {
+            if event.keyCode == 49 { // Space
+                toggleTimer()
+                return true
+            }
+            if isCmd && (event.charactersIgnoringModifiers?.lowercased() == "r") {
+                resetTimer()
+                return true
+            }
         }
         
         // 3. Command shortcuts
@@ -622,6 +644,16 @@ public final class ShortcutManager: NSObject, ObservableObject {
     // Window Management
     @objc public func closeOrCollapse() {
         guard let model = model else { return }
+        if model.isTimerPopupActive {
+            model.dismissTimerPopup()
+            lastTriggeredShortcut = "⌘W Timer"
+            return
+        }
+        if model.isSpotlightBarActive {
+            model.resetSpotlightBar()
+            lastTriggeredShortcut = "⌘W Spotlight"
+            return
+        }
         if model.isCommandBarPresented {
             withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                 model.isCommandBarPresented = false
@@ -646,6 +678,13 @@ public final class ShortcutManager: NSObject, ObservableObject {
     }
     
     @objc public func minimizeToNotch() {
+        guard let model = model else { return }
+        if model.isTimerPopupActive {
+            model.dismissTimerPopup()
+        }
+        if model.isSpotlightBarActive {
+            model.resetSpotlightBar()
+        }
         collapseIsland()
         lastTriggeredShortcut = "⌘M Minimize"
     }
