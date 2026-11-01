@@ -46,6 +46,81 @@ public struct FocusSessionRecord: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+/// Represents a persistent Google Form / webform detection session & submission receipt in Supabase
+public struct FormReceiptRecord: Codable, Identifiable, Sendable, Equatable {
+    public var id: String
+    public var userId: String
+    public var userEmail: String
+    public var formTitle: String
+    public var sourceURL: String?
+    public var sourceAppName: String
+    public var recipientEmail: String
+    public var totalQuestions: Int
+    public var answeredCount: Int
+    public var isSubmitted: Bool
+    public var isClosedOrExpired: Bool
+    public var closedReason: String?
+    public var fieldsJSON: String
+    public var formattedSummary: String
+    public var submittedAt: Date?
+    public var createdAt: Date
+    
+    public init(
+        id: String = UUID().uuidString,
+        userId: String = "",
+        userEmail: String = "",
+        formTitle: String,
+        sourceURL: String? = nil,
+        sourceAppName: String = "Web Browser",
+        recipientEmail: String = "",
+        totalQuestions: Int = 0,
+        answeredCount: Int = 0,
+        isSubmitted: Bool = false,
+        isClosedOrExpired: Bool = false,
+        closedReason: String? = nil,
+        fieldsJSON: String = "[]",
+        formattedSummary: String = "",
+        submittedAt: Date? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.userId = userId
+        self.userEmail = userEmail
+        self.formTitle = formTitle
+        self.sourceURL = sourceURL
+        self.sourceAppName = sourceAppName
+        self.recipientEmail = recipientEmail
+        self.totalQuestions = totalQuestions
+        self.answeredCount = answeredCount
+        self.isSubmitted = isSubmitted
+        self.isClosedOrExpired = isClosedOrExpired
+        self.closedReason = closedReason
+        self.fieldsJSON = fieldsJSON
+        self.formattedSummary = formattedSummary
+        self.submittedAt = submittedAt
+        self.createdAt = createdAt
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case userEmail = "user_email"
+        case formTitle = "form_title"
+        case sourceURL = "source_url"
+        case sourceAppName = "source_app_name"
+        case recipientEmail = "recipient_email"
+        case totalQuestions = "total_questions"
+        case answeredCount = "answered_count"
+        case isSubmitted = "is_submitted"
+        case isClosedOrExpired = "is_closed_or_expired"
+        case closedReason = "closed_reason"
+        case fieldsJSON = "fields_json"
+        case formattedSummary = "formatted_summary"
+        case submittedAt = "submitted_at"
+        case createdAt = "created_at"
+    }
+}
+
 /// Aggregated user statistics and dashboard telemetry
 public struct DashboardMetrics: Codable, Sendable, Equatable {
     public var todayFocusMinutes: Int
@@ -110,12 +185,14 @@ public final class SupabaseService: ObservableObject {
     
     @Published public var currentUser: UserProfile
     @Published public var focusSessions: [FocusSessionRecord] = []
+    @Published public var formReceipts: [FormReceiptRecord] = []
     @Published public var connectionState: SupabaseConnectionState = .connecting
     @Published public var isSyncing: Bool = false
     @Published public var lastSyncTime: Date?
     
     private let userDefaultsKey = "com.morph.supabase.cached_profile"
     private let sessionsCacheKey = "com.morph.supabase.cached_sessions"
+    private let formReceiptsCacheKey = "com.morph.supabase.cached_form_receipts"
     private let offlineQueueKey = "com.morph.supabase.offline_queue"
     private var urlSession: URLSession
     
@@ -155,6 +232,12 @@ public final class SupabaseService: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: sessionsCacheKey),
            let cachedSessions = try? JSONDecoder().decode([FocusSessionRecord].self, from: data) {
             self.focusSessions = cachedSessions
+        }
+        
+        // Load cached form receipts
+        if let data = UserDefaults.standard.data(forKey: formReceiptsCacheKey),
+           let cachedReceipts = try? JSONDecoder().decode([FormReceiptRecord].self, from: data) {
+            self.formReceipts = cachedReceipts
         }
         
         // Initial sync
@@ -385,6 +468,153 @@ public final class SupabaseService: ObservableObject {
             // Fallback to local cache
         }
         return Array(focusSessions.prefix(limit))
+    }
+    
+    // MARK: - Form Tracking & Receipts in Supabase
+    
+    public func recordFormReceipt(_ record: FormReceiptRecord) async {
+        // Upsert locally
+        if let idx = formReceipts.firstIndex(where: { $0.id == record.id }) {
+            formReceipts[idx] = record
+        } else {
+            formReceipts.insert(record, at: 0)
+        }
+        saveFormReceiptsCache()
+        
+        guard !isTesting else {
+            connectionState = .connected
+            lastSyncTime = Date()
+            return
+        }
+        
+        // Post directly to Supabase PostgREST table: form_receipts
+        guard let url = URL(string: "\(baseURL.absoluteString)/rest/v1/form_receipts") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 3.0
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+        
+        let formatter = ISO8601DateFormatter()
+        var payload: [String: Any] = [
+            "id": record.id,
+            "user_id": record.userId,
+            "user_email": record.userEmail,
+            "form_title": record.formTitle,
+            "source_app_name": record.sourceAppName,
+            "recipient_email": record.recipientEmail,
+            "total_questions": record.totalQuestions,
+            "answered_count": record.answeredCount,
+            "is_submitted": record.isSubmitted,
+            "is_closed_or_expired": record.isClosedOrExpired,
+            "fields_json": record.fieldsJSON,
+            "formatted_summary": record.formattedSummary,
+            "created_at": formatter.string(from: record.createdAt)
+        ]
+        if let u = record.sourceURL { payload["source_url"] = u }
+        if let r = record.closedReason { payload["closed_reason"] = r }
+        if let s = record.submittedAt { payload["submitted_at"] = formatter.string(from: s) }
+        
+        if let body = try? JSONSerialization.data(withJSONObject: payload) {
+            request.httpBody = body
+            do {
+                let (_, response) = try await urlSession.data(for: request)
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    connectionState = .connected
+                    lastSyncTime = Date()
+                }
+            } catch {
+                // Preserved in local cache
+            }
+        }
+    }
+    
+    public func recordFormReceipt(
+        id: String,
+        formTitle: String,
+        sourceURL: String? = nil,
+        sourceAppName: String = "Web Browser",
+        recipientEmail: String = "",
+        totalQuestions: Int = 0,
+        answeredCount: Int = 0,
+        isSubmitted: Bool = false,
+        isClosedOrExpired: Bool = false,
+        closedReason: String? = nil,
+        fieldsJSON: String = "[]",
+        formattedSummary: String = "",
+        submittedAt: Date? = nil,
+        createdAt: Date = Date()
+    ) async {
+        let record = FormReceiptRecord(
+            id: id,
+            userId: currentUser.id,
+            userEmail: currentUser.email.isEmpty ? recipientEmail : currentUser.email,
+            formTitle: formTitle,
+            sourceURL: sourceURL,
+            sourceAppName: sourceAppName,
+            recipientEmail: recipientEmail,
+            totalQuestions: totalQuestions,
+            answeredCount: answeredCount,
+            isSubmitted: isSubmitted,
+            isClosedOrExpired: isClosedOrExpired,
+            closedReason: closedReason,
+            fieldsJSON: fieldsJSON,
+            formattedSummary: formattedSummary,
+            submittedAt: submittedAt,
+            createdAt: createdAt
+        )
+        await recordFormReceipt(record)
+    }
+    
+    public func fetchFormReceipts(limit: Int = 50) async -> [FormReceiptRecord] {
+        guard !isTesting else {
+            return Array(formReceipts.prefix(limit))
+        }
+        
+        guard let url = URL(string: "\(baseURL.absoluteString)/rest/v1/form_receipts?user_id=eq.\(currentUser.id)&order=created_at.desc&limit=\(limit)") else {
+            return Array(formReceipts.prefix(limit))
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 3.0
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let remoteReceipts = try decoder.decode([FormReceiptRecord].self, from: data)
+                
+                var existingIds = Set(remoteReceipts.map { $0.id })
+                var merged = remoteReceipts
+                for local in formReceipts where !existingIds.contains(local.id) {
+                    merged.append(local)
+                    existingIds.insert(local.id)
+                }
+                merged.sort { $0.createdAt > $1.createdAt }
+                self.formReceipts = merged
+                saveFormReceiptsCache()
+                self.connectionState = .connected
+                self.lastSyncTime = Date()
+                return Array(merged.prefix(limit))
+            }
+        } catch {
+            // Fallback to local cache
+        }
+        return Array(formReceipts.prefix(limit))
+    }
+    
+    public func saveFormReceiptsCache() {
+        if let data = try? JSONEncoder().encode(formReceipts) {
+            UserDefaults.standard.set(data, forKey: formReceiptsCacheKey)
+        }
     }
     
     /// Returns aggregated metrics for displaying in future dashboard views

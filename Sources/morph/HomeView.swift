@@ -6,6 +6,10 @@ import SwiftUI
 public struct HomeView: View {
     @ObservedObject var model: NotchModel
     
+    @State private var isHoveringGlance = false
+    @State private var isHoveringGreeting = false
+    @State private var hoveredLaunchRow: Int? = nil
+    
     public init(model: NotchModel) {
         self.model = model
     }
@@ -60,6 +64,24 @@ public struct HomeView: View {
         }
     }
     
+    private var focusCapsuleStatusText: String {
+        if !model.pomodoro.isRunning && model.pomodoro.timeRemaining == model.pomodoro.totalDuration {
+            return "\(model.pomodoro.currentMinutes)m"
+        } else {
+            return model.pomodoro.formattedTime
+        }
+    }
+    
+    private var scratchpadCapsuleStatusText: String {
+        if model.isNotePinnedToNotch {
+            return "Pinned"
+        } else if model.scratchpad.wordCount > 0 {
+            return "\(model.scratchpad.wordCount)w"
+        } else {
+            return "Write"
+        }
+    }
+    
     public var body: some View {
         HStack(alignment: .center, spacing: 14) {
             // MARK: - Left Flank (GLANCE Telemetry)
@@ -105,9 +127,23 @@ public struct HomeView: View {
                     .foregroundColor(model.theme.textTertiary)
                     .lineLimit(1)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isHoveringGlance ? model.theme.cardBackgroundElevated : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(isHoveringGlance ? model.theme.activeBorder : Color.clear, lineWidth: 0.5)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
+                isHoveringGlance = hovering
+            }
+        }
         .help("Open Calendar (⌘6)")
     }
     
@@ -125,9 +161,15 @@ public struct HomeView: View {
                 Text("\(greetingText), \(model.supabase.currentUser.firstName)")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundColor(model.theme.textPrimary)
+                    .opacity(isHoveringGreeting ? 0.85 : 1.0)
                     .lineLimit(1)
             }
             .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isHoveringGreeting = hovering
+                }
+            }
             .help("Open Profile (⌘5)")
             
             // Dynamic Context Subtitle
@@ -166,7 +208,7 @@ public struct HomeView: View {
                         model.pomodoro.toggle()
                     }
                 }) {
-                    Text(model.pomodoro.isRunning ? model.pomodoro.formattedTime : "25m")
+                    Text(focusCapsuleStatusText)
                         .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                         .foregroundColor(model.pomodoro.isRunning ? model.theme.textPrimary : model.theme.textTertiary)
                 }
@@ -177,11 +219,16 @@ public struct HomeView: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 4.5)
             .frame(width: 146)
-            .background(model.pomodoro.isRunning ? model.theme.cardBackgroundElevated : model.theme.cardBackground)
+            .background((model.pomodoro.isRunning || hoveredLaunchRow == 0) ? model.theme.cardBackgroundElevated : model.theme.cardBackground)
             .clipShape(Capsule())
             .overlay(
-                Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                Capsule().stroke(hoveredLaunchRow == 0 ? model.theme.activeBorder : model.theme.hairlineBorder, lineWidth: 0.5)
             )
+            .onHover { hovering in
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
+                    hoveredLaunchRow = hovering ? 0 : (hoveredLaunchRow == 0 ? nil : hoveredLaunchRow)
+                }
+            }
             .help("Launch Focus Session (⌘2)")
             
             // YouTube Music Action Capsule
@@ -214,11 +261,16 @@ public struct HomeView: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 4.5)
             .frame(width: 146)
-            .background(model.media.isPlaying ? model.theme.cardBackgroundElevated : model.theme.cardBackground)
+            .background((model.media.isPlaying || hoveredLaunchRow == 1) ? model.theme.cardBackgroundElevated : model.theme.cardBackground)
             .clipShape(Capsule())
             .overlay(
-                Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                Capsule().stroke(hoveredLaunchRow == 1 ? model.theme.activeBorder : model.theme.hairlineBorder, lineWidth: 0.5)
             )
+            .onHover { hovering in
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
+                    hoveredLaunchRow = hovering ? 1 : (hoveredLaunchRow == 1 ? nil : hoveredLaunchRow)
+                }
+            }
             .help("Launch YouTube Music (⌘3)")
             
             // Scratchpad Action Capsule
@@ -231,21 +283,26 @@ public struct HomeView: View {
                     Text("Scratchpad")
                         .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                     Spacer(minLength: 2)
-                    Text("Write")
+                    Text(scratchpadCapsuleStatusText)
                         .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(model.theme.textTertiary)
+                        .foregroundColor(model.isNotePinnedToNotch ? model.theme.textPrimary : model.theme.textTertiary)
                 }
                 .foregroundColor(model.theme.textPrimary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 4.5)
                 .frame(width: 146)
-                .background(model.theme.cardBackground)
+                .background((model.isNotePinnedToNotch || hoveredLaunchRow == 2) ? model.theme.cardBackgroundElevated : model.theme.cardBackground)
                 .clipShape(Capsule())
                 .overlay(
-                    Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    Capsule().stroke(hoveredLaunchRow == 2 ? model.theme.activeBorder : model.theme.hairlineBorder, lineWidth: 0.5)
                 )
             }
             .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
+                    hoveredLaunchRow = hovering ? 2 : (hoveredLaunchRow == 2 ? nil : hoveredLaunchRow)
+                }
+            }
             .help("Open Scratchpad (⌘4)")
         }
     }

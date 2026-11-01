@@ -70,7 +70,7 @@ public final class MenuBarManager: NSObject {
             action: #selector(toggleExpand),
             keyEquivalent: "m"
         )
-        expandItem.keyEquivalentModifierMask = [.command, .control]
+        expandItem.keyEquivalentModifierMask = [.command, .option]
         expandItem.target = self
         menu.addItem(expandItem)
         
@@ -80,7 +80,7 @@ public final class MenuBarManager: NSObject {
             action: #selector(togglePin),
             keyEquivalent: "p"
         )
-        pinItem.keyEquivalentModifierMask = [.command, .control]
+        pinItem.keyEquivalentModifierMask = [.command, .option]
         pinItem.target = self
         menu.addItem(pinItem)
         
@@ -110,7 +110,7 @@ public final class MenuBarManager: NSObject {
             action: #selector(copyNotes),
             keyEquivalent: "c"
         )
-        notesItem.keyEquivalentModifierMask = [.command, .control]
+        notesItem.keyEquivalentModifierMask = [.command, .shift]
         notesItem.target = self
         menu.addItem(notesItem)
         

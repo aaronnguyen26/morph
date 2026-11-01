@@ -26,9 +26,11 @@ public final class NotchPanel: NSPanel {
         self.standardWindowButton(.zoomButton)?.isHidden = true
         self.registerForDraggedTypes([.fileURL, .URL, .string])
         
+        // Dynamic Island default: click-through while resting/idle
+        self.ignoresMouseEvents = true
+        
         if MorphEnvironment.isTestingEnvironment {
             self.alphaValue = 0.0
-            self.ignoresMouseEvents = true
         }
     }
     
@@ -76,7 +78,9 @@ public final class NotchPanel: NSPanel {
     
     public func updatePosition(screen: NSScreen, width: CGFloat, height: CGFloat, animate: Bool = false) {
         let x = floor(screen.frame.midX - (width / 2))
-        let y = floor(screen.frame.maxY - height)
+        let topBarHeight = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
+        let topClearance: CGFloat = 14.0
+        let y = floor(screen.frame.maxY - topBarHeight - topClearance - height)
         let newFrame = NSRect(x: x, y: y, width: width.rounded(), height: height.rounded())
         
         if self.frame != newFrame {

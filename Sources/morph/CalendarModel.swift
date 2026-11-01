@@ -110,7 +110,7 @@ public final class CalendarModel: ObservableObject {
         if !Self.isTestingEnvironment {
             requestNotificationPermission()
             if configuredUserEmail == nil {
-                self.configuredUserEmail = "minh7898888@gmail.com"
+                self.configuredUserEmail = "aaronn.nguyen.work@gmail.com"
                 self.isSignedIn = true
             }
             if self.isMacCalendarSyncEnabled && self.eventKitEngine.isAuthorized {
@@ -492,7 +492,8 @@ public final class CalendarModel: ObservableObject {
     }
     
     public func signInWithGoogle() {
-        // 1. Open Google sign-in in user's default browser (or active browser)
+        // 1. Open Google sign-in directly in Morph's Calendar Engine window and browser fallback
+        engine.loadGoogleSignIn()
         engine.openGoogleSignInInBrowser()
         
         // 2. Automatically sync Google API bridge and Chrome accounts without touching Mac Calendar

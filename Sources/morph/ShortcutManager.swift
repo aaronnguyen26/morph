@@ -6,7 +6,7 @@ import Combine
 /// Implements standard macOS Cmd (⌘) shortcuts for navigation, window control,
 /// feature actions (Timer, Music, Notes, Profile), text editing, and global hotkeys.
 @MainActor
-public final class ShortcutManager: NSObject {
+public final class ShortcutManager: NSObject, ObservableObject {
     public static let shared = ShortcutManager()
     
     public weak var model: NotchModel?
@@ -15,9 +15,21 @@ public final class ShortcutManager: NSObject {
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
+    private var clearShortcutWorkItem: DispatchWorkItem?
     
     // Status feedback for shortcut triggers
-    @Published public var lastTriggeredShortcut: String?
+    @Published public var lastTriggeredShortcut: String = "" {
+        didSet {
+            clearShortcutWorkItem?.cancel()
+            guard !lastTriggeredShortcut.isEmpty else { return }
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self = self else { return }
+                self.lastTriggeredShortcut = ""
+            }
+            clearShortcutWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: workItem)
+        }
+    }
     
     public override init() {
         super.init()
@@ -274,11 +286,26 @@ public final class ShortcutManager: NSObject {
             }
         }
         
-        // 2. Escape: Collapse island if expanded, or return to home
+        // 2. Escape: Dismiss command bar, close contextual feature, return to home, or collapse island
         if event.keyCode == 53 { // Escape
+            if model.isCommandBarPresented {
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                    model.isCommandBarPresented = false
+                }
+                lastTriggeredShortcut = "Esc Dismiss"
+                return true
+            }
             if model.isExpanded {
-                if model.selectedTab != .home {
+                if let activeFeature = model.activeContextFeature {
+                    if activeFeature == .dropShelf {
+                        model.closeDropShelfAndRestoreContext()
+                    } else {
+                        model.closeContextualFeature()
+                    }
+                    lastTriggeredShortcut = "Esc Back"
+                } else if model.selectedTab != .home {
                     model.returnToHome()
+                    lastTriggeredShortcut = "Esc Home"
                 } else {
                     collapseIsland()
                 }
@@ -300,6 +327,12 @@ public final class ShortcutManager: NSObject {
             // Cmd + Shift shortcuts
             if isShift {
                 switch event.charactersIgnoringModifiers?.lowercased() {
+                case "]", "}":
+                    cycleNextTab()
+                    return true
+                case "[", "{":
+                    cyclePreviousTab()
+                    return true
                 case "c":
                     copyAllNotes()
                     return true
@@ -333,6 +366,11 @@ public final class ShortcutManager: NSObject {
             let char = event.charactersIgnoringModifiers?.lowercased() ?? ""
             
             switch char {
+            // Quick Command Bar
+            case "k":
+                toggleCommandBar()
+                return true
+                
             // Tab Navigation
             case "1", "0":
                 navHome()
@@ -356,7 +394,7 @@ public final class ShortcutManager: NSObject {
                 openPreferences()
                 return true
             case "[":
-                if model.selectedTab == .music {
+                if model.selectedTab == .music && !model.isCommandBarPresented && model.activeContextFeature == nil {
                     prevTrack()
                 } else {
                     navBack()
@@ -382,6 +420,9 @@ public final class ShortcutManager: NSObject {
                 } else {
                     refreshProfile()
                 }
+                return true
+            case "t":
+                toggleTimer()
                 return true
             case "h":
                 hideApp()
@@ -535,9 +576,42 @@ public final class ShortcutManager: NSObject {
         lastTriggeredShortcut = "⌘6 Calendar"
     }
     
+    @objc public func toggleCommandBar() {
+        guard let model = model else { return }
+        model.toggleCommandBar()
+        ensurePanelKey()
+        lastTriggeredShortcut = "⌘K Command Bar"
+    }
+    
+    @objc public func cycleNextTab() {
+        guard let model = model else { return }
+        model.cycleTab(forward: true)
+        ensurePanelKey()
+        lastTriggeredShortcut = "⌘⇧] \(model.selectedTab.rawValue)"
+    }
+    
+    @objc public func cyclePreviousTab() {
+        guard let model = model else { return }
+        model.cycleTab(forward: false)
+        ensurePanelKey()
+        lastTriggeredShortcut = "⌘⇧[ \(model.selectedTab.rawValue)"
+    }
+    
     @objc public func navBack() {
         guard let model = model else { return }
-        if model.selectedTab != .home {
+        if model.isCommandBarPresented {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                model.isCommandBarPresented = false
+            }
+            lastTriggeredShortcut = "⌘[ Back"
+        } else if let activeFeature = model.activeContextFeature {
+            if activeFeature == .dropShelf {
+                model.closeDropShelfAndRestoreContext()
+            } else {
+                model.closeContextualFeature()
+            }
+            lastTriggeredShortcut = "⌘[ Back"
+        } else if model.selectedTab != .home {
             model.returnToHome()
             lastTriggeredShortcut = "⌘[ Back"
         } else {
@@ -548,8 +622,21 @@ public final class ShortcutManager: NSObject {
     // Window Management
     @objc public func closeOrCollapse() {
         guard let model = model else { return }
+        if model.isCommandBarPresented {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                model.isCommandBarPresented = false
+            }
+            lastTriggeredShortcut = "⌘W Close"
+            return
+        }
         if model.isExpanded {
-            if model.selectedTab != .home {
+            if let activeFeature = model.activeContextFeature {
+                if activeFeature == .dropShelf {
+                    model.closeDropShelfAndRestoreContext()
+                } else {
+                    model.closeContextualFeature()
+                }
+            } else if model.selectedTab != .home {
                 model.returnToHome()
             } else {
                 collapseIsland()
@@ -707,7 +794,8 @@ public final class ShortcutManager: NSObject {
     private func collapseIsland() {
         guard let model = model, let controller = controller else { return }
         model.isPinned = false
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+        model.isCommandBarPresented = false
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
             model.isExpanded = false
         }
         controller.handleMouseExit()

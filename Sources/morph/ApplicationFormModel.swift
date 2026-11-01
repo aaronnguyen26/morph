@@ -23,6 +23,155 @@ public enum FormFieldCategory: String, CaseIterable, Identifiable, Codable, Send
     }
 }
 
+// MARK: - Question Format
+public enum QuestionFormat: String, Codable, CaseIterable, Sendable {
+    case shortAnswer = "shortAnswer"
+    case paragraph = "paragraph"
+    case multipleChoice = "multipleChoice"
+    case checkboxes = "checkboxes"
+    case dropdown = "dropdown"
+    case linearScale = "linearScale"
+    case date = "date"
+    case time = "time"
+    case fileUpload = "fileUpload"
+    case grid = "grid"
+    case info = "info"
+    case section = "section"
+    case unknown = "unknown"
+    
+    public init(fromString string: String) {
+        let s = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch s {
+        case "shortanswer", "short_answer", "short", "text", "short question":
+            self = .shortAnswer
+        case "paragraph", "textarea", "long", "long_answer", "long question":
+            self = .paragraph
+        case "multiplechoice", "multiple_choice", "radio", "choice", "multiple choice":
+            self = .multipleChoice
+        case "checkboxes", "checkbox", "check":
+            self = .checkboxes
+        case "dropdown", "select", "listbox", "combobox":
+            self = .dropdown
+        case "linearscale", "scale", "rating", "range":
+            self = .linearScale
+        case "date":
+            self = .date
+        case "time":
+            self = .time
+        case "fileupload", "file_upload", "file":
+            self = .fileUpload
+        case "grid":
+            self = .grid
+        case "info", "header", "title":
+            self = .info
+        case "section", "pagebreak":
+            self = .section
+        default:
+            if let direct = QuestionFormat(rawValue: string) {
+                self = direct
+            } else {
+                self = .unknown
+            }
+        }
+    }
+    
+    public init(fromRawType rawType: Int) {
+        switch rawType {
+        case 0: self = .shortAnswer
+        case 1: self = .paragraph
+        case 2: self = .multipleChoice
+        case 3: self = .dropdown
+        case 4: self = .checkboxes
+        case 5: self = .linearScale
+        case 6, 11: self = .info
+        case 7: self = .grid
+        case 8: self = .section
+        case 9: self = .date
+        case 10: self = .time
+        default: self = .shortAnswer
+        }
+    }
+    
+    public var displayName: String {
+        switch self {
+        case .shortAnswer: return "Short Question"
+        case .paragraph: return "Paragraph"
+        case .multipleChoice: return "Multiple Choice"
+        case .checkboxes: return "Checkboxes"
+        case .dropdown: return "Dropdown"
+        case .linearScale: return "Linear Scale"
+        case .date: return "Date"
+        case .time: return "Time"
+        case .fileUpload: return "File Upload"
+        case .grid: return "Grid"
+        case .info: return "Description"
+        case .section: return "Section"
+        case .unknown: return "General Question"
+        }
+    }
+    
+    public var badgeText: String {
+        switch self {
+        case .shortAnswer: return "SHORT"
+        case .paragraph: return "PARA"
+        case .multipleChoice: return "CHOICE"
+        case .checkboxes: return "CHECK"
+        case .dropdown: return "DROP"
+        case .linearScale: return "SCALE"
+        case .date: return "DATE"
+        case .time: return "TIME"
+        case .fileUpload: return "FILE"
+        case .grid: return "GRID"
+        case .info, .section: return "INFO"
+        case .unknown: return "SHORT"
+        }
+    }
+    
+    public var iconName: String {
+        switch self {
+        case .shortAnswer: return "text.cursor"
+        case .paragraph: return "text.alignleft"
+        case .multipleChoice: return "smallcircle.filled.circle"
+        case .checkboxes: return "checkmark.square"
+        case .dropdown: return "chevron.down.circle"
+        case .linearScale: return "slider.horizontal.3"
+        case .date: return "calendar"
+        case .time: return "clock"
+        case .fileUpload: return "arrow.up.doc"
+        case .grid: return "circle.grid.2x2"
+        case .info, .section: return "info.circle"
+        case .unknown: return "text.cursor"
+        }
+    }
+    
+    public var isShortQuestion: Bool { self == .shortAnswer }
+    public var isMultipleChoice: Bool { self == .multipleChoice }
+    public var isParagraph: Bool { self == .paragraph }
+    public var isCheckboxes: Bool { self == .checkboxes }
+    public var isDropdown: Bool { self == .dropdown }
+    public var isSelection: Bool { self == .multipleChoice || self == .checkboxes || self == .dropdown || self == .linearScale }
+    public var isTextEntry: Bool { !isSelection && self != .info && self != .section && self != .grid && self != .fileUpload }
+}
+
+// MARK: - Extracted Input Item Snapshot
+public struct ExtractedInputItem: Sendable, Equatable {
+    public var label: String
+    public var value: String
+    public var questionType: String?
+    public var options: [String]
+    
+    public init(label: String, value: String, questionType: String? = nil, options: [String] = []) {
+        self.label = label
+        self.value = value
+        self.questionType = questionType
+        self.options = options
+    }
+    
+    public var format: QuestionFormat {
+        QuestionFormat(fromString: questionType ?? "")
+    }
+}
+
 // MARK: - Input Field
 public struct FormInputField: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
@@ -35,6 +184,17 @@ public struct FormInputField: Identifiable, Equatable, Codable, Sendable {
     public var questionType: String
     public var isRequired: Bool
     public var entryKey: String?
+    
+    public var format: QuestionFormat {
+        QuestionFormat(fromString: questionType)
+    }
+    
+    public var isShortQuestion: Bool { format.isShortQuestion }
+    public var isMultipleChoice: Bool { format.isMultipleChoice }
+    public var isParagraph: Bool { format.isParagraph }
+    public var isCheckboxes: Bool { format.isCheckboxes }
+    public var isDropdown: Bool { format.isDropdown }
+    public var isSelection: Bool { format.isSelection }
     
     public init(
         id: UUID = UUID(),
@@ -146,6 +306,8 @@ public struct ApplicationFormSession: Identifiable, Equatable, Sendable, Codable
     public var lastDispatchedAt: Date?
     public var formDescription: String
     public var activeFieldIndex: Int
+    public var isClosedOrExpired: Bool
+    public var closedReason: String?
     
     public init(
         id: UUID = UUID(),
@@ -160,7 +322,9 @@ public struct ApplicationFormSession: Identifiable, Equatable, Sendable, Codable
         emailDeliveryStatus: EmailDeliveryStatus = .idle,
         lastDispatchedAt: Date? = nil,
         formDescription: String = "",
-        activeFieldIndex: Int = 0
+        activeFieldIndex: Int = 0,
+        isClosedOrExpired: Bool = false,
+        closedReason: String? = nil
     ) {
         self.id = id
         self.formTitle = formTitle
@@ -175,6 +339,52 @@ public struct ApplicationFormSession: Identifiable, Equatable, Sendable, Codable
         self.lastDispatchedAt = lastDispatchedAt
         self.formDescription = formDescription
         self.activeFieldIndex = activeFieldIndex
+        self.isClosedOrExpired = isClosedOrExpired
+        self.closedReason = closedReason
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, formTitle, sourceAppName, sourceURL, recipientEmail, startedAt, completedAt
+        case fields, isSubmitted, emailDeliveryStatus, lastDispatchedAt, formDescription
+        case activeFieldIndex, isClosedOrExpired, closedReason
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.formTitle = try container.decodeIfPresent(String.self, forKey: .formTitle) ?? "Application Form"
+        self.sourceAppName = try container.decodeIfPresent(String.self, forKey: .sourceAppName) ?? "Web Browser"
+        self.sourceURL = try container.decodeIfPresent(String.self, forKey: .sourceURL)
+        self.recipientEmail = try container.decodeIfPresent(String.self, forKey: .recipientEmail) ?? ""
+        self.startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt) ?? Date()
+        self.completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        self.fields = try container.decodeIfPresent([FormInputField].self, forKey: .fields) ?? []
+        self.isSubmitted = try container.decodeIfPresent(Bool.self, forKey: .isSubmitted) ?? false
+        self.emailDeliveryStatus = try container.decodeIfPresent(EmailDeliveryStatus.self, forKey: .emailDeliveryStatus) ?? .idle
+        self.lastDispatchedAt = try container.decodeIfPresent(Date.self, forKey: .lastDispatchedAt)
+        self.formDescription = try container.decodeIfPresent(String.self, forKey: .formDescription) ?? ""
+        self.activeFieldIndex = try container.decodeIfPresent(Int.self, forKey: .activeFieldIndex) ?? 0
+        self.isClosedOrExpired = try container.decodeIfPresent(Bool.self, forKey: .isClosedOrExpired) ?? false
+        self.closedReason = try container.decodeIfPresent(String.self, forKey: .closedReason)
+    }
+    
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(formTitle, forKey: .formTitle)
+        try container.encode(sourceAppName, forKey: .sourceAppName)
+        try container.encodeIfPresent(sourceURL, forKey: .sourceURL)
+        try container.encode(recipientEmail, forKey: .recipientEmail)
+        try container.encode(startedAt, forKey: .startedAt)
+        try container.encodeIfPresent(completedAt, forKey: .completedAt)
+        try container.encode(fields, forKey: .fields)
+        try container.encode(isSubmitted, forKey: .isSubmitted)
+        try container.encode(emailDeliveryStatus, forKey: .emailDeliveryStatus)
+        try container.encodeIfPresent(lastDispatchedAt, forKey: .lastDispatchedAt)
+        try container.encode(formDescription, forKey: .formDescription)
+        try container.encode(activeFieldIndex, forKey: .activeFieldIndex)
+        try container.encode(isClosedOrExpired, forKey: .isClosedOrExpired)
+        try container.encodeIfPresent(closedReason, forKey: .closedReason)
     }
     
     public var answeredCount: Int {
@@ -230,39 +440,106 @@ public struct ApplicationFormSession: Identifiable, Equatable, Sendable, Codable
         lines.append("## Captured Input Fields (\(answeredCount)/\(totalQuestions) Answered)")
         lines.append("")
         
-        if fields.isEmpty {
+        let actionable = fields.filter { $0.isActionableQuestion }
+        let questionsToRender = actionable.isEmpty ? fields : actionable
+        
+        if questionsToRender.isEmpty {
             lines.append("*(No fields captured)*")
         } else {
-            for (idx, field) in fields.enumerated() {
-                if field.questionType == "info" {
-                    lines.append("### ℹ️ \(field.label)")
-                    if !field.questionDescription.isEmpty {
-                        lines.append(field.questionDescription)
-                    }
-                    lines.append("")
-                } else {
-                    let reqBadge = field.isRequired ? " *(Required)*" : ""
-                    lines.append("### \(idx + 1). \(field.label)\(reqBadge) [\(field.category.rawValue)]")
-                    if !field.questionDescription.isEmpty {
-                        lines.append("*\(field.questionDescription)*")
-                    }
-                    if !field.value.isEmpty {
-                        if field.value.contains("\n") || field.wordCount >= 10 {
-                            lines.append(field.value)
-                            lines.append("*(Word count: \(field.wordCount))*")
-                        } else {
-                            lines.append("> \(field.value)")
-                        }
-                    } else {
-                        lines.append("*(Not answered yet)*")
-                    }
-                    lines.append("")
+            for (idx, field) in questionsToRender.enumerated() {
+                let reqBadge = field.isRequired ? " *(Required)*" : ""
+                lines.append("### \(idx + 1). \(field.label)\(reqBadge)")
+                if !field.questionDescription.isEmpty {
+                    lines.append("*\(field.questionDescription)*")
                 }
+                if !field.value.isEmpty {
+                    if field.value.contains("\n") || field.wordCount >= 10 {
+                        lines.append(field.value)
+                        lines.append("*(Word count: \(field.wordCount))*")
+                    } else {
+                        lines.append("> \(field.value)")
+                    }
+                } else {
+                    lines.append("*(Not answered yet)*")
+                }
+                lines.append("")
             }
         }
         lines.append("---")
         lines.append("*Captured automatically by Morph Context Engine • Form Copilot*")
         return lines.joined(separator: "\n")
+    }
+    
+    public var professionalHTMLSummary: String {
+        let cleanTitle = formTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Application Form"
+            : formTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let escapedTitle = cleanTitle
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        
+        let actionable = fields.filter { $0.isActionableQuestion }
+        let questionsToRender = actionable.isEmpty ? fields : actionable
+        
+        var rowsHTML = ""
+        for field in questionsToRender {
+            let reqHTML = field.isRequired ? "<span style=\"color:#ef4444;\"> *</span>" : ""
+            let escapedLabel = field.label
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            let descHTML = field.questionDescription.isEmpty ? "" : "<div style=\"font-size:13px;color:#6b7280;margin-top:2px;font-style:italic;\">\(field.questionDescription.replacingOccurrences(of: "<", with: "&lt;"))</div>"
+            
+            let valHTML: String
+            if !field.value.isEmpty {
+                let escapedVal = field.value
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+                    .replacingOccurrences(of: "\n", with: "<br/>")
+                valHTML = "<div style=\"font-size:15px;color:#111827;margin-top:4px;white-space:pre-wrap;line-height:1.5;\">\(escapedVal)</div>"
+            } else {
+                valHTML = "<div style=\"font-size:14px;color:#9ca3af;margin-top:4px;font-style:italic;\">— (Not answered)</div>"
+            }
+            
+            rowsHTML += """
+            <div style=\"margin-bottom:20px;\">
+                <div style=\"font-size:14px;font-weight:600;color:#374151;\">\(escapedLabel)\(reqHTML)</div>
+                \(descHTML)
+                \(valHTML)
+            </div>
+            """
+        }
+        
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset=\"utf-8\"/>
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/>
+        <title>\(escapedTitle)</title>
+        </head>
+        <body style=\"margin:0;padding:24px 16px;background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;color:#1f2937;\">
+            <div style=\"max-width:600px;margin:0 auto;\">
+                <h2 style=\"margin:0 0 16px 0;font-size:22px;font-weight:700;color:#111827;line-height:1.3;\">\(escapedTitle)</h2>
+                
+                <p style=\"margin:0 0 24px 0;font-size:15px;color:#4b5563;line-height:1.5;\">
+                    Here is a copy of your responses:
+                </p>
+                
+                <div style=\"margin-bottom:32px;\">
+                    \(rowsHTML)
+                </div>
+                
+                <div style=\"margin-top:40px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;\">
+                    Powered by Morph
+                </div>
+            </div>
+        </body>
+        </html>
+        """
     }
 }
 
@@ -782,11 +1059,15 @@ public struct FormSchema: Sendable, Equatable {
     public var title: String
     public var description: String
     public var fields: [FormInputField]
+    public var isClosed: Bool
+    public var closedMessage: String?
     
-    public init(title: String, description: String = "", fields: [FormInputField]) {
+    public init(title: String, description: String = "", fields: [FormInputField], isClosed: Bool = false, closedMessage: String? = nil) {
         self.title = title
         self.description = description
         self.fields = fields
+        self.isClosed = isClosed
+        self.closedMessage = closedMessage
     }
 }
 
@@ -2424,11 +2705,13 @@ public struct MockApplicationFormDetector: ApplicationFormDetectorProtocol {
 public struct EmailDispatchResult: Sendable, Equatable {
     public var success: Bool
     public var message: String
+    public var messageId: String?
     public var dispatchedAt: Date
     
-    public init(success: Bool, message: String, dispatchedAt: Date = Date()) {
+    public init(success: Bool, message: String, messageId: String? = nil, dispatchedAt: Date = Date()) {
         self.success = success
         self.message = message
+        self.messageId = messageId
         self.dispatchedAt = dispatchedAt
     }
 }
@@ -2443,54 +2726,35 @@ public struct DefaultEmailDispatcher: ApplicationEmailDispatcherProtocol {
     
     @MainActor
     public func dispatchCopy(session: ApplicationFormSession) async throws -> EmailDispatchResult {
-        let subject = "Copy of Your Application: \(session.formTitle)"
+        let cleanTitle = session.formTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subject = cleanTitle.isEmpty ? "Application Form" : cleanTitle
         let body = session.formattedSummary
-        let recipient = session.recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawRecipient = session.recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recipient = (!rawRecipient.isEmpty && rawRecipient != "user@example.com" && !rawRecipient.contains("minh7898888"))
+            ? rawRecipient
+            : ApplicationFormModel.defaultRecipientEmail
         
-        guard !recipient.isEmpty else {
+        guard !recipient.isEmpty && recipient.contains("@") else {
             return EmailDispatchResult(success: false, message: "No recipient email provided")
         }
         
-        // First try native macOS Mail via AppleScript (creates and sends message cleanly)
-        let escapedSubject = subject.replacingOccurrences(of: "\"", with: "\\\"")
-        let escapedBody = body.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
-        let escapedRecipient = recipient.replacingOccurrences(of: "\"", with: "\\\"")
-        
-        let appleScriptSource = """
-        tell application "Mail"
-            try
-                set msg to make new outgoing message with properties {subject:"\(escapedSubject)", content:"\(escapedBody)\\n", visible:false}
-                tell msg
-                    make new to recipient at end of to recipients with properties {address:"\(escapedRecipient)"}
-                    send
-                end tell
-                return "sent"
-            on error errMsg
-                return errMsg
-            end try
-        end tell
-        """
-        
-        if let appleScript = NSAppleScript(source: appleScriptSource) {
-            var errorInfo: NSDictionary?
-            let output = appleScript.executeAndReturnError(&errorInfo)
-            let resultStr = output.stringValue ?? ""
-            if resultStr == "sent" {
-                return EmailDispatchResult(success: true, message: "Email sent via Mail.app to \(recipient)")
+        // Send receipt via Gmail (Gmail REST API if authenticated, or Gmail Web Compose in browser)
+        // Never launches macOS Mail.app or uses mailto:
+        let gmailResult = await GmailEngine.shared.sendFormReceipt(
+            recipient: recipient,
+            subject: subject,
+            body: body,
+            htmlContent: session.professionalHTMLSummary
+        )
+        if gmailResult.success {
+            if gmailResult.viaWebFallback {
+                return EmailDispatchResult(success: true, message: "Drafted copy in Gmail Web for \(recipient)", messageId: gmailResult.messageId)
+            } else {
+                return EmailDispatchResult(success: true, message: "Receipt sent via Gmail to \(recipient)", messageId: gmailResult.messageId)
             }
         }
         
-        // Fallback: Mailto URL
-        let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let encodedBody = body.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        if let mailtoURL = URL(string: "mailto:\(recipient)?subject=\(encodedSubject)&body=\(encodedBody)") {
-            _ = await MainActor.run {
-                NSWorkspace.shared.open(mailtoURL)
-            }
-            return EmailDispatchResult(success: true, message: "Drafted copy to \(recipient)")
-        }
-        
-        return EmailDispatchResult(success: false, message: "Failed to dispatch email")
+        return EmailDispatchResult(success: false, message: gmailResult.error ?? "Failed to send receipt via Gmail", messageId: nil)
     }
 }
 
@@ -2526,8 +2790,49 @@ public struct FormContentRetriever: Sendable {
     
     public typealias RetrievedFormSchema = FormSchema
     
+    /// Detects whether an HTML page represents a closed, expired, or deadline-passed form
+    public static func detectFormClosedState(html: String) -> (isClosed: Bool, message: String?) {
+        let lower = html.lowercased()
+        
+        let isClosedGForm = lower.contains("freebirdformviewerviewresponseconfirmationmessage") ||
+                            lower.contains("this form is no longer accepting responses") ||
+                            lower.contains("is no longer accepting responses") ||
+                            lower.contains("no longer accepting responses") ||
+                            lower.contains("deadline has passed") ||
+                            lower.contains("deadline has expired") ||
+                            lower.contains("submissions are closed") ||
+                            lower.contains("submissions have closed") ||
+                            lower.contains("this form is closed") ||
+                            lower.contains("form is closed") ||
+                            lower.contains("you've already responded") ||
+                            lower.contains("you have already responded") ||
+                            lower.contains("you need permission") ||
+                            lower.contains("only be viewed by users in the owner's organization")
+        
+        guard isClosedGForm else { return (false, nil) }
+        
+        if lower.contains("no longer accepting responses") {
+            return (true, "This form is no longer accepting responses.")
+        } else if lower.contains("deadline has passed") || lower.contains("deadline has expired") {
+            return (true, "The submission deadline for this form has passed.")
+        } else if lower.contains("submissions are closed") || lower.contains("submissions have closed") || lower.contains("form is closed") {
+            return (true, "Submissions for this form are currently closed.")
+        } else if lower.contains("already responded") {
+            return (true, "You've already responded to this form.")
+        } else if lower.contains("need permission") || lower.contains("organization") {
+            return (true, "You need permission to access this form.")
+        } else {
+            return (true, "This form is closed.")
+        }
+    }
+    
     /// Parses Google Form FB_PUBLIC_LOAD_DATA_ from HTML or raw JSON
     public static func parseGoogleFormPublicLoadData(_ htmlOrJson: String) -> RetrievedFormSchema? {
+        let closedCheck = detectFormClosedState(html: htmlOrJson)
+        if closedCheck.isClosed {
+            return RetrievedFormSchema(title: "Google Form", description: "", fields: [], isClosed: true, closedMessage: closedCheck.message)
+        }
+        
         let jsonString: String
         if let startRange = htmlOrJson.range(of: "FB_PUBLIC_LOAD_DATA_ = ") {
             let rest = htmlOrJson[startRange.upperBound...]
@@ -2571,6 +2876,17 @@ public struct FormContentRetriever: Sendable {
             var options: [String] = []
             if let first = firstEntry, first.count > 1, let optList = first[1] as? [[Any?]] {
                 options = optList.compactMap { $0.first as? String }
+            }
+            if options.isEmpty {
+                for entry in entries {
+                    if entry.count > 1, let optList = entry[1] as? [[Any?]] {
+                        let candidate = optList.compactMap { $0.first as? String }
+                        if !candidate.isEmpty {
+                            options = candidate
+                            break
+                        }
+                    }
+                }
             }
             
             var isRequired = false
@@ -2726,6 +3042,11 @@ public struct FormContentRetriever: Sendable {
 
     /// Parses generic HTML forms by finding question blocks, labels, and pre-filled input values
     public static func parseGenericHTMLForm(_ html: String, url: String) -> RetrievedFormSchema? {
+        let closedCheck = detectFormClosedState(html: html)
+        if closedCheck.isClosed {
+            return RetrievedFormSchema(title: "Application Form", description: "", fields: [], isClosed: true, closedMessage: closedCheck.message)
+        }
+        
         let lower = html.lowercased()
         guard lower.contains("<form") || lower.contains("<input") || lower.contains("<textarea") || lower.contains("role=\"listitem\"") || lower.contains("class=\"question\"") else {
             return nil
@@ -2793,6 +3114,27 @@ public struct FormContentRetriever: Sendable {
                     }
                 }
                 
+                // B2. Select / Dropdown selected option value
+                if val.isEmpty && (blockHTML.contains("<select") || blockHTML.contains("role=\"listbox\"")) {
+                    let selOptPattern = "<option[^>]*selected[^>]*>(.*?)</option>"
+                    if let selOptRegex = try? NSRegularExpression(pattern: selOptPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]),
+                       let sm = selOptRegex.firstMatch(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                        let innerText = cleanHTMLText(blockNS.substring(with: sm.range(at: 1)))
+                        let optSub = blockNS.substring(with: sm.range)
+                        let valAttrRegex = try? NSRegularExpression(pattern: "value=[\"']([^\"']*)[\"']", options: [.caseInsensitive])
+                        if let vm = valAttrRegex?.firstMatch(in: optSub, range: NSRange(location: 0, length: (optSub as NSString).length)) {
+                            let v = (optSub as NSString).substring(with: vm.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                            val = !v.isEmpty ? v : innerText
+                        } else {
+                            val = innerText
+                        }
+                    }
+                    let dropPlaceholders = ["select", "choose", "select an option", "choose an option", "select location", "-- select --"]
+                    if dropPlaceholders.contains(val.lowercased()) {
+                        val = ""
+                    }
+                }
+                
                 // C. Regular input value
                 if val.isEmpty {
                     let valRegex = try? NSRegularExpression(pattern: "<input[^>]*value=[\"']([^\"']*)[\"']", options: [.caseInsensitive])
@@ -2806,13 +3148,31 @@ public struct FormContentRetriever: Sendable {
                 
                 // Options extraction
                 var options: [String] = []
-                let optRegex = try? NSRegularExpression(pattern: "<label[^>]*>(.*?)</label>|<option[^>]*value=[\"']?([^\"'>]+)[\"']?[^>]*>(.*?)</option>", options: [.caseInsensitive])
+                let optRegex = try? NSRegularExpression(pattern: "<label[^>]*>(.*?)</label>|<option[^>]*>(.*?)</option>", options: [.caseInsensitive, .dotMatchesLineSeparators])
                 if let oMatches = optRegex?.matches(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
                     for om in oMatches {
-                        let oRange = om.range(at: 1).location != NSNotFound ? om.range(at: 1) : (om.range(at: 3).location != NSNotFound ? om.range(at: 3) : om.range(at: 2))
+                        let oRange = om.range(at: 1).location != NSNotFound ? om.range(at: 1) : om.range(at: 2)
                         let cleanOpt = cleanHTMLText(blockNS.substring(with: oRange))
-                        if !cleanOpt.isEmpty && cleanOpt != label && !options.contains(cleanOpt) {
+                        let isPlaceholder = ["select", "choose", "select an option", "choose an option", "select location", "-- select --"].contains(cleanOpt.lowercased())
+                        if !cleanOpt.isEmpty && cleanOpt != label && !isPlaceholder && !options.contains(cleanOpt) {
                             options.append(cleanOpt)
+                        }
+                    }
+                }
+                
+                // Also extract radio and checkbox inputs with sibling text or value attributes
+                let inputChoiceRegex = try? NSRegularExpression(pattern: "<input[^>]*(?:type=[\"'](?:radio|checkbox)[\"'])[^>]*value=[\"']([^\"']+)[\"'][^>]*>(?:\\s*([^<\\n\\r]+))?", options: [.caseInsensitive])
+                if let icMatches = inputChoiceRegex?.matches(in: blockHTML, range: NSRange(location: 0, length: blockNS.length)) {
+                    for ic in icMatches {
+                        var choiceText = ""
+                        if ic.range(at: 2).location != NSNotFound {
+                            choiceText = cleanHTMLText(blockNS.substring(with: ic.range(at: 2)))
+                        }
+                        if choiceText.isEmpty && ic.range(at: 1).location != NSNotFound {
+                            choiceText = cleanHTMLText(blockNS.substring(with: ic.range(at: 1)))
+                        }
+                        if !choiceText.isEmpty && !options.contains(choiceText) {
+                            options.append(choiceText)
                         }
                     }
                 }
@@ -2825,6 +3185,16 @@ public struct FormContentRetriever: Sendable {
                     qType = "multipleChoice"
                 } else if blockHTML.contains("type=\"checkbox\"") || blockHTML.contains("role=\"checkbox\"") {
                     qType = "checkboxes"
+                } else if blockHTML.contains("<select") || blockHTML.contains("role=\"listbox\"") || blockHTML.contains("role=\"combobox\"") {
+                    qType = "dropdown"
+                } else if blockHTML.contains("type=\"date\"") {
+                    qType = "date"
+                } else if blockHTML.contains("type=\"time\"") {
+                    qType = "time"
+                } else if blockHTML.contains("type=\"range\"") || blockHTML.contains("role=\"slider\"") {
+                    qType = "linearScale"
+                } else if blockHTML.contains("type=\"file\"") {
+                    qType = "fileUpload"
                 } else {
                     qType = label.lowercased().contains("why") || label.lowercased().contains("about") || label.lowercased().contains("statement") ? "paragraph" : "shortAnswer"
                 }
@@ -3570,6 +3940,12 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         guard model.isFormDetected && model.isAutoCaptureEnabled,
               let session = model.activeSession else { return }
         
+        // Never capture keystrokes if the form is marked closed or expired
+        if model.isClosedOrExpired || session.isClosedOrExpired {
+            invalidateFocus()
+            return
+        }
+        
         let frontApp = NSWorkspace.shared.frontmostApplication
         // Only capture if frontmost application is the detected browser / form host (bypassed in unit tests)
         if !MorphEnvironment.isTestingEnvironment {
@@ -3591,6 +3967,42 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             if Self.isBrowserChromeInputFocused(for: frontApp) {
                 invalidateFocus()
                 return
+            }
+            
+            // Never capture keystrokes if the form is marked closed or expired
+            if model.isClosedOrExpired {
+                invalidateFocus()
+                return
+            }
+            
+            // Check that the frontmost window title still matches the detected form
+            let appElem = AXUIElementCreateApplication(frontApp.processIdentifier)
+            var winRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+               let win = winRef {
+                var titleRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(win as! AXUIElement, kAXTitleAttribute as CFString, &titleRef) == .success,
+                   let winTitle = titleRef as? String, !winTitle.isEmpty {
+                    let isMatching = DefaultApplicationFormDetector.isSameForm(
+                        titleA: winTitle, urlA: nil,
+                        titleB: model.detectedFormTitle, urlB: model.activeSession?.sourceURL
+                    )
+                    if !isMatching {
+                        invalidateFocus()
+                        return
+                    }
+                }
+            }
+            
+            // Check that the focused element is inside an AXWebArea (ruling out tabs, sidebar panels, and command palettes)
+            var focusedRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(appElem, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+               let focused = focusedRef {
+                let focusedElem = focused as! AXUIElement
+                if !Self.isElementInsideWebArea(focusedElem) {
+                    invalidateFocus()
+                    return
+                }
             }
         }
         
@@ -3739,13 +4151,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         model.lastKeystrokeAt = Date()
         model.saveDrafts()
         
-        // Email detection: if user types email in any field, auto-update recipientEmail
+        // Email detection: if user types email in any contact or email field, auto-update recipientEmail
         let curVal = model.activeSession?.fields[idx].value ?? ""
+        let isContactField = model.activeSession?.fields[idx].category == .contact || (model.activeSession?.fields[idx].label.lowercased().contains("email") ?? false)
         if curVal.contains("@") && curVal.contains(".") {
             let tokens = curVal.components(separatedBy: .whitespacesAndNewlines)
             for tok in tokens {
                 if tok.contains("@") && tok.contains(".") && tok.count >= 5 {
-                    if model.recipientEmail.isEmpty || model.recipientEmail.contains("example.com") || model.recipientEmail.contains("@test.com") {
+                    if isContactField || model.recipientEmail.isEmpty || model.recipientEmail.contains("example.com") || model.recipientEmail.contains("@test.com") {
                         model.setRecipientEmail(tok)
                     }
                     break
@@ -4332,8 +4745,8 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         return fields.contains(where: { $0.isActionableQuestion }) ? "" : (candidates.first ?? "")
     }
     
-    /// Scans the browser content window to extract live input field values paired with their question labels.
-    public static func scanBrowserWindowInputs(appElem: AXUIElement, fields: [FormInputField] = []) -> [(label: String, value: String)]? {
+    /// Scans the browser content window to extract live input field values paired with their question labels, format, and choices.
+    public static func scanBrowserWindowInputItems(appElem: AXUIElement, fields: [FormInputField] = []) -> [ExtractedInputItem]? {
         guard let win = DefaultApplicationFormDetector.getBrowserWindowElement(appElem: appElem) else {
             return nil
         }
@@ -4344,7 +4757,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             return nil
         }
         
-        var fieldValues: [String: String] = [:]
+        var fieldValues: [String: (val: String, type: String, options: [String])] = [:]
         var queue: [AXUIElement] = [startElem]
         var head = 0
         let maxElements = 10000
@@ -4367,9 +4780,10 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                     let textVal = (valRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     let label = resolveQuestionLabel(for: current, fields: fields, fallback: desc)
                     let cleanLbl = ApplicationFormModel.cleanQuestionTitle(label)
+                    let qType = (role == "AXTextArea") ? "paragraph" : "shortAnswer"
                     if !cleanLbl.isEmpty {
                         if !textVal.isEmpty || fieldValues[cleanLbl] == nil {
-                            fieldValues[cleanLbl] = textVal
+                            fieldValues[cleanLbl] = (val: textVal, type: qType, options: [])
                         }
                     }
                 }
@@ -4380,13 +4794,17 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 let qLabel = resolveQuestionLabel(for: current, fields: fields)
                 let cleanLbl = ApplicationFormModel.cleanQuestionTitle(qLabel)
                 if !cleanLbl.isEmpty {
+                    let optionTitle = extractOptionTitle(from: current)
+                    var existingOpts = fieldValues[cleanLbl]?.options ?? []
+                    if !optionTitle.isEmpty && !existingOpts.contains(optionTitle) {
+                        existingOpts.append(optionTitle)
+                    }
                     if isChecked {
-                        let optionTitle = extractOptionTitle(from: current)
-                        if !optionTitle.isEmpty {
-                            fieldValues[cleanLbl] = optionTitle
-                        }
+                        fieldValues[cleanLbl] = (val: optionTitle, type: "multipleChoice", options: existingOpts)
                     } else if fieldValues[cleanLbl] == nil {
-                        fieldValues[cleanLbl] = ""
+                        fieldValues[cleanLbl] = (val: "", type: "multipleChoice", options: existingOpts)
+                    } else {
+                        fieldValues[cleanLbl]?.options = existingOpts
                     }
                 }
             } else if role == "AXCheckBox" {
@@ -4396,19 +4814,26 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 let qLabel = resolveQuestionLabel(for: current, fields: fields)
                 let cleanLbl = ApplicationFormModel.cleanQuestionTitle(qLabel)
                 if !cleanLbl.isEmpty {
+                    let optionTitle = extractOptionTitle(from: current)
+                    var existingOpts = fieldValues[cleanLbl]?.options ?? []
+                    if !optionTitle.isEmpty && !existingOpts.contains(optionTitle) {
+                        existingOpts.append(optionTitle)
+                    }
                     if isChecked {
-                        let optionTitle = extractOptionTitle(from: current)
                         if !optionTitle.isEmpty {
-                            if let existing = fieldValues[cleanLbl], !existing.isEmpty {
-                                if !existing.components(separatedBy: ", ").contains(optionTitle) {
-                                    fieldValues[cleanLbl] = existing + ", " + optionTitle
+                            if let existing = fieldValues[cleanLbl]?.val, !existing.isEmpty {
+                                let parts = existing.components(separatedBy: ", ")
+                                if !parts.contains(optionTitle) {
+                                    fieldValues[cleanLbl] = (val: existing + ", " + optionTitle, type: "checkboxes", options: existingOpts)
                                 }
                             } else {
-                                fieldValues[cleanLbl] = optionTitle
+                                fieldValues[cleanLbl] = (val: optionTitle, type: "checkboxes", options: existingOpts)
                             }
                         }
                     } else if fieldValues[cleanLbl] == nil {
-                        fieldValues[cleanLbl] = ""
+                        fieldValues[cleanLbl] = (val: "", type: "checkboxes", options: existingOpts)
+                    } else {
+                        fieldValues[cleanLbl]?.options = existingOpts
                     }
                 }
             } else if role == "AXPopUpButton" || role == "AXComboBox" {
@@ -4420,10 +4845,9 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 let qLabel = resolveQuestionLabel(for: current, fields: fields)
                 let cleanLbl = ApplicationFormModel.cleanQuestionTitle(qLabel)
                 if !cleanLbl.isEmpty {
-                    if !popVal.isEmpty && !ignoredDrop.contains(popVal.lowercased()) {
-                        fieldValues[cleanLbl] = popVal
-                    } else if fieldValues[cleanLbl] == nil {
-                        fieldValues[cleanLbl] = ""
+                    let chosen = (!popVal.isEmpty && !ignoredDrop.contains(popVal.lowercased())) ? popVal : ""
+                    if fieldValues[cleanLbl] == nil || !chosen.isEmpty {
+                        fieldValues[cleanLbl] = (val: chosen, type: "dropdown", options: fieldValues[cleanLbl]?.options ?? [])
                     }
                 }
             }
@@ -4437,11 +4861,16 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             }
         }
         
-        var results: [(label: String, value: String)] = []
-        for (lbl, val) in fieldValues {
-            results.append((label: lbl, value: val))
+        var results: [ExtractedInputItem] = []
+        for (lbl, data) in fieldValues {
+            results.append(ExtractedInputItem(label: lbl, value: data.val, questionType: data.type, options: data.options))
         }
         return results
+    }
+    
+    /// Scans the browser content window to extract live input field values paired with their question labels.
+    public static func scanBrowserWindowInputs(appElem: AXUIElement, fields: [FormInputField] = []) -> [(label: String, value: String)]? {
+        return scanBrowserWindowInputItems(appElem: appElem, fields: fields)?.map { ($0.label, $0.value) }
     }
     
     /// JavaScript injected into the active browser tab to read the live answers of a Google Form
@@ -4450,6 +4879,20 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     /// Contains no double quotes so it can be embedded safely in an AppleScript string literal.
     public static let domExtractionScript: String = #"""
     (function() {
+        var bodyText = (document.body ? (document.body.innerText || document.body.textContent) : '').toLowerCase();
+        var isClosed = bodyText.indexOf('no longer accepting responses') >= 0 ||
+                       bodyText.indexOf('deadline has passed') >= 0 ||
+                       bodyText.indexOf('submissions are closed') >= 0 ||
+                       bodyText.indexOf("you've already responded") >= 0 ||
+                       bodyText.indexOf('you need permission') >= 0 ||
+                       document.querySelector('.freebirdFormviewerViewResponseConfirmationMessage') !== null;
+        if (isClosed) {
+            var reason = 'This form is no longer accepting responses.';
+            if (bodyText.indexOf('deadline has passed') >= 0) reason = 'The submission deadline for this form has passed.';
+            else if (bodyText.indexOf('already responded') >= 0) reason = "You've already responded to this form.";
+            else if (bodyText.indexOf('need permission') >= 0) reason = 'You need permission to access this form.';
+            return '__FORM_CLOSED__:::' + reason + ':::closed:::';
+        }
         var out = [];
         var seen = [];
         function clean(t) { return (t || '').replace(/\s+/g, ' ').trim(); }
@@ -4475,46 +4918,96 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 var h = item.querySelector('[role=heading], .M7eMe, legend, label, h2, h3, h4');
                 var title = text(h).replace(/\s*\*+\s*$/, '').replace(/:::/g, ':').replace(/\|\|\|/g, '|');
                 if (!title) continue;
+                // Format detection & value extraction
+                var qType = 'shortAnswer';
+                var opts = [];
                 var val = '';
-                var inp = item.querySelector('input[type=text], input[type=email], input[type=tel], input[type=url], input[type=number], input[type=date], input[type=time], input[type=datetime-local], input:not([type]), textarea');
-                if (inp && inp.value) val = clean(inp.value);
-                if (!val) {
-                    var rad = item.querySelector('[role=radio][aria-checked=true], input[type=radio]:checked');
-                    if (rad) val = optionValue(rad);
-                }
-                if (!val) {
-                    var chk = item.querySelectorAll('[role=checkbox][aria-checked=true], input[type=checkbox]:checked');
+                
+                var ta = item.querySelector('textarea, [contenteditable=true]');
+                var radEls = item.querySelectorAll('[role=radio], input[type=radio]');
+                var chkEls = item.querySelectorAll('[role=checkbox], input[type=checkbox]');
+                var selEl = item.querySelector('select, [role=listbox], [role=combobox]');
+                
+                if (radEls.length > 0 || item.querySelector('[role=radiogroup]')) {
+                    qType = 'multipleChoice';
+                    for (var r = 0; r < radEls.length; r++) {
+                        var rv = optionValue(radEls[r]);
+                        if (rv && opts.indexOf(rv) < 0 && rv !== title) opts.push(rv);
+                    }
+                    var activeRad = item.querySelector('[role=radio][aria-checked=true], input[type=radio]:checked');
+                    if (activeRad) val = optionValue(activeRad);
+                } else if (chkEls.length > 0 || item.querySelector('[role=group] [role=checkbox]')) {
+                    qType = 'checkboxes';
+                    for (var c = 0; c < chkEls.length; c++) {
+                        var cv = optionValue(chkEls[c]);
+                        if (cv && opts.indexOf(cv) < 0 && cv !== title) opts.push(cv);
+                    }
+                    var checkedChks = item.querySelectorAll('[role=checkbox][aria-checked=true], input[type=checkbox]:checked');
                     var cs = [];
-                    for (var j = 0; j < chk.length; j++) {
-                        var cv = optionValue(chk[j]);
-                        if (cv && cs.indexOf(cv) < 0) cs.push(cv);
+                    for (var j = 0; j < checkedChks.length; j++) {
+                        var cVal = optionValue(checkedChks[j]);
+                        if (cVal && cs.indexOf(cVal) < 0) cs.push(cVal);
                     }
                     val = cs.join(', ');
-                }
-                if (!val) {
-                    var sel = item.querySelector('select');
-                    if (sel && sel.selectedIndex >= 0) {
-                        var so = sel.options[sel.selectedIndex];
-                        var sv = so ? clean(so.value || so.text) : '';
-                        if (sv && !placeholder.test(sv)) val = sv;
+                } else if (selEl) {
+                    qType = 'dropdown';
+                    var optTags = selEl.querySelectorAll('option, [role=option]');
+                    for (var o = 0; o < optTags.length; o++) {
+                        var ov = optionValue(optTags[o]);
+                        if (ov && !placeholder.test(ov) && opts.indexOf(ov) < 0 && ov !== title) opts.push(ov);
                     }
-                }
-                if (!val) {
-                    var drop = item.querySelector('[role=option][aria-selected=true]');
-                    if (drop) {
-                        var dv = optionValue(drop);
-                        if (dv && !placeholder.test(dv)) val = dv;
+                    if (selEl.tagName && selEl.tagName.toLowerCase() === 'select') {
+                        if (selEl.selectedIndex >= 0) {
+                            var so = selEl.options[selEl.selectedIndex];
+                            var sv = so ? clean(so.value || so.text) : '';
+                            if (sv && !placeholder.test(sv)) val = sv;
+                        }
+                    } else {
+                        var selOpt = item.querySelector('[role=option][aria-selected=true]');
+                        if (selOpt) {
+                            var dv = optionValue(selOpt);
+                            if (dv && !placeholder.test(dv)) val = dv;
+                        }
                     }
+                } else if (item.querySelector('.W2203e, [role=slider], input[type=range]')) {
+                    qType = 'linearScale';
+                    var scaleInp = item.querySelector('input[type=range], input[type=number]');
+                    if (scaleInp && scaleInp.value) val = clean(scaleInp.value);
+                } else if (item.querySelector('input[type=date]')) {
+                    qType = 'date';
+                    var dtInp = item.querySelector('input[type=date]');
+                    if (dtInp && dtInp.value) val = clean(dtInp.value);
+                } else if (item.querySelector('input[type=time]')) {
+                    qType = 'time';
+                    var tmInp = item.querySelector('input[type=time]');
+                    if (tmInp && tmInp.value) val = clean(tmInp.value);
+                } else if (item.querySelector('input[type=file]')) {
+                    qType = 'fileUpload';
+                } else if (ta) {
+                    qType = 'paragraph';
+                    if (ta.value) val = clean(ta.value);
+                    else if (ta.isContentEditable) val = clean(ta.innerText);
+                } else {
+                    qType = 'shortAnswer';
+                    var inp = item.querySelector('input[type=text], input[type=email], input[type=tel], input[type=url], input[type=number], input:not([type])');
+                    if (inp && inp.value) val = clean(inp.value);
                 }
-                val = val.replace(/\|\|\|/g, '|');
-                out.push(title + ':::' + val);
+                
+                val = val.replace(/\|\|\|/g, '|').replace(/:::/g, ':');
+                var cleanOpts = opts.map(function(s) { return s.replace(/:::/g, ':').replace(/;;;/g, ';'); }).join(';;;');
+                out.push(title + ':::' + val + ':::' + qType + ':::' + cleanOpts);
             }
         } else {
             var inps = document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), textarea, select');
             for (var k = 0; k < inps.length; k++) {
                 var el = inps[k];
                 var l = clean(el.getAttribute('aria-label') || el.name || el.placeholder || '');
-                if (l && el.value) out.push(l.replace(/:::/g, ':') + ':::' + clean(el.value).replace(/\|\|\|/g, '|'));
+                var tag = (el.tagName || '').toLowerCase();
+                var t = (el.getAttribute('type') || '').toLowerCase();
+                var q = (tag === 'textarea') ? 'paragraph' : (t === 'radio' ? 'multipleChoice' : (t === 'checkbox' ? 'checkboxes' : (tag === 'select' ? 'dropdown' : 'shortAnswer')));
+                if (l) {
+                    out.push(l.replace(/:::/g, ':') + ':::' + clean(el.value || '').replace(/\|\|\|/g, '|') + ':::' + q + ':::');
+                }
             }
         }
         return out.join('|||');
@@ -4565,28 +5058,54 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         """
     }
     
-    /// Parses the `title:::value|||title:::value` output of `domExtractionScript`.
-    /// Pairs with an empty value are kept so callers can detect cleared answers.
-    public static func parseDOMExtractionOutput(_ output: String) -> [(label: String, value: String)] {
-        var results: [(label: String, value: String)] = []
+    /// Parses the `title:::value:::type:::options` output of `domExtractionScript`.
+    /// Preserves full question format awareness and available choices.
+    public static func parseDOMExtractionItems(_ output: String) -> [ExtractedInputItem] {
+        if output.contains("__FORM_CLOSED__") {
+            for pair in output.components(separatedBy: "|||") {
+                let parts = pair.components(separatedBy: ":::")
+                if parts.count >= 2 && parts[0] == "__FORM_CLOSED__" {
+                    let reason = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    return [ExtractedInputItem(label: "__FORM_CLOSED__", value: reason, questionType: "closed", options: [])]
+                }
+            }
+        }
+        var results: [ExtractedInputItem] = []
         for pair in output.components(separatedBy: "|||") {
             let parts = pair.components(separatedBy: ":::")
             guard parts.count >= 2 else { continue }
             let lbl = ApplicationFormModel.cleanQuestionTitle(parts[0])
-            let val = parts[1...].joined(separator: ":::").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !lbl.isEmpty {
-                results.append((label: lbl, value: val))
-            }
+            guard !lbl.isEmpty else { continue }
+            let val = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            let qType = parts.count >= 3 && !parts[2].isEmpty ? parts[2].trimmingCharacters(in: .whitespacesAndNewlines) : nil
+            let options: [String] = {
+                guard parts.count >= 4 && !parts[3].isEmpty else { return [] }
+                return parts[3].components(separatedBy: ";;;")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            }()
+            results.append(ExtractedInputItem(label: lbl, value: val, questionType: qType, options: options))
         }
         return results
+    }
+    
+    /// Parses the `title:::value|||title:::value` output of `domExtractionScript`.
+    /// Pairs with an empty value are kept so callers can detect cleared answers.
+    public static func parseDOMExtractionOutput(_ output: String) -> [(label: String, value: String)] {
+        return parseDOMExtractionItems(output).map { ($0.label, $0.value) }
+    }
+    
+    /// Reads every question, its format, options, and its current answer from the active tab.
+    public static func extractItemsSnapshotViaAppleScript(bundleID: String) -> [ExtractedInputItem]? {
+        guard let scriptSource = buildDOMExtractionAppleScript(bundleID: bundleID),
+              let output = executeAppleScript(scriptSource), !output.isEmpty else { return nil }
+        return parseDOMExtractionItems(output)
     }
     
     /// Reads every question and its current answer (empty string when unanswered) from the active tab of a
     /// scriptable browser (Safari, Chrome, Brave, Arc, Edge...) via AppleScript DOM extraction.
     public static func extractSnapshotViaAppleScript(bundleID: String) -> [(label: String, value: String)]? {
-        guard let scriptSource = buildDOMExtractionAppleScript(bundleID: bundleID),
-              let output = executeAppleScript(scriptSource), !output.isEmpty else { return nil }
-        return parseDOMExtractionOutput(output)
+        return extractItemsSnapshotViaAppleScript(bundleID: bundleID)?.map { ($0.label, $0.value) }
     }
     
     /// Extracts answered questions (non-empty values only) from scriptable browsers via AppleScript.
@@ -4822,7 +5341,8 @@ public final class ApplicationFormModel: ObservableObject {
     @Published public var userDefaultBrowser: UserBrowserProfile
     @Published public var isTracking: Bool = false
     @Published public var isAutoCaptureEnabled: Bool = true
-    @Published public var recipientEmail: String = ""
+    public static let defaultRecipientEmail = "aaronn.nguyen.work@gmail.com"
+    @Published public var recipientEmail: String = defaultRecipientEmail
     @Published public var deliveryToastMessage: String? = nil
     @Published public var historySessions: [ApplicationFormSession] = []
     @Published public var activeFieldIndex: Int = 0
@@ -4831,6 +5351,8 @@ public final class ApplicationFormModel: ObservableObject {
     @Published public var lastKeystrokeAt: Date? = nil
     @Published public var filterMode: FormFieldFilterMode = .requiredOnly
     @Published public var consecutiveMissedDetections: Int = 0
+    @Published public var isClosedOrExpired: Bool = false
+    @Published public var closedReason: String? = nil
     
     /// IDs of fields whose current value was read from the browser. Only these may be cleared
     /// automatically when the user empties the answer in the browser, so answers typed manually
@@ -4924,6 +5446,7 @@ public final class ApplicationFormModel: ObservableObject {
         do {
             let data = try JSONEncoder().encode(draftsToSave)
             UserDefaults.standard.set(data, forKey: Self.draftsStorageKey)
+            syncToSupabase()
         } catch {
             NSLog("[MORPH-FORM] Failed to encode form drafts: %@", error.localizedDescription)
         }
@@ -4951,6 +5474,9 @@ public final class ApplicationFormModel: ObservableObject {
                        DefaultApplicationFormDetector.isNonFormApplication(bundleID: "", appName: session.sourceAppName)
             }
             for sessionIdx in loaded.indices {
+                if loaded[sessionIdx].recipientEmail.isEmpty || loaded[sessionIdx].recipientEmail == "user@example.com" || loaded[sessionIdx].recipientEmail.contains("minh7898888") {
+                    loaded[sessionIdx].recipientEmail = Self.defaultRecipientEmail
+                }
                 loaded[sessionIdx].fields.removeAll { field in
                     guard field.entryKey == nil else { return false }
                     let lbl = field.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5273,7 +5799,14 @@ public final class ApplicationFormModel: ObservableObject {
         let finalApp = appName ?? (detectedAppName.isEmpty ? "Web Browser" : detectedAppName)
         let rawUrl = url ?? detectedURL
         let finalUrl = rawUrl != nil ? FormContentRetriever.normalizeURLScheme(rawUrl!) : nil
-        let emailToUse = (defaultEmail?.isEmpty == false ? defaultEmail! : (recipientEmail.isEmpty ? "user@example.com" : recipientEmail))
+        let emailToUse: String
+        if let d = defaultEmail, !d.isEmpty && d != "user@example.com" {
+            emailToUse = d
+        } else if !recipientEmail.isEmpty && recipientEmail != "user@example.com" && !recipientEmail.contains("minh7898888") {
+            emailToUse = recipientEmail
+        } else {
+            emailToUse = Self.defaultRecipientEmail
+        }
         
         self.recipientEmail = emailToUse
         
@@ -5296,6 +5829,8 @@ public final class ApplicationFormModel: ObservableObject {
             self.activeSession = restored
             self.isTracking = true
             self.isFormDetected = true
+            self.isClosedOrExpired = restored.isClosedOrExpired
+            self.closedReason = restored.closedReason
             self.detectedFormTitle = restored.formTitle
             self.detectedAppName = finalApp
             self.detectedURL = finalUrl
@@ -5315,6 +5850,8 @@ public final class ApplicationFormModel: ObservableObject {
         self.activeFieldIndex = 0
         self.isTracking = true
         self.isFormDetected = true
+        self.isClosedOrExpired = false
+        self.closedReason = nil
         self.detectedFormTitle = finalTitle
         self.detectedAppName = finalApp
         self.detectedURL = finalUrl
@@ -5353,6 +5890,46 @@ public final class ApplicationFormModel: ObservableObject {
         self.onFormClosed?()
     }
     
+    // MARK: - Closed / Expired Form State
+    @MainActor
+    public func markFormClosed(reason: String) {
+        self.isClosedOrExpired = true
+        self.closedReason = reason
+        self.activeSession?.isClosedOrExpired = true
+        self.activeSession?.closedReason = reason
+        self.saveDrafts()
+        self.syncToSupabase()
+        self.showToast("Form Closed: \(reason)")
+    }
+    
+    // MARK: - Supabase Cloud Synchronization
+    public func syncToSupabase() {
+        guard let session = activeSession else { return }
+        let jsonString = (try? String(data: JSONEncoder().encode(session.fields), encoding: .utf8)) ?? "[]"
+        let summary = session.formattedSummary
+        let record = FormReceiptRecord(
+            id: session.id.uuidString,
+            userId: SupabaseService.shared.currentUser.id,
+            userEmail: SupabaseService.shared.currentUser.email,
+            formTitle: session.formTitle,
+            sourceURL: session.sourceURL,
+            sourceAppName: session.sourceAppName,
+            recipientEmail: self.recipientEmail,
+            totalQuestions: session.fields.count,
+            answeredCount: session.answeredCount,
+            isSubmitted: session.isSubmitted,
+            isClosedOrExpired: session.isClosedOrExpired,
+            closedReason: session.closedReason,
+            fieldsJSON: jsonString,
+            formattedSummary: summary,
+            submittedAt: session.lastDispatchedAt,
+            createdAt: session.startedAt
+        )
+        Task {
+            await SupabaseService.shared.recordFormReceipt(record)
+        }
+    }
+    
     // MARK: - Autonomous Form Schema Retrieval
     public func autoRetrieveFormContent(url: String) {
         guard !url.isEmpty, !isAutoRetrievingSchema else { return }
@@ -5364,6 +5941,17 @@ public final class ApplicationFormModel: ObservableObject {
                 guard let self = self else { return }
                 self.isAutoRetrievingSchema = false
                 guard let schema = schema else { return }
+                
+                if schema.isClosed {
+                    let reason = schema.closedMessage ?? "This form is no longer accepting responses."
+                    self.markFormClosed(reason: reason)
+                    return
+                }
+                
+                self.isClosedOrExpired = false
+                self.closedReason = nil
+                self.activeSession?.isClosedOrExpired = false
+                self.activeSession?.closedReason = nil
                 
                 // Discard schema if user already navigated to a different form
                 if let curURL = self.activeSession?.sourceURL, !curURL.isEmpty {
@@ -5451,8 +6039,8 @@ public final class ApplicationFormModel: ObservableObject {
             if FileManager.default.fileExists(atPath: cleanFilePath), let content = try? String(contentsOfFile: cleanFilePath, encoding: .utf8) {
                 if let schema = FormContentRetriever.parseGenericHTMLForm(content, url: urlStr) {
                     for parsedField in schema.fields {
-                        if !parsedField.value.isEmpty {
-                            applyExtractedInput(label: parsedField.label, value: parsedField.value)
+                        if !parsedField.value.isEmpty || parsedField.isSelection {
+                            applyExtractedInput(label: parsedField.label, value: parsedField.value, detectedType: parsedField.questionType, options: parsedField.options)
                         }
                     }
                 }
@@ -5466,24 +6054,24 @@ public final class ApplicationFormModel: ObservableObject {
         
         if isBackground {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                var allPairs: [(label: String, value: String)] = []
+                var allItems: [ExtractedInputItem] = []
                 for app in targetApps {
                     let appElem = AXUIElementCreateApplication(app.processIdentifier)
-                    if let pairs = FormInputAutoTracker.scanBrowserWindowInputs(appElem: appElem, fields: schemaFields), !pairs.isEmpty {
-                        allPairs.append(contentsOf: pairs)
+                    if let items = FormInputAutoTracker.scanBrowserWindowInputItems(appElem: appElem, fields: schemaFields), !items.isEmpty {
+                        allItems.append(contentsOf: items)
                     }
                 }
-                if !allPairs.isEmpty {
+                if !allItems.isEmpty {
                     Task { @MainActor [weak self] in
-                        self?.applyLiveSnapshot(allPairs)
+                        self?.applyLiveItemsSnapshot(allItems)
                     }
                 }
             }
         } else {
             for app in targetApps {
                 let appElem = AXUIElementCreateApplication(app.processIdentifier)
-                if let pairs = FormInputAutoTracker.scanBrowserWindowInputs(appElem: appElem, fields: schemaFields), !pairs.isEmpty {
-                    applyLiveSnapshot(pairs)
+                if let items = FormInputAutoTracker.scanBrowserWindowInputItems(appElem: appElem, fields: schemaFields), !items.isEmpty {
+                    applyLiveItemsSnapshot(items)
                 }
             }
         }
@@ -5499,9 +6087,9 @@ public final class ApplicationFormModel: ObservableObject {
                     }
                 }
                 for bid in bundleIDs {
-                    if let pairs = FormInputAutoTracker.extractSnapshotViaAppleScript(bundleID: bid), !pairs.isEmpty {
+                    if let items = FormInputAutoTracker.extractItemsSnapshotViaAppleScript(bundleID: bid), !items.isEmpty {
                         Task { @MainActor [weak self] in
-                            self?.applyLiveSnapshot(pairs)
+                            self?.applyLiveItemsSnapshot(items)
                         }
                     }
                 }
@@ -5676,11 +6264,16 @@ public final class ApplicationFormModel: ObservableObject {
     }
     
     @discardableResult
-    public func applyExtractedInput(label: String, value: String) -> Bool {
+    public func applyExtractedInput(
+        label: String,
+        value: String,
+        detectedType: String? = nil,
+        options: [String]? = nil
+    ) -> Bool {
         guard let session = activeSession else { return false }
         let cleanVal = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanLbl = Self.cleanQuestionTitle(label)
-        guard !cleanVal.isEmpty, !cleanLbl.isEmpty else { return false }
+        guard !cleanLbl.isEmpty else { return false }
         
         let alwaysIgnoredChrome: Set<String> = [
             "address and search bar", "search or enter website name", "ask polar", "morph"
@@ -5712,18 +6305,31 @@ public final class ApplicationFormModel: ObservableObject {
         
         var didUpdate = false
         if let idx = matchedIdx {
-            if activeSession?.fields[idx].value != cleanVal {
-                objectWillChange.send()
+            var fieldUpdated = false
+            if !cleanVal.isEmpty && activeSession?.fields[idx].value != cleanVal {
                 activeSession?.fields[idx].value = cleanVal
+                fieldUpdated = true
+            }
+            if let dt = detectedType, !dt.isEmpty, activeSession?.fields[idx].questionType != dt {
+                activeSession?.fields[idx].questionType = dt
+                fieldUpdated = true
+            }
+            if let opts = options, !opts.isEmpty, (activeSession?.fields[idx].options.isEmpty ?? true) {
+                activeSession?.fields[idx].options = opts
+                fieldUpdated = true
+            }
+            if fieldUpdated {
+                objectWillChange.send()
                 lastAutoCapturedAt = Date()
                 didUpdate = true
             }
             if let fid = activeSession?.fields[idx].id { browserCapturedFieldIDs.insert(fid) }
-        } else if !hasLoadedSchema {
+        } else if !hasLoadedSchema && !cleanVal.isEmpty {
             // Dynamic field addition when a real input/answer is extracted (never when a real form schema is loaded:
             // an unmatched label is then browser chrome or another page, not a question of this form)
             let cat = FormContentRetriever.inferCategory(from: cleanLbl)
-            let newField = FormInputField(label: cleanLbl, value: cleanVal, category: cat)
+            let qType = detectedType ?? (cleanLbl.lowercased().contains("why") || cleanLbl.lowercased().contains("about") ? "paragraph" : "shortAnswer")
+            let newField = FormInputField(label: cleanLbl, value: cleanVal, category: cat, options: options ?? [], questionType: qType)
             objectWillChange.send()
             activeSession?.fields.append(newField)
             browserCapturedFieldIDs.insert(newField.id)
@@ -5732,8 +6338,9 @@ public final class ApplicationFormModel: ObservableObject {
         }
         
         // Auto-update recipientEmail if value is a valid email
+        let isContact = cleanLbl.lowercased().contains("email")
         if didUpdate && cleanVal.contains("@") && cleanVal.contains(".") && cleanVal.count >= 5 {
-            if recipientEmail.isEmpty || recipientEmail.contains("example.com") || recipientEmail.contains("@test.com") {
+            if isContact || recipientEmail.isEmpty || recipientEmail.contains("example.com") || recipientEmail.contains("@test.com") {
                 setRecipientEmail(cleanVal)
             }
         }
@@ -5746,27 +6353,29 @@ public final class ApplicationFormModel: ObservableObject {
         return didUpdate
     }
     
-    /// Applies a full browser snapshot of question/answer pairs. Non-empty answers are recorded; an empty answer
-    /// clears the matching field only when that field was previously captured from the browser, matches the
-    /// question label exactly (after normalization) and has been quiet for `clearGuardInterval`
-    /// (protecting live keystroke buffers from stale reads).
-    /// - Returns: number of fields that were updated or cleared.
+    /// Applies a full browser snapshot of ExtractedInputItem records, updating values, format, and choices.
     @discardableResult
-    public func applyLiveSnapshot(_ pairs: [(label: String, value: String)], now: Date = Date()) -> Int {
+    public func applyLiveItemsSnapshot(_ items: [ExtractedInputItem], now: Date = Date()) -> Int {
         guard isFormDetected, isAutoCaptureEnabled, let session = activeSession else { return 0 }
         
-        let nonEmpties = pairs.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if let closedItem = items.first(where: { $0.label == "__FORM_CLOSED__" || $0.questionType == "closed" }) {
+            let reason = !closedItem.value.isEmpty ? closedItem.value : "This form is no longer accepting responses."
+            markFormClosed(reason: reason)
+            return 0
+        }
+        
+        let nonEmpties = items.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
         // 1. Check if the entire form was cleared in the browser (all scanned inputs are empty while Morph had answers)
         let lastCapture = lastKeystrokeAt ?? lastAutoCapturedAt
         let isQuiet = lastCapture.map { now.timeIntervalSince($0) >= Self.clearGuardInterval } ?? true
-        if nonEmpties.isEmpty && !pairs.isEmpty && session.answeredCount > 0 {
-            // Ensure the empty pairs in the snapshot actually correspond to the answered fields of this form
+        if nonEmpties.isEmpty && !items.isEmpty && session.answeredCount > 0 {
+            // Ensure the empty items in the snapshot actually correspond to the answered fields of this form
             let answeredFields = session.fields.filter { $0.isAnswered }
             let hasNoManualEdits = answeredFields.allSatisfy { !self.manuallyEditedFieldIDs.contains($0.id) }
             let matchedAnsweredCount = answeredFields.filter { field in
-                pairs.contains(where: { ApplicationFormModel.strictMatchingFieldIndex(for: $0.label, in: [field]) != nil }) ||
-                pairs.contains(where: { Self.normalizeFieldLabel($0.label) == Self.normalizeFieldLabel(field.label) })
+                items.contains(where: { ApplicationFormModel.strictMatchingFieldIndex(for: $0.label, in: [field]) != nil }) ||
+                items.contains(where: { Self.normalizeFieldLabel($0.label) == Self.normalizeFieldLabel(field.label) })
             }.count
             
             // Multi-field clear (e.g. "Clear form" clicked clearing 2+ questions simultaneously):
@@ -5782,18 +6391,18 @@ public final class ApplicationFormModel: ObservableObject {
         }
         
         var changed = 0
-        // Apply all non-empty values (beforehand answers and live updates)
-        for pair in nonEmpties {
-            if applyExtractedInput(label: pair.label, value: pair.value) {
+        // Apply all items (updating answers, question format, and options)
+        for item in items {
+            if applyExtractedInput(label: item.label, value: item.value, detectedType: item.questionType, options: item.options) {
                 changed += 1
             }
         }
         
         // Check for individual cleared fields
-        let empties = pairs.filter { $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        for pair in empties {
-            guard let idx = ApplicationFormModel.strictMatchingFieldIndex(for: pair.label, in: session.fields) ??
-                            session.fields.firstIndex(where: { Self.normalizeFieldLabel($0.label) == Self.normalizeFieldLabel(pair.label) }) else { continue }
+        let empties = items.filter { $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        for item in empties {
+            guard let idx = ApplicationFormModel.strictMatchingFieldIndex(for: item.label, in: session.fields) ??
+                            session.fields.firstIndex(where: { Self.normalizeFieldLabel($0.label) == Self.normalizeFieldLabel(item.label) }) else { continue }
             let field = session.fields[idx]
             guard !field.value.isEmpty else { continue }
             guard !manuallyEditedFieldIDs.contains(field.id) else { continue }
@@ -5809,6 +6418,12 @@ public final class ApplicationFormModel: ObservableObject {
             advanceToFirstUnansweredFieldIfNeeded()
         }
         return changed
+    }
+    
+    /// Applies a full browser snapshot of question/answer pairs.
+    @discardableResult
+    public func applyLiveSnapshot(_ pairs: [(label: String, value: String)], now: Date = Date()) -> Int {
+        return applyLiveItemsSnapshot(pairs.map { ExtractedInputItem(label: $0.label, value: $0.value) }, now: now)
     }
     
     /// Resets all field answers to empty strings, clears browser capture tracking, and advances to the first field.
@@ -5869,10 +6484,10 @@ public final class ApplicationFormModel: ObservableObject {
         activeSession?.fields.append(field)
         saveDrafts()
         
-        // If user entered an email field, auto-suggest or update recipientEmail if default
+        // If user entered an email field, auto-suggest or update recipientEmail
         if category == .contact || label.lowercased().contains("email") {
             let emailCandidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            if emailCandidate.contains("@") && (recipientEmail.isEmpty || recipientEmail.contains("example.com") || recipientEmail.contains("@test.com")) {
+            if emailCandidate.contains("@") && (category == .contact || recipientEmail.isEmpty || recipientEmail.contains("example.com") || recipientEmail.contains("@test.com")) {
                 setRecipientEmail(emailCandidate)
             }
         }
@@ -5944,10 +6559,20 @@ public final class ApplicationFormModel: ObservableObject {
     }
     
     // MARK: - Email Dispatch
+    private var isDispatchingEmail: Bool = false
+    
     public func dispatchEmailCopy() async -> Bool {
+        guard !isDispatchingEmail else { return false }
+        isDispatchingEmail = true
+        defer { isDispatchingEmail = false }
+        
         guard var session = activeSession else { return false }
         
-        let destination = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        var destination = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if destination.isEmpty || destination == "user@example.com" || destination.contains("minh7898888") {
+            destination = Self.defaultRecipientEmail
+            self.recipientEmail = destination
+        }
         guard !destination.isEmpty && destination.contains("@") else {
             showToast("Invalid email address")
             return false
@@ -5967,6 +6592,7 @@ public final class ApplicationFormModel: ObservableObject {
                 
                 showToast("Copy emailed to \(destination)!")
                 onSessionExported?(session)
+                syncToSupabase()
                 return true
             } else {
                 session.emailDeliveryStatus = .failed(result.message)

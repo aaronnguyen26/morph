@@ -44,7 +44,9 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     public override func mouseEntered(with event: NSEvent) {
         if !isMouseInside {
             isMouseInside = true
-            onMouseEnter?()
+            if isExpanded?() ?? true {
+                onMouseEnter?()
+            }
         }
         super.mouseEntered(with: event)
     }
@@ -52,7 +54,9 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     public override func mouseMoved(with event: NSEvent) {
         if !isMouseInside {
             isMouseInside = true
-            onMouseEnter?()
+            if isExpanded?() ?? true {
+                onMouseEnter?()
+            }
         }
         super.mouseMoved(with: event)
     }
@@ -66,8 +70,9 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     }
     
     public override func hitTest(_ point: NSPoint) -> NSView? {
-        if let expanded = isExpanded?(), expanded {
-            return super.hitTest(point)
+        // While collapsed/idle, ALWAYS return nil so clicks pass straight through to background browser tabs
+        if let expanded = isExpanded?(), !expanded {
+            return nil
         }
         if let activeBounds = getActiveBounds?() {
             if !activeBounds.contains(point) {

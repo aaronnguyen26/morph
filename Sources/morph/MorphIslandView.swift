@@ -3,11 +3,14 @@ import UniformTypeIdentifiers
 
 public struct MorphIslandView: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject private var shortcutManager = ShortcutManager.shared
     var onMouseEnter: () -> Void
     var onMouseExit: () -> Void
     @State private var isNotchDragTargeted: Bool = false
+    @State private var hoveredTab: MorphTab? = nil
+    @Namespace private var navTabNamespace
     
-    public init(model: NotchModel, onMouseEnter: @escaping () -> Void, onMouseExit: @escaping () -> Void) {
+    public init(model: NotchModel, onMouseEnter: @escaping () -> Void = {}, onMouseExit: @escaping () -> Void = {}) {
         self.model = model
         self.onMouseEnter = onMouseEnter
         self.onMouseExit = onMouseExit
@@ -24,20 +27,16 @@ public struct MorphIslandView: View {
     private var cornerRadius: CGFloat {
         if model.isExpanded {
             return 28
-        } else if model.isCompactActive {
-            return 20
         } else {
-            return 18 // Visually distinct, generous smooth curvature matching physical MacBook notch
+            return 18 // Apple Dynamic Island 4-sided squircle pill
         }
     }
     
     private var topRadius: CGFloat {
         if model.isExpanded {
             return 28
-        } else if !model.hasPhysicalNotch {
-            return cornerRadius
         } else {
-            return 0
+            return 18 // Fully rounded 4-sided squircle pill
         }
     }
     
@@ -53,7 +52,7 @@ public struct MorphIslandView: View {
     public var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // Background Base Shape: Pure OLED Black with Notch Contour
+                // Background Base Shape: Hardware Obsidian when collapsed (blending into physical notch), theme canvas when expanded
                 UnevenRoundedRectangle(
                     topLeadingRadius: topRadius,
                     bottomLeadingRadius: cornerRadius,
@@ -61,7 +60,13 @@ public struct MorphIslandView: View {
                     topTrailingRadius: topRadius,
                     style: .continuous
                 )
-                .fill(model.theme.canvasBackground)
+                .fill(
+                    model.isExpanded
+                        ? model.theme.canvasBackground
+                        : (model.isCompactActive
+                            ? Color.black
+                            : (model.isHovered ? Color.black : Color.clear))
+                )
                 .overlay(
                     // Luxury ambient background texture
                     backgroundImageView
@@ -87,29 +92,31 @@ public struct MorphIslandView: View {
                     .stroke(
                         model.dropShelf.isDraggingOverNotch
                             ? LinearGradient(
-                                colors: [Color.cyan.opacity(0.85), Color.cyan.opacity(0.5)],
+                                colors: [model.theme.dropTargetBorder, model.theme.dropTargetBorder.opacity(0.65)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
                             : LinearGradient(
                                 colors: [
-                                    model.theme.isDark ? Color.white.opacity(model.isExpanded ? 0.20 : 0.28) : Color.black.opacity(model.isExpanded ? 0.12 : 0.18),
-                                    model.theme.isDark ? Color.white.opacity(model.isExpanded ? 0.08 : 0.16) : Color.black.opacity(model.isExpanded ? 0.06 : 0.10)
+                                    Color.white.opacity(model.isHovered ? 0.35 : (model.isExpanded ? 0.20 : 0.22)),
+                                    Color.white.opacity(model.isHovered ? 0.20 : (model.isExpanded ? 0.08 : 0.12))
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             ),
                         style: StrokeStyle(
-                            lineWidth: model.dropShelf.isDraggingOverNotch ? 1.5 : 1,
+                            lineWidth: model.dropShelf.isDraggingOverNotch ? 1.5 : (model.isHovered ? 1.0 : 0.75),
                             dash: model.dropShelf.isDraggingOverNotch ? [6, 3] : []
                         )
                     )
                 )
                 .shadow(
                     color: model.dropShelf.isDraggingOverNotch
-                        ? Color.cyan.opacity(0.55)
-                        : (model.isExpanded ? model.theme.windowShadow : (model.theme.isDark ? Color.black.opacity(0.3) : Color.black.opacity(0.12))),
-                    radius: model.dropShelf.isDraggingOverNotch ? 16 : (model.isExpanded ? 24 : 8),
+                        ? model.theme.dropTargetGlow
+                        : (model.isExpanded || model.isCompactActive || model.isHovered
+                            ? Color.black.opacity(0.40)
+                            : Color.clear),
+                    radius: model.isExpanded ? 24 : 10,
                     x: 0,
                     y: model.isExpanded ? 10 : 4
                 )
@@ -142,7 +149,9 @@ public struct MorphIslandView: View {
             .contentShape(Rectangle())
             .onHover { hovering in
                 if hovering {
-                    onMouseEnter()
+                    if model.isExpanded {
+                        onMouseEnter()
+                    }
                 } else {
                     onMouseExit()
                 }
@@ -181,7 +190,7 @@ public struct MorphIslandView: View {
         return didLoadAny
     }
     
-    // MARK: - 1. Idle Flush Notch View (Smooth border radius, no sharp corners, zero dots)
+    // MARK: - 1. Idle Transparent Dynamic Island Outline (No text, no dots, pure whisper outline)
     private var idleFlushNotchView: some View {
         Color.clear
             .frame(width: model.idleWidth, height: model.idleHeight)
@@ -362,7 +371,10 @@ public struct MorphIslandView: View {
                 .frame(height: notchBlindHeight)
             
             // Unified Horizontal Navigation Bar (The Bar Above: Focus, Home, Music, Notes, Calendar, Profile)
-            horizontalFeatureBar
+            // Suppressed when a contextual feature (such as Form Tracker) is active to maximize content stage
+            if model.activeContextFeature == nil {
+                horizontalFeatureBar
+            }
             
             // Main Feature Body: Sits completely BELOW the notch blind spot and horizontal bar!
             ZStack {
@@ -387,10 +399,10 @@ public struct MorphIslandView: View {
                         PomodoroView(pomodoro: model.pomodoro, model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .music:
-                        MediaView(media: model.media)
+                        MediaView(media: model.media, model: model, calendar: model.calendar, theme: model.theme)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .notes:
-                        ScratchpadView(scratchpad: model.scratchpad)
+                        ScratchpadView(scratchpad: model.scratchpad, theme: model.theme, model: model)
                             .transition(.asymmetric(insertion: .opacity, removal: .opacity))
                     case .calendar:
                         CalendarView(calendar: model.calendar, meetingController: model.meetingController)
@@ -402,6 +414,13 @@ public struct MorphIslandView: View {
                 }
             }
             .frame(maxHeight: .infinity)
+        }
+        .overlay(alignment: .top) {
+            if model.isCommandBarPresented {
+                MorphCommandBarView(model: model)
+                    .padding(.top, notchBlindHeight + 2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.top, 2)
@@ -416,9 +435,11 @@ public struct MorphIslandView: View {
             
             ForEach([MorphTab.home, .timer, .music, .notes, .calendar, .profile]) { tab in
                 Button(action: {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                    MorphHaptics.levelChange()
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
                         model.selectedTab = tab
                         model.activeContextFeature = nil
+                        model.isCommandBarPresented = false
                     }
                 }) {
                     HStack(spacing: 5) {
@@ -433,9 +454,16 @@ public struct MorphIslandView: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
                     .background(
-                        model.selectedTab == tab
-                            ? model.theme.activePillBackground
-                            : model.theme.inactivePillBackground
+                        ZStack {
+                            if model.selectedTab == tab {
+                                Capsule()
+                                    .fill(model.theme.activePillBackground)
+                                    .matchedGeometryEffect(id: "ActiveTabPill", in: navTabNamespace)
+                            } else {
+                                Capsule()
+                                    .fill(hoveredTab == tab ? model.theme.cardBackgroundElevated : model.theme.inactivePillBackground)
+                            }
+                        }
                     )
                     .clipShape(Capsule())
                     .overlay(
@@ -449,6 +477,11 @@ public struct MorphIslandView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        hoveredTab = hovering ? tab : (hoveredTab == tab ? nil : hoveredTab)
+                    }
+                }
                 .help("\(tab == .timer ? "Focus Timer" : tab.rawValue) (\(shortcutForTab(tab)))")
             }
             
@@ -486,15 +519,29 @@ public struct MorphIslandView: View {
                     }
                     .buttonStyle(.plain)
                     .fixedSize(horizontal: true, vertical: true)
+                    .accessibilityLabel("Back to Home")
                     .help("Back (Esc)")
                     
-                    Text(contextFeature == .formTracker ? "Form Tracker" : contextFeature.rawValue)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(model.theme.textSecondary)
-                        .lineLimit(1)
+                    if contextFeature == .formTracker {
+                        HStack(spacing: 5) {
+                            Image(systemName: "doc.text.fill")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundColor(.white)
+                            Text(model.formTracker.activeSession?.formTitle ?? (model.formTracker.detectedFormTitle.isEmpty ? "Google Form" : model.formTracker.detectedFormTitle))
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(model.theme.textPrimary)
+                                .lineLimit(1)
+                        }
+                    } else {
+                        Text(contextFeature.rawValue)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundColor(model.theme.textSecondary)
+                            .lineLimit(1)
+                    }
                 } else {
                     // Profile Avatar Pill with Name & Breadcrumb
                     Button(action: {
+                        MorphHaptics.levelChange()
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                             model.selectedTab = .profile
                         }
@@ -523,6 +570,7 @@ public struct MorphIslandView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Profile and Preferences")
                     .help("Profile & Preferences (⌘5 or ⌘,)")
                     
                     Text((model.selectedTab == .timer ? "Focus" : model.selectedTab.rawValue).uppercased())
@@ -545,6 +593,60 @@ public struct MorphIslandView: View {
             HStack(spacing: 5) {
                 Spacer()
                 
+                if model.activeContextFeature == .formTracker, let session = model.formTracker.activeSession, session.totalQuestions > 0 {
+                    Text("\(session.answeredCount)/\(session.totalQuestions) Answered")
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                        )
+                }
+                
+                if !shortcutManager.lastTriggeredShortcut.isEmpty {
+                    Text(shortcutManager.lastTriggeredShortcut)
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(model.theme.badgeText)
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(model.theme.badgeBackground)
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                }
+                
+                // ⌘K Quick Command Button Pill
+                Button(action: {
+                    model.toggleCommandBar()
+                }) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "command")
+                            .font(.system(size: 8, weight: .bold))
+                        Text("K")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    }
+                    .foregroundColor(model.isCommandBarPresented ? model.theme.activePillText : model.theme.textSecondary)
+                    .padding(.horizontal, 6.5)
+                    .frame(height: 22)
+                    .background(model.isCommandBarPresented ? model.theme.activePillBackground : model.theme.cardBackground)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(model.isCommandBarPresented ? model.theme.activeBorder : model.theme.hairlineBorder, lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Quick Command Bar")
+                .help("Quick Command Bar (⌘K)")
+                
                 // Theme Toggle Button
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
@@ -563,6 +665,7 @@ public struct MorphIslandView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(model.theme.isDark ? "Switch to Light Theme" : "Switch to Dark Theme")
                 .help(model.theme.isDark ? "Switch to Light Ceramic Theme" : "Switch to Dark Obsidian Theme")
                 
                 // Pin Button
@@ -581,13 +684,18 @@ public struct MorphIslandView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(model.isPinned ? "Unpin Island" : "Pin Island Open")
                 .help(model.isPinned ? "Unpin Window (⌘P)" : "Pin Window Open (⌘P)")
                 
                 // Collapse Button
                 Button(action: {
-                    model.isPinned = false
-                    model.isExpanded = false
-                    model.activeContextFeature = nil
+                    MorphHaptics.levelChange()
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+                        model.isCommandBarPresented = false
+                        model.isPinned = false
+                        model.isExpanded = false
+                        model.activeContextFeature = nil
+                    }
                 }) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 8.5, weight: .bold))
@@ -601,9 +709,20 @@ public struct MorphIslandView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Collapse Island to Notch")
                 .help("Collapse to Notch (⌘W or ⌘M)")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+            .onChange(of: shortcutManager.lastTriggeredShortcut) { _, newValue in
+                guard !newValue.isEmpty else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    if shortcutManager.lastTriggeredShortcut == newValue {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            shortcutManager.lastTriggeredShortcut = ""
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -829,21 +948,21 @@ private struct CompactMediaWingRight: View {
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
             } else if media.showOfflineHUD {
-                // Sleek Notch Offline HUD Pill
+                // Sleek Notch Offline HUD Pill (Monochromatic Obsidian/Silver)
                 HStack(spacing: 3) {
                     Image(systemName: "wifi.slash")
                         .font(.system(size: 7.5, weight: .bold))
-                        .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
+                        .foregroundColor(Color.white.opacity(0.9))
                     Text(media.offlineHUDMessage.isEmpty ? "Offline • Downloads Opened" : media.offlineHUDMessage)
                         .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.95))
+                        .foregroundColor(Color.white.opacity(0.9))
                 }
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color(red: 0.22, green: 0.14, blue: 0.04))
+                .background(Color.white.opacity(0.14))
                 .clipShape(Capsule())
                 .overlay(
-                    Capsule().stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.5)
+                    Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.5)
                 )
                 .transition(.scale.combined(with: .opacity))
             } else if media.showRepeatHUD {
@@ -996,21 +1115,21 @@ private struct CompactDualWingRight: View {
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
             } else if media.showOfflineHUD {
-                // Sleek Notch Offline HUD Pill
+                // Sleek Notch Offline HUD Pill (Monochromatic Obsidian/Silver)
                 HStack(spacing: 3) {
                     Image(systemName: "wifi.slash")
                         .font(.system(size: 7.5, weight: .bold))
-                        .foregroundColor(Color(red: 1.0, green: 0.72, blue: 0.2))
+                        .foregroundColor(Color.white.opacity(0.9))
                     Text(media.offlineHUDMessage.isEmpty ? "Offline • Downloads Opened" : media.offlineHUDMessage)
                         .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.95))
+                        .foregroundColor(Color.white.opacity(0.9))
                 }
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color(red: 0.22, green: 0.14, blue: 0.04))
+                .background(Color.white.opacity(0.14))
                 .clipShape(Capsule())
                 .overlay(
-                    Capsule().stroke(Color(red: 1.0, green: 0.72, blue: 0.2).opacity(0.4), lineWidth: 0.5)
+                    Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.5)
                 )
                 .transition(.scale.combined(with: .opacity))
             } else if media.showRepeatHUD {
@@ -1209,6 +1328,405 @@ private struct CompactCalendarWingRight: View {
             .help("Expand Island")
         }
         .padding(.trailing, 12)
+    }
+}
+
+// MARK: - Apple Spotlight-Inspired Quick Command Bar (⌘K)
+
+public struct MorphCommandItem: Identifiable {
+    public let id: String
+    public let title: String
+    public let subtitle: String
+    public let iconName: String
+    public let shortcutBadge: String
+    public let action: () -> Void
+    
+    public init(
+        id: String,
+        title: String,
+        subtitle: String,
+        iconName: String,
+        shortcutBadge: String,
+        action: @escaping () -> Void
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.iconName = iconName
+        self.shortcutBadge = shortcutBadge
+        self.action = action
+    }
+}
+
+public struct MorphCommandBarView: View {
+    @ObservedObject public var model: NotchModel
+    @ObservedObject private var theme: MorphTheme = .shared
+    @State private var searchQuery: String = ""
+    @State private var selectedIndex: Int = 0
+    @FocusState private var isSearchFocused: Bool
+    
+    public init(model: NotchModel) {
+        self.model = model
+        self.theme = model.theme
+    }
+    
+    public var allCommands: [MorphCommandItem] {
+        [
+            MorphCommandItem(
+                id: "toggle_timer",
+                title: "Start / Pause Focus Timer",
+                subtitle: model.pomodoro.isRunning ? "Pause active \(model.pomodoro.formattedTime) countdown" : "Resume \(model.pomodoro.formattedTime) focus session",
+                iconName: model.pomodoro.isRunning ? "pause.circle.fill" : "timer",
+                shortcutBadge: "⌘T",
+                action: {
+                    model.pomodoro.toggle()
+                    model.openFeature(.timer)
+                }
+            ),
+            MorphCommandItem(
+                id: "focus_25m",
+                title: "Focus: 25m Deep Work",
+                subtitle: "Start a 25-minute Pomodoro sprint",
+                iconName: "flame.fill",
+                shortcutBadge: "25m",
+                action: {
+                    model.pomodoro.switchMode(.work)
+                    model.pomodoro.setCustomDuration(minutes: 25, saveAsPreference: false)
+                    model.pomodoro.start()
+                    model.openFeature(.timer)
+                }
+            ),
+            MorphCommandItem(
+                id: "focus_45m",
+                title: "Focus: 45m Flow",
+                subtitle: "Start a 45-minute deep flow session",
+                iconName: "bolt.fill",
+                shortcutBadge: "45m",
+                action: {
+                    model.pomodoro.switchMode(.work)
+                    model.pomodoro.setCustomDuration(minutes: 45, saveAsPreference: false)
+                    model.pomodoro.start()
+                    model.openFeature(.timer)
+                }
+            ),
+            MorphCommandItem(
+                id: "focus_5m_break",
+                title: "Focus: 5m Short Break",
+                subtitle: "Switch to a 5-minute recharge break",
+                iconName: "cup.and.saucer.fill",
+                shortcutBadge: "5m",
+                action: {
+                    model.pomodoro.switchMode(.shortBreak)
+                    model.pomodoro.setCustomDuration(minutes: 5, saveAsPreference: false)
+                    model.pomodoro.start()
+                    model.openFeature(.timer)
+                }
+            ),
+            MorphCommandItem(
+                id: "play_pause_music",
+                title: "Play / Pause Music",
+                subtitle: model.media.trackTitle.isEmpty ? "Toggle media playback" : "\(model.media.isPlaying ? "Pause" : "Play") \(model.media.trackTitle)",
+                iconName: model.media.isPlaying ? "pause.fill" : "play.fill",
+                shortcutBadge: "⌘⏎",
+                action: {
+                    model.media.togglePlay()
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "next_track",
+                title: "Next Track",
+                subtitle: "Skip to the next song in queue",
+                iconName: "forward.fill",
+                shortcutBadge: "⌘]",
+                action: {
+                    model.media.nextTrack()
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "previous_track",
+                title: "Previous Track",
+                subtitle: "Return to the previous song",
+                iconName: "backward.fill",
+                shortcutBadge: "⌘[",
+                action: {
+                    model.media.previousTrack()
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "pin_note_notch",
+                title: "Pin / Unpin Note to Notch",
+                subtitle: model.isNotePinnedToNotch ? "Unpin scratchpad from compact notch" : "Keep scratchpad visible under the notch",
+                iconName: model.isNotePinnedToNotch ? "pin.slash.fill" : "pin.fill",
+                shortcutBadge: "⌘⇧P",
+                action: {
+                    model.isNotePinnedToNotch.toggle()
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "copy_scratchpad",
+                title: "Copy Scratchpad to Clipboard",
+                subtitle: "Copy all scratchpad notes (\(model.scratchpad.wordCount) words)",
+                iconName: "doc.on.doc.fill",
+                shortcutBadge: "⌘⇧C",
+                action: {
+                    model.scratchpad.copyAll()
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "open_calendar",
+                title: "Open Calendar & Agenda",
+                subtitle: "View upcoming meetings and schedule events",
+                iconName: "calendar",
+                shortcutBadge: "⌘6",
+                action: {
+                    model.openFeature(.calendar)
+                }
+            ),
+            MorphCommandItem(
+                id: "sync_profile_calendar",
+                title: "Sync Profile & Calendar",
+                subtitle: "Refresh Supabase telemetry and Google Calendar",
+                iconName: "arrow.triangle.2.circlepath",
+                shortcutBadge: "⌘R",
+                action: {
+                    model.calendar.syncWithGoogle()
+                    Task {
+                        await model.supabase.fetchProfile()
+                    }
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "toggle_theme",
+                title: "Toggle Dark / Light Theme",
+                subtitle: model.theme.isDark ? "Switch to Light Ceramic appearance" : "Switch to Dark Obsidian appearance",
+                iconName: model.theme.isDark ? "sun.max.fill" : "moon.fill",
+                shortcutBadge: "Theme",
+                action: {
+                    model.toggleTheme()
+                    model.isCommandBarPresented = false
+                }
+            ),
+            MorphCommandItem(
+                id: "pin_unpin_island",
+                title: "Pin / Unpin Island",
+                subtitle: model.isPinned ? "Allow island to auto-collapse on cursor exit" : "Keep island locked open on screen",
+                iconName: model.isPinned ? "lock.open.fill" : "lock.fill",
+                shortcutBadge: "⌘P",
+                action: {
+                    model.togglePin()
+                    model.isCommandBarPresented = false
+                }
+            )
+        ]
+    }
+    
+    public func filteredCommands(for query: String) -> [MorphCommandItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return allCommands }
+        return allCommands.filter {
+            $0.title.lowercased().contains(trimmed) ||
+            $0.subtitle.lowercased().contains(trimmed) ||
+            $0.shortcutBadge.lowercased().contains(trimmed)
+        }
+    }
+    
+    private var visibleCommands: [MorphCommandItem] {
+        filteredCommands(for: searchQuery)
+    }
+    
+    public var body: some View {
+        ZStack(alignment: .top) {
+            // Subtle backdrop click catcher
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(theme.canvasBackground.opacity(0.94))
+                .onTapGesture {
+                    dismissCommandBar()
+                }
+            
+            VStack(spacing: 6) {
+                // Search Input Bar
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(theme.textSecondary)
+                    
+                    TextField("Type a command or search actions...", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(theme.textPrimary)
+                        .focused($isSearchFocused)
+                        .onSubmit {
+                            executeSelectedCommand()
+                        }
+                    
+                    if !searchQuery.isEmpty {
+                        Button(action: {
+                            searchQuery = ""
+                            selectedIndex = 0
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(theme.textTertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    
+                    Text("ESC")
+                        .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(theme.badgeText)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(theme.badgeBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .onTapGesture {
+                            dismissCommandBar()
+                        }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(theme.surfaceInset)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(theme.focusRingBorder, lineWidth: 1)
+                )
+                
+                // Filtered Command List
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 3) {
+                            let items = visibleCommands
+                            if items.isEmpty {
+                                Text("No matching commands")
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundColor(theme.textTertiary)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.vertical, 18)
+                            } else {
+                                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                    let isSelected = index == min(selectedIndex, max(0, items.count - 1))
+                                    Button(action: {
+                                        MorphHaptics.generic()
+                                        item.action()
+                                    }) {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: item.iconName)
+                                                .font(.system(size: 10.5, weight: .semibold))
+                                                .foregroundColor(isSelected ? theme.activePillText : theme.textPrimary)
+                                                .frame(width: 20, height: 20)
+                                                .background(
+                                                    Circle()
+                                                        .fill(isSelected ? theme.activePillText.opacity(0.14) : theme.cardBackground)
+                                                )
+                                            
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(item.title)
+                                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                                    .foregroundColor(isSelected ? theme.activePillText : theme.textPrimary)
+                                                    .lineLimit(1)
+                                                
+                                                Text(item.subtitle)
+                                                    .font(.system(size: 9, weight: .regular))
+                                                    .foregroundColor(isSelected ? theme.activePillText.opacity(0.75) : theme.textSecondary)
+                                                    .lineLimit(1)
+                                            }
+                                            
+                                            Spacer(minLength: 4)
+                                            
+                                            Text(item.shortcutBadge)
+                                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                                .foregroundColor(isSelected ? theme.activePillText : theme.badgeText)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(
+                                                    Capsule()
+                                                        .fill(isSelected ? theme.activePillText.opacity(0.18) : theme.badgeBackground)
+                                                )
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 5)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(isSelected ? theme.activePillBackground : theme.cardBackgroundSubtle)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(item.id)
+                                    .onHover { hovering in
+                                        if hovering {
+                                            selectedIndex = index
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .onChange(of: selectedIndex) { _, newIdx in
+                        let items = visibleCommands
+                        if items.indices.contains(newIdx) {
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                proxy.scrollTo(items[newIdx].id, anchor: .center)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(theme.activeBorder, lineWidth: 0.8)
+        )
+        .shadow(color: theme.windowShadow, radius: 14, x: 0, y: 6)
+        .onAppear {
+            selectedIndex = 0
+            isSearchFocused = true
+        }
+        .onChange(of: searchQuery) { _, _ in
+            selectedIndex = 0
+        }
+        .onKeyPress(.downArrow) {
+            let count = visibleCommands.count
+            if count > 0 {
+                selectedIndex = (selectedIndex + 1) % count
+                MorphHaptics.alignment()
+            }
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            let count = visibleCommands.count
+            if count > 0 {
+                selectedIndex = (selectedIndex - 1 + count) % count
+                MorphHaptics.alignment()
+            }
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            dismissCommandBar()
+            return .handled
+        }
+    }
+    
+    private func executeSelectedCommand() {
+        let items = visibleCommands
+        guard !items.isEmpty else { return }
+        let idx = min(max(0, selectedIndex), items.count - 1)
+        MorphHaptics.generic()
+        items[idx].action()
+    }
+    
+    private func dismissCommandBar() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            model.isCommandBarPresented = false
+        }
     }
 }
 

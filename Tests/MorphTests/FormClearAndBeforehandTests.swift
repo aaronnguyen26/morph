@@ -190,7 +190,7 @@ final class FormClearAndBeforehandTests: XCTestCase {
 
     func testBeforehandEmailUpdatesRecipientEmail() {
         let (model, _) = makeLagunaModel()
-        XCTAssertEqual(model.recipientEmail, "user@example.com")
+        XCTAssertEqual(model.recipientEmail, "aaronn.nguyen.work@gmail.com")
 
         // User filled in email beforehand
         model.applyLiveSnapshot([

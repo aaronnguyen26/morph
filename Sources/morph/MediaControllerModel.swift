@@ -339,12 +339,11 @@ public final class MediaControllerModel: ObservableObject {
                 let prev = self.isSignedIn
                 self.isSignedIn = signedIn
                 if signedIn && !prev {
-                    if self.playlists.isEmpty {
-                        self.refreshPlaylists()
-                    }
-                    if self.quickPicks.isEmpty {
-                        self.refreshQuickPicks()
-                    }
+                    self.isWaitingForBrowserSignIn = false
+                    self.browserAuthStatusMessage = nil
+                    self.libraryError = nil
+                    self.refreshPlaylists()
+                    self.refreshQuickPicks()
                 }
             }
             .store(in: &cancellables)
@@ -1429,8 +1428,14 @@ public final class MediaControllerModel: ObservableObject {
         setRepeatMode(repeatMode.next)
     }
     
-    // MARK: - Browser-Based Authentication & Tab Management
+    // MARK: - Direct & Browser-Based Authentication & Tab Management
     public func openSignIn() {
+        isWaitingForBrowserSignIn = true
+        browserAuthStatusMessage = "Sign in via the Morph YouTube Music window or your browser. Once signed in, your playlists and music sync automatically."
+        engine.loadGoogleSignIn()
+    }
+    
+    public func openSignInInBrowser() {
         isWaitingForBrowserSignIn = true
         browserAuthStatusMessage = "Opened YouTube Music sign-in tab in your browser. Once signed in, you can close that tab and play directly from Morph."
         engine.openSignInInBrowser()
@@ -1443,22 +1448,21 @@ public final class MediaControllerModel: ObservableObject {
     public func syncSessionFromBrowser() {
         browserAuthStatusMessage = "Syncing session from browser tab..."
         engine.syncSessionFromBrowser()
+        engine.checkAuthCookies()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
             if self?.engine.isSignedIn == true {
                 self?.browserAuthStatusMessage = "Connected! You can now close your browser tab."
                 self?.isWaitingForBrowserSignIn = false
+                self?.refreshPlaylists()
+                self?.refreshQuickPicks()
             } else {
-                self?.browserAuthStatusMessage = "No active session detected. Please sign in via the browser tab first."
+                self?.browserAuthStatusMessage = "No active session detected. Please sign in via the Morph window or browser tab first."
             }
         }
     }
     
     public func openPlayerWindow() {
-        if !isSignedIn {
-            openSignIn()
-        } else {
-            openInBrowser()
-        }
+        engine.showPlayerWindow()
     }
     
     // MARK: - Ambient Visualizer

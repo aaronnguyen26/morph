@@ -179,7 +179,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
     }
     
     public func openGoogleSignInInBrowser() {
-        let emailToUse = configuredUserEmail ?? "minh7898888@gmail.com"
+        let emailToUse = configuredUserEmail ?? "aaronn.nguyen.work@gmail.com"
         let escaped = emailToUse.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? emailToUse
         let signInURL = "https://accounts.google.com/AccountChooser?Email=\(escaped)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
         guard let url = URL(string: signInURL) else { return }
@@ -187,7 +187,7 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
     }
     
     public func openGoogleCalendarInBrowser() {
-        let emailToUse = configuredUserEmail ?? "minh7898888@gmail.com"
+        let emailToUse = configuredUserEmail ?? "aaronn.nguyen.work@gmail.com"
         let escapedEmail = emailToUse.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? emailToUse
         let targetURLString = "https://accounts.google.com/AccountChooser?Email=\(escapedEmail)&continue=https%3A%2F%2Fcalendar.google.com%2Fcalendar%2Fr"
         guard let url = URL(string: targetURLString) else { return }

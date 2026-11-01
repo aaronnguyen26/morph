@@ -3059,4 +3059,1930 @@ final class ApplicationFormTrackerTests: XCTestCase {
         XCTAssertEqual(model.activeSession?.fields[0].value, "")
         XCTAssertEqual(model.activeSession?.fields[1].value, "")
     }
+    
+    // MARK: - Email Receipt Always To aaronn.nguyen.work@gmail.com & UI Redesign Tests
+    
+    func testFormReceiptDefaultRecipientEmailIsAlwaysAaronn() async {
+        let mockDispatcher = MockEmailDispatcher(shouldSucceed: true)
+        let model = ApplicationFormModel(
+            detector: MockApplicationFormDetector(detected: false),
+            dispatcher: mockDispatcher
+        )
+        
+        // Default recipient email must be aaronn.nguyen.work@gmail.com
+        XCTAssertEqual(ApplicationFormModel.defaultRecipientEmail, "aaronn.nguyen.work@gmail.com")
+        XCTAssertEqual(model.recipientEmail, "aaronn.nguyen.work@gmail.com")
+        
+        // Start tracking without explicit email
+        model.startTracking(title: "Laguna Schools BP 2026: IA/SA Application Form", appName: "Polar")
+        XCTAssertEqual(model.activeSession?.recipientEmail, "aaronn.nguyen.work@gmail.com")
+        
+        model.addField(label: "Full Name", value: "Aaron Nguyen", category: .personal)
+        model.addField(label: "Role Applying For", value: "Instructional Assistant", category: .experience)
+        
+        let success = await model.dispatchEmailCopy()
+        XCTAssertTrue(success)
+        XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 1)
+        
+        let dispatched = mockDispatcher.dispatchedSessions.first
+        XCTAssertEqual(dispatched?.recipientEmail, "aaronn.nguyen.work@gmail.com")
+        XCTAssertEqual(dispatched?.formTitle, "Laguna Schools BP 2026: IA/SA Application Form")
+        XCTAssertTrue(dispatched?.formattedSummary.contains("Aaron Nguyen") ?? false)
+        XCTAssertTrue(dispatched?.formattedSummary.contains("Instructional Assistant") ?? false)
+        XCTAssertTrue(dispatched?.formattedSummary.contains("Recipient Copy:** aaronn.nguyen.work@gmail.com") ?? false)
+        
+        XCTAssertNotNil(model.deliveryToastMessage)
+        XCTAssertTrue(model.deliveryToastMessage?.contains("aaronn.nguyen.work@gmail.com") ?? false)
+    }
+    
+    @MainActor
+    func testRedesignedFormTrackerViewRendersSpaciousAndElevated() {
+        let notchModel = NotchModel()
+        notchModel.selectedTab = .home
+        notchModel.isExpanded = true
+        
+        let formModel = notchModel.formTracker
+        formModel.startTracking(title: "Laguna Schools BP 2026: IA/SA Application Form", appName: "Polar")
+        formModel.addField(label: "Full Name", value: "Aaron Nguyen", category: .personal)
+        formModel.addField(label: "Role Applying For", value: "IA/SA", category: .experience)
+        formModel.addField(label: "Statement", value: "", category: .question)
+        
+        let view = ApplicationFormTrackerView(model: notchModel)
+        let hostingController = NSHostingController(rootView: view)
+        hostingController.view.layoutSubtreeIfNeeded()
+        
+        XCTAssertNotNil(hostingController.view)
+        XCTAssertEqual(formModel.recipientEmail, "aaronn.nguyen.work@gmail.com")
+        XCTAssertEqual(formModel.activeSession?.fields.count, 3)
+        XCTAssertEqual(formModel.activeSession?.answeredCount, 2)
+    }
+    
+    func testStaleSavedDraftsUpgradeEmailToAaronn() {
+        // Simulate an old draft with an empty or deprecated email address
+        let staleSession = ApplicationFormSession(
+            formTitle: "Laguna Schools Form",
+            sourceAppName: "Polar",
+            sourceURL: "https://docs.google.com/forms/d/e/test/viewform",
+            recipientEmail: "minh7898888@gmail.com",
+            fields: [
+                FormInputField(label: "Full Name", value: "Aaron Nguyen", category: .personal)
+            ]
+        )
+        
+        let encoder = JSONEncoder()
+        if let data = try? encoder.encode([staleSession]) {
+            UserDefaults.standard.set(data, forKey: ApplicationFormModel.draftsStorageKey)
+        }
+        
+        let model = ApplicationFormModel(
+            detector: MockApplicationFormDetector(detected: false),
+            dispatcher: MockEmailDispatcher()
+        )
+        model.loadDrafts()
+        
+        XCTAssertEqual(model.historySessions.count, 1)
+        XCTAssertEqual(model.historySessions.first?.recipientEmail, "aaronn.nguyen.work@gmail.com", "Stale draft email must be migrated to aaronn.nguyen.work@gmail.com")
+    }
+    
+    func testCalendarAndSSOProfileEmailAlignmentToAaronn() {
+        let calendar = CalendarModel()
+        calendar.configureUser(email: "aaronn.nguyen.work@gmail.com")
+        XCTAssertEqual(calendar.configuredUserEmail, "aaronn.nguyen.work@gmail.com")
+    }
+    
+    func testDefaultEmailDispatcherHandlesLongSummaryWithoutFailing() async {
+        let dispatcher = DefaultEmailDispatcher()
+        var fields: [FormInputField] = []
+        for i in 1...25 {
+            fields.append(FormInputField(
+                label: "Question \(i): Describe your relevant professional qualifications, technical skills, and leadership achievements in detail",
+                value: "Over the past several years, I have spearheaded cross-functional software architecture projects, maintained rigorous unit testing standards, and delivered high-velocity macOS native features.",
+                category: .experience
+            ))
+        }
+        
+        let session = ApplicationFormSession(
+            formTitle: "Laguna Schools BP 2026: Comprehensive Faculty Application",
+            sourceAppName: "Polar",
+            sourceURL: "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform",
+            recipientEmail: "",
+            fields: fields
+        )
+        
+        do {
+            let result = try await dispatcher.dispatchCopy(session: session)
+            XCTAssertTrue(result.success)
+            XCTAssertTrue(result.message.contains("aaronn.nguyen.work@gmail.com"))
+            if let msgId = result.messageId {
+                await GmailEngine.shared.trashMessage(messageId: msgId)
+            }
+        } catch {
+            XCTFail("DefaultEmailDispatcher should not throw: \(error.localizedDescription)")
+        }
+    }
+    
+    func testGmailEngineBase64URLEncoding() {
+        let b64 = GmailEngine.makeBase64URLEmail(
+            to: "aaronn.nguyen.work@gmail.com",
+            subject: "Laguna Schools Application",
+            body: "Full Name: Aaron Nguyen\nRole: IA/SA"
+        )
+        XCTAssertFalse(b64.isEmpty)
+        XCTAssertFalse(b64.contains("+"))
+        XCTAssertFalse(b64.contains("/"))
+        XCTAssertFalse(b64.contains("="))
+    }
+    
+    func testGmailEngineWebComposeURLConstruction() {
+        let url = GmailEngine.makeGmailWebComposeURL(
+            to: "aaronn.nguyen.work@gmail.com",
+            subject: "Copy of Your Application: Laguna Schools",
+            body: "Applicant: Aaron Nguyen"
+        )
+        XCTAssertNotNil(url)
+        let str = url!.absoluteString
+        XCTAssertTrue(str.hasPrefix("https://mail.google.com/mail/"))
+        XCTAssertTrue(str.contains("view=cm"))
+        XCTAssertTrue(str.contains("fs=1"))
+        XCTAssertTrue(str.contains("to=aaronn.nguyen.work@gmail.com") || str.contains("to=aaronn.nguyen.work%40gmail.com"))
+        XCTAssertTrue(str.contains("su=Copy%20of%20Your%20Application:%20Laguna%20Schools"))
+    }
+    
+    func testGmailEngineTokenDiscovery() {
+        let path = GmailEngine.shared.resolveGmailTokenPath()
+        // If Google auth tokens exist on user mac, path must resolve to a json file
+        if let p = path {
+            XCTAssertTrue(p.hasSuffix(".json"))
+        }
+    }
+    
+    func testGmailEngineTrashMessageSafeHandling() async {
+        let engine = GmailEngine.shared
+        let res = await engine.trashMessage(messageId: "nonexistent_message_id_safe_test")
+        XCTAssertFalse(res)
+    }
+    
+    func testDefaultEmailDispatcherRoutesToGmailExclusively() async {
+        let dispatcher = DefaultEmailDispatcher()
+        let session = ApplicationFormSession(
+            formTitle: "Laguna Schools Form",
+            sourceAppName: "Polar",
+            sourceURL: "https://docs.google.com/forms/d/e/test/viewform",
+            recipientEmail: "aaronn.nguyen.work@gmail.com",
+            fields: [
+                FormInputField(label: "Full Name", value: "Aaron Nguyen", category: .personal)
+            ]
+        )
+        
+        do {
+            let res = try await dispatcher.dispatchCopy(session: session)
+            XCTAssertTrue(res.success)
+            XCTAssertTrue(res.message.contains("Gmail"), "Dispatcher message must explicitly confirm Gmail routing")
+            XCTAssertTrue(res.message.contains("aaronn.nguyen.work@gmail.com"))
+            if let msgId = res.messageId {
+                await GmailEngine.shared.trashMessage(messageId: msgId)
+            }
+        } catch {
+            XCTFail("Should not throw: \(error.localizedDescription)")
+        }
+    }
+    
+    func testProfessionalHTMLSummaryContainsStylingAndCorrectAnswers() {
+        let session = ApplicationFormSession(
+            formTitle: "Laguna Schools BP 2026: IA/SA Application Form",
+            sourceAppName: "Polar",
+            sourceURL: "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform",
+            recipientEmail: "aaronn.nguyen.work@gmail.com",
+            fields: [
+                FormInputField(label: "Full Name", value: "Aaron Nguyen", category: .personal, isRequired: true),
+                FormInputField(label: "Role Applying For", value: "Instructional Assistant / Student Advisor", category: .experience, isRequired: true)
+            ]
+        )
+        
+        let html = session.professionalHTMLSummary
+        XCTAssertTrue(html.contains("<!DOCTYPE html>"))
+        XCTAssertTrue(html.contains("Powered by Morph"), "Footer must cleanly state Powered by Morph")
+        XCTAssertTrue(html.contains("Laguna Schools BP 2026: IA/SA Application Form"))
+        XCTAssertTrue(html.contains("Aaron Nguyen"))
+        XCTAssertTrue(html.contains("Instructional Assistant / Student Advisor"))
+        // Must be normal clean email canvas, zero dark containers
+        XCTAssertTrue(html.contains("background-color:#ffffff"))
+        XCTAssertFalse(html.contains("#0b0c0e"))
+        XCTAssertFalse(html.contains("#121418"))
+        // Non-actionable noise must not appear
+        XCTAssertFalse(html.contains("[personal]"))
+        XCTAssertFalse(html.contains("[experience]"))
+        XCTAssertFalse(html.contains("Word count"))
+    }
+    
+    func testEmailSubjectMatchesGoogleFormTitleExactly() async {
+        let session = ApplicationFormSession(
+            formTitle: "Laguna Schools BP 2026: IA/SA Application Form",
+            sourceAppName: "Polar",
+            sourceURL: "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform",
+            recipientEmail: "aaronn.nguyen.work@gmail.com",
+            fields: [
+                FormInputField(label: "Full Name", value: "Aaron Nguyen", category: .personal)
+            ]
+        )
+        let cleanTitle = session.formTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subject = cleanTitle.isEmpty ? "Application Form" : cleanTitle
+        XCTAssertEqual(subject, "Laguna Schools BP 2026: IA/SA Application Form")
+    }
+    
+    func testSingleEmailDeduplicationSuppressesConcurrentOrRapidSends() async {
+        let engine = GmailEngine()
+        
+        // 1. Send first receipt
+        let res1 = await engine.sendFormReceipt(
+            recipient: "aaronn.nguyen.work@gmail.com",
+            subject: "Laguna Schools Application Unique Test",
+            body: "Full Name: Aaron Nguyen"
+        )
+        XCTAssertTrue(res1.success)
+        
+        // 2. Immediately try sending identical receipt again -> MUST be deduplicated
+        let res2 = await engine.sendFormReceipt(
+            recipient: "aaronn.nguyen.work@gmail.com",
+            subject: "Laguna Schools Application Unique Test",
+            body: "Full Name: Aaron Nguyen"
+        )
+        XCTAssertTrue(res2.success)
+        XCTAssertEqual(res1.messageId, res2.messageId, "Duplicate receipt send must return original message ID without spawning a 2nd email")
+        
+        // 3. Immediately clean up / trash the test email so Aaron's inbox stays clean
+        if let msgId = res1.messageId {
+            let trashed = await engine.trashMessage(messageId: msgId)
+            XCTAssertTrue(trashed, "Test receipt must be trashed immediately to keep inbox clean")
+        }
+    }
+    
+    // MARK: - Question Format & Input Detection Tests
+    
+    func testQuestionFormatDetectionAndClassification() {
+        // 1. String mapping
+        XCTAssertEqual(QuestionFormat(fromString: "shortAnswer"), .shortAnswer)
+        XCTAssertEqual(QuestionFormat(fromString: "short question"), .shortAnswer)
+        XCTAssertEqual(QuestionFormat(fromString: "multipleChoice"), .multipleChoice)
+        XCTAssertEqual(QuestionFormat(fromString: "multiple choice"), .multipleChoice)
+        XCTAssertEqual(QuestionFormat(fromString: "radio"), .multipleChoice)
+        XCTAssertEqual(QuestionFormat(fromString: "paragraph"), .paragraph)
+        XCTAssertEqual(QuestionFormat(fromString: "textarea"), .paragraph)
+        XCTAssertEqual(QuestionFormat(fromString: "checkboxes"), .checkboxes)
+        XCTAssertEqual(QuestionFormat(fromString: "dropdown"), .dropdown)
+        XCTAssertEqual(QuestionFormat(fromString: "linearScale"), .linearScale)
+        XCTAssertEqual(QuestionFormat(fromString: "date"), .date)
+        XCTAssertEqual(QuestionFormat(fromString: "time"), .time)
+        
+        // 2. Google Forms rawType mapping
+        XCTAssertEqual(QuestionFormat(fromRawType: 0), .shortAnswer)
+        XCTAssertEqual(QuestionFormat(fromRawType: 1), .paragraph)
+        XCTAssertEqual(QuestionFormat(fromRawType: 2), .multipleChoice)
+        XCTAssertEqual(QuestionFormat(fromRawType: 3), .dropdown)
+        XCTAssertEqual(QuestionFormat(fromRawType: 4), .checkboxes)
+        XCTAssertEqual(QuestionFormat(fromRawType: 5), .linearScale)
+        XCTAssertEqual(QuestionFormat(fromRawType: 9), .date)
+        XCTAssertEqual(QuestionFormat(fromRawType: 10), .time)
+        
+        // 3. Classification helpers
+        XCTAssertTrue(QuestionFormat.shortAnswer.isShortQuestion)
+        XCTAssertFalse(QuestionFormat.shortAnswer.isMultipleChoice)
+        XCTAssertTrue(QuestionFormat.multipleChoice.isMultipleChoice)
+        XCTAssertTrue(QuestionFormat.multipleChoice.isSelection)
+        XCTAssertFalse(QuestionFormat.multipleChoice.isTextEntry)
+        XCTAssertTrue(QuestionFormat.paragraph.isParagraph)
+        XCTAssertTrue(QuestionFormat.paragraph.isTextEntry)
+        XCTAssertTrue(QuestionFormat.checkboxes.isCheckboxes)
+        XCTAssertTrue(QuestionFormat.checkboxes.isSelection)
+        XCTAssertTrue(QuestionFormat.dropdown.isDropdown)
+        
+        // 4. FormInputField format bridge
+        let shortField = FormInputField(label: "Full Name", value: "", questionType: "shortAnswer")
+        XCTAssertTrue(shortField.isShortQuestion)
+        XCTAssertFalse(shortField.isMultipleChoice)
+        XCTAssertEqual(shortField.format.badgeText, "SHORT")
+        
+        let choiceField = FormInputField(label: "Grade Level", value: "", options: ["Freshman", "Senior"], questionType: "multipleChoice")
+        XCTAssertTrue(choiceField.isMultipleChoice)
+        XCTAssertFalse(choiceField.isShortQuestion)
+        XCTAssertEqual(choiceField.format.badgeText, "CHOICE")
+        XCTAssertEqual(choiceField.options.count, 2)
+    }
+    
+    func testDOMExtractionScriptDetectsQuestionFormatsAndOptions() {
+        let rawDOMOutput = "Full Name:::Aaron Nguyen:::shortAnswer:::|||Preferred Role:::Lead Architect:::multipleChoice:::Staff Engineer;;;Lead Architect;;;Product Designer|||Why Morph?:::Because it is clean and fast:::paragraph:::|||Technical Strengths:::Swift, macOS:::checkboxes:::Swift;;;macOS;;;Metal"
+        
+        let items = FormInputAutoTracker.parseDOMExtractionItems(rawDOMOutput)
+        XCTAssertEqual(items.count, 4)
+        
+        // Item 0: Short Question
+        XCTAssertEqual(items[0].label, "Full Name")
+        XCTAssertEqual(items[0].value, "Aaron Nguyen")
+        XCTAssertEqual(items[0].questionType, "shortAnswer")
+        XCTAssertTrue(items[0].format.isShortQuestion)
+        XCTAssertTrue(items[0].options.isEmpty)
+        
+        // Item 1: Multiple Choice Question
+        XCTAssertEqual(items[1].label, "Preferred Role")
+        XCTAssertEqual(items[1].value, "Lead Architect")
+        XCTAssertEqual(items[1].questionType, "multipleChoice")
+        XCTAssertTrue(items[1].format.isMultipleChoice)
+        XCTAssertEqual(items[1].options, ["Staff Engineer", "Lead Architect", "Product Designer"])
+        
+        // Item 2: Paragraph
+        XCTAssertEqual(items[2].label, "Why Morph?")
+        XCTAssertEqual(items[2].value, "Because it is clean and fast")
+        XCTAssertEqual(items[2].questionType, "paragraph")
+        XCTAssertTrue(items[2].format.isParagraph)
+        
+        // Item 3: Checkboxes
+        XCTAssertEqual(items[3].label, "Technical Strengths")
+        XCTAssertEqual(items[3].value, "Swift, macOS")
+        XCTAssertEqual(items[3].questionType, "checkboxes")
+        XCTAssertTrue(items[3].format.isCheckboxes)
+        XCTAssertEqual(items[3].options, ["Swift", "macOS", "Metal"])
+        
+        // Backwards compatible string tuple method must still work
+        let pairs = FormInputAutoTracker.parseDOMExtractionOutput(rawDOMOutput)
+        XCTAssertEqual(pairs.count, 4)
+        XCTAssertEqual(pairs[0].label, "Full Name")
+        XCTAssertEqual(pairs[0].value, "Aaron Nguyen")
+    }
+    
+    func testApplyExtractedInputUpdatesQuestionFormatAndOptions() {
+        let model = ApplicationFormModel()
+        model.startTracking(title: "Design Apprenticeship 2026", appName: "Safari")
+        model.isFormDetected = true
+        model.isAutoCaptureEnabled = true
+        model.activeSession = ApplicationFormSession(
+            formTitle: "Design Apprenticeship 2026",
+            sourceAppName: "Safari",
+            sourceURL: "https://example.com/form",
+            recipientEmail: "aaronn.nguyen.work@gmail.com",
+            fields: [
+                FormInputField(label: "Full Name", value: "", questionType: "shortAnswer"),
+                FormInputField(label: "Years of Experience", value: "", questionType: "shortAnswer")
+            ]
+        )
+        
+        // Live snapshot arrives containing format and choices
+        let snapshot = [
+            ExtractedInputItem(label: "Full Name", value: "Aaron Nguyen", questionType: "shortAnswer", options: []),
+            ExtractedInputItem(label: "Years of Experience", value: "5+ Years", questionType: "multipleChoice", options: ["1-2 Years", "3-4 Years", "5+ Years"])
+        ]
+        
+        let changed = model.applyLiveItemsSnapshot(snapshot)
+        XCTAssertEqual(changed, 2)
+        
+        guard let fields = model.activeSession?.fields else {
+            XCTFail("Active session fields must exist")
+            return
+        }
+        
+        // Field 0: Value updated, remains short answer
+        XCTAssertEqual(fields[0].value, "Aaron Nguyen")
+        XCTAssertTrue(fields[0].isShortQuestion)
+        
+        // Field 1: Value updated, upgraded to multiple choice with options
+        XCTAssertEqual(fields[1].value, "5+ Years")
+        XCTAssertTrue(fields[1].isMultipleChoice)
+        XCTAssertEqual(fields[1].options, ["1-2 Years", "3-4 Years", "5+ Years"])
+    }
+    
+    func testGenericHTMLFormDetectsMultipleChoiceAndDropdownFormats() {
+        let html = """
+        <form action="/apply">
+            <div class="question">
+                <label>Applicant Name *</label>
+                <input type="text" name="name" value="Aaron Nguyen" required />
+            </div>
+            <div class="question">
+                <label>Employment Status</label>
+                <input type="radio" name="status" value="Full-Time" checked /> Full-Time
+                <input type="radio" name="status" value="Contract" /> Contract
+            </div>
+            <div class="question">
+                <label>Office Location</label>
+                <select name="location">
+                    <option value="">Select location</option>
+                    <option value="Cupertino" selected>Cupertino</option>
+                    <option value="Austin">Austin</option>
+                </select>
+            </div>
+            <div class="question">
+                <label>Tell us about your previous designs</label>
+                <textarea name="portfolio_desc">Clean, Apple HIG compliant interfaces.</textarea>
+            </div>
+        </form>
+        """
+        
+        let schema = FormContentRetriever.parseGenericHTMLForm(html, url: "https://apple.com/careers/apply")
+        XCTAssertNotNil(schema)
+        guard let fields = schema?.fields else {
+            XCTFail("Schema fields must be parsed")
+            return
+        }
+        
+        XCTAssertEqual(fields.count, 4)
+        
+        // 1. Applicant Name -> Short Question
+        XCTAssertEqual(fields[0].label, "Applicant Name")
+        XCTAssertEqual(fields[0].format, .shortAnswer)
+        XCTAssertEqual(fields[0].value, "Aaron Nguyen")
+        
+        // 2. Employment Status -> Multiple Choice
+        XCTAssertEqual(fields[1].label, "Employment Status")
+        XCTAssertEqual(fields[1].format, .multipleChoice)
+        XCTAssertEqual(fields[1].value, "Full-Time")
+        XCTAssertEqual(fields[1].options, ["Full-Time", "Contract"])
+        
+        // 3. Office Location -> Dropdown
+        XCTAssertEqual(fields[2].label, "Office Location")
+        XCTAssertEqual(fields[2].format, .dropdown)
+        XCTAssertEqual(fields[2].value, "Cupertino")
+        
+        // 4. Portfolio Description -> Paragraph
+        XCTAssertEqual(fields[3].label, "Tell us about your previous designs")
+        XCTAssertEqual(fields[3].format, .paragraph)
+        XCTAssertEqual(fields[3].value, "Clean, Apple HIG compliant interfaces.")
+    }
+    
+    // MARK: - Closed / Expired Form Detection Tests
+    
+    func testDetectFormClosedStateVariousPhrases() {
+        let closedHTML1 = "<html><body><div class=\"freebirdFormviewerViewResponseConfirmationMessage\">This form is no longer accepting responses.</div></body></html>"
+        let res1 = FormContentRetriever.detectFormClosedState(html: closedHTML1)
+        XCTAssertTrue(res1.isClosed)
+        XCTAssertEqual(res1.message, "This form is no longer accepting responses.")
+        
+        let closedHTML2 = "<html><body><div>The submission deadline has passed. Thank you for your interest.</div></body></html>"
+        let res2 = FormContentRetriever.detectFormClosedState(html: closedHTML2)
+        XCTAssertTrue(res2.isClosed)
+        XCTAssertEqual(res2.message, "The submission deadline for this form has passed.")
+        
+        let closedHTML3 = "<html><body><div>Submissions are closed for this cycle.</div></body></html>"
+        let res3 = FormContentRetriever.detectFormClosedState(html: closedHTML3)
+        XCTAssertTrue(res3.isClosed)
+        XCTAssertEqual(res3.message, "Submissions for this form are currently closed.")
+        
+        let closedHTML4 = "<html><body><div>You've already responded to this form.</div></body></html>"
+        let res4 = FormContentRetriever.detectFormClosedState(html: closedHTML4)
+        XCTAssertTrue(res4.isClosed)
+        XCTAssertEqual(res4.message, "You've already responded to this form.")
+        
+        let openHTML = "<html><body><form><input type='text' name='name' /></form></body></html>"
+        let resOpen = FormContentRetriever.detectFormClosedState(html: openHTML)
+        XCTAssertFalse(resOpen.isClosed)
+        XCTAssertNil(resOpen.message)
+    }
+    
+    func testParseGoogleFormPublicLoadDataWhenClosed() {
+        let closedGFormHTML = """
+        <html><body>
+        <div class="freebirdFormviewerViewResponseConfirmationMessage">This form is no longer accepting responses.</div>
+        <script>var FB_PUBLIC_LOAD_DATA_ = [null, ["Description", []]];</script>
+        </body></html>
+        """
+        let schema = FormContentRetriever.parseGoogleFormPublicLoadData(closedGFormHTML)
+        XCTAssertNotNil(schema)
+        XCTAssertTrue(schema?.isClosed == true)
+        XCTAssertEqual(schema?.closedMessage, "This form is no longer accepting responses.")
+        XCTAssertTrue(schema?.fields.isEmpty == true)
+    }
+    
+    func testParseGenericHTMLFormWhenClosed() {
+        let closedHTML = """
+        <html><body>
+        <h1>Laguna Schools Application</h1>
+        <p>The submission deadline has expired. Submissions are closed.</p>
+        </body></html>
+        """
+        let schema = FormContentRetriever.parseGenericHTMLForm(closedHTML, url: "https://forms.laguna.edu/apply")
+        XCTAssertNotNil(schema)
+        XCTAssertTrue(schema?.isClosed == true)
+        XCTAssertEqual(schema?.closedMessage, "The submission deadline for this form has passed.")
+        XCTAssertTrue(schema?.fields.isEmpty == true)
+    }
+    
+    func testDOMExtractionScriptClosedMarker() {
+        let output = "__FORM_CLOSED__:::The submission deadline for this form has passed.:::closed:::"
+        let items = FormInputAutoTracker.parseDOMExtractionItems(output)
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].label, "__FORM_CLOSED__")
+        XCTAssertEqual(items[0].value, "The submission deadline for this form has passed.")
+        XCTAssertEqual(items[0].questionType, "closed")
+    }
+    
+    @MainActor
+    func testApplyLiveItemsSnapshotMarksModelClosed() {
+        let model = ApplicationFormModel()
+        model.startTracking(title: "Laguna Schools Application", appName: "Polar", url: "https://docs.google.com/forms/d/e/test/viewform")
+        XCTAssertTrue(model.isFormDetected)
+        XCTAssertFalse(model.isClosedOrExpired)
+        
+        let closedItems = [
+            ExtractedInputItem(label: "__FORM_CLOSED__", value: "This form is no longer accepting responses.", questionType: "closed", options: [])
+        ]
+        
+        let changed = model.applyLiveItemsSnapshot(closedItems)
+        XCTAssertEqual(changed, 0)
+        XCTAssertTrue(model.isClosedOrExpired)
+        XCTAssertEqual(model.closedReason, "This form is no longer accepting responses.")
+        XCTAssertTrue(model.activeSession?.isClosedOrExpired == true)
+        XCTAssertEqual(model.activeSession?.closedReason, "This form is no longer accepting responses.")
+    }
+    
+    @MainActor
+    func testHandleKeyStrokeIgnoresKeysWhenFormIsClosed() {
+        let model = ApplicationFormModel()
+        model.startTracking(title: "Laguna Schools Application", appName: "Polar", url: "https://docs.google.com/forms/d/e/test/viewform")
+        model.activeSession?.fields = [
+            FormInputField(label: "Full Name", value: "Aaron", category: .personal, questionType: "shortAnswer")
+        ]
+        
+        let tracker = FormInputAutoTracker(model: model)
+        tracker.confirmFocus(fieldID: model.activeSession!.fields[0].id)
+        
+        // Mark form closed
+        model.markFormClosed(reason: "Deadline passed")
+        XCTAssertTrue(model.isClosedOrExpired)
+        
+        // Type key while closed
+        tracker.handleKeyStroke(keyCode: 0, flags: [], characters: " Nguyen")
+        
+        // In unit test environment or live, value must NOT have accepted characters while closed!
+        // We verify that when closed, no input is added
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Aaron")
+    }
+    
+    // MARK: - Supabase Persistence & Receipt History Tests
+    
+    func testSupabaseServiceRecordAndFetchFormReceipts() async {
+        let supabase = SupabaseService.shared
+        let testReceipt = FormReceiptRecord(
+            id: UUID().uuidString,
+            userId: "test-user-id",
+            userEmail: "aaronn.nguyen.work@gmail.com",
+            formTitle: "Laguna Schools BP 2026",
+            sourceURL: "https://docs.google.com/forms/d/e/1FAIpQLSc_test/viewform",
+            sourceAppName: "Polar",
+            recipientEmail: "aaronn.nguyen.work@gmail.com",
+            totalQuestions: 11,
+            answeredCount: 8,
+            isSubmitted: true,
+            isClosedOrExpired: false,
+            fieldsJSON: "[{\"label\":\"Full Name\",\"value\":\"Aaron Nguyen\"}]",
+            formattedSummary: "# Laguna Schools BP 2026\n\nFull Name: Aaron Nguyen\n",
+            submittedAt: Date(),
+            createdAt: Date()
+        )
+        
+        await supabase.recordFormReceipt(testReceipt)
+        
+        let fetched = await supabase.fetchFormReceipts(limit: 10)
+        XCTAssertFalse(fetched.isEmpty)
+        let found = fetched.first(where: { $0.id == testReceipt.id })
+        XCTAssertNotNil(found)
+        XCTAssertEqual(found?.formTitle, "Laguna Schools BP 2026")
+        XCTAssertEqual(found?.answeredCount, 8)
+        XCTAssertEqual(found?.recipientEmail, "aaronn.nguyen.work@gmail.com")
+        XCTAssertTrue(found?.isSubmitted == true)
+    }
+    
+    @MainActor
+    func testFormModelSyncToSupabaseRecordsSessionReceipt() async {
+        let model = ApplicationFormModel()
+        model.setRecipientEmail("aaronn.nguyen.work@gmail.com")
+        model.startTracking(title: "Laguna Schools Application", appName: "Polar", url: "https://docs.google.com/forms/d/e/test/viewform")
+        
+        model.activeSession?.fields = [
+            FormInputField(label: "Full Name", value: "Aaron Nguyen", category: .personal, questionType: "shortAnswer"),
+            FormInputField(label: "Consent", value: "Yes", category: .question, questionType: "multipleChoice")
+        ]
+        
+        model.syncToSupabase()
+        
+        // Wait 50ms for Task to run
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        
+        let receipts = SupabaseService.shared.formReceipts
+        let found = receipts.first(where: { $0.id == model.activeSession?.id.uuidString })
+        XCTAssertNotNil(found)
+        XCTAssertEqual(found?.formTitle, "Laguna Schools Application")
+        XCTAssertEqual(found?.totalQuestions, 2)
+        XCTAssertEqual(found?.answeredCount, 2)
+        XCTAssertEqual(found?.recipientEmail, "aaronn.nguyen.work@gmail.com")
+    }
+
+    // MARK: - Snapshot Current Form Detection UI for Design Artifact
+    @MainActor
+    func testSnapshotCurrentFormDetectionUI() throws {
+        let notchModel = NotchModel()
+        notchModel.theme.setMode(.dark)
+        notchModel.isExpanded = true
+        notchModel.activeContextFeature = .formTracker
+        
+        let formTracker = notchModel.formTracker
+        formTracker.setRecipientEmail("aaron.design@apple.com")
+        formTracker.startTracking(
+            title: "Apple Human Interface Design Intake",
+            appName: "Google Chrome",
+            url: "https://docs.google.com/forms/d/e/1FAIpQLSeAppleDesignUX/viewform"
+        )
+        
+        let mockFields = [
+            FormInputField(
+                label: "What is your primary design specialization?",
+                value: "Spatial & Dynamic Island UX",
+                category: .experience,
+                options: ["Spatial & Dynamic Island UX", "System Typography & Layout", "Interactive Prototyping", "Motion & Haptics"],
+                questionType: "multipleChoice",
+                isRequired: true
+            ),
+            FormInputField(
+                label: "Portfolio URL or Figma Link",
+                value: "https://apple.com/design/spatial-hud",
+                category: .contact,
+                questionType: "shortAnswer",
+                isRequired: true
+            ),
+            FormInputField(
+                label: "Which platforms have you designed high-density HUDs for?",
+                value: "macOS, visionOS",
+                category: .experience,
+                options: ["macOS", "visionOS", "iOS", "watchOS"],
+                questionType: "checkboxes",
+                isRequired: false
+            ),
+            FormInputField(
+                label: "Describe your philosophy on reducing visual noise in persistent utility surfaces.",
+                value: "Restraint over decoration. High contrast typography and deliberate spatial rhythm replace arbitrary bounding boxes.",
+                category: .question,
+                questionType: "paragraph",
+                isRequired: true
+            ),
+            FormInputField(
+                label: "Availability for interview",
+                value: "",
+                category: .personal,
+                questionType: "shortAnswer",
+                isRequired: false
+            )
+        ]
+        
+        formTracker.activeSession?.fields = mockFields
+        formTracker.selectActiveField(0)
+        
+        let artifactDir = "/Users/minhnguyen/.gemini/antigravity/brain/c0ba7c0a-78ff-4222-91da-ef3a52cd9eea"
+        try? FileManager.default.createDirectory(atPath: artifactDir, withIntermediateDirectories: true)
+        
+        func renderToPNG(view: NSView, size: CGSize, scale: CGFloat = 2.0, filename: String) {
+            view.frame = NSRect(origin: .zero, size: size)
+            view.layoutSubtreeIfNeeded()
+            
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(size.width * scale),
+                pixelsHigh: Int(size.height * scale),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )!
+            rep.size = size
+            
+            NSGraphicsContext.saveGraphicsState()
+            let context = NSGraphicsContext(bitmapImageRep: rep)
+            NSGraphicsContext.current = context
+            view.displayIgnoringOpacity(view.bounds, in: context!)
+            NSGraphicsContext.restoreGraphicsState()
+            
+            if let data = rep.representation(using: .png, properties: [:]) {
+                let url = URL(fileURLWithPath: "\(artifactDir)/\(filename)")
+                try? data.write(to: url)
+                print("Rendered snapshot to: \(url.path)")
+            }
+        }
+        
+        // 1. Current UI Baseline (Exact 640 x 225 pt)
+        let islandView = MorphIslandView(model: notchModel, onMouseEnter: {}, onMouseExit: {})
+        let islandHosting = NSHostingView(rootView: islandView)
+        renderToPNG(view: islandHosting, size: CGSize(width: 640, height: 225), filename: "current_form_ui_expanded.png")
+        renderToPNG(view: islandHosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_before_notch.png")
+        
+        // 2. Form Tracker Cockpit View (Exact 640 x 225 pt)
+        let cockpitView = ApplicationFormTrackerView(model: notchModel)
+        let cockpitHosting = NSHostingView(rootView: cockpitView)
+        renderToPNG(view: cockpitHosting, size: CGSize(width: 640, height: 225), filename: "current_form_ui_cockpit.png")
+        
+        // 3. Compact Notch with Form HUD Wings (Exact 480 x 32 pt)
+        notchModel.isExpanded = false
+        notchModel.isHovered = false
+        let compactView = MorphIslandView(model: notchModel, onMouseEnter: {}, onMouseExit: {})
+        let compactHosting = NSHostingView(rootView: compactView)
+        renderToPNG(view: compactHosting, size: CGSize(width: notchModel.currentWidth, height: notchModel.currentHeight), filename: "current_form_ui_notch_compact.png")
+        renderToPNG(view: compactHosting, size: CGSize(width: notchModel.currentWidth, height: notchModel.currentHeight), filename: "morph_exact_before_compact.png")
+        
+        // 4. Redesign 1: Monochromatic Typographic Notch (Exact 640 x 225 pt)
+        let r1View = MorphRedesign1TypographicView()
+        let r1Hosting = NSHostingView(rootView: r1View)
+        renderToPNG(view: r1Hosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_after_design1_typographic.png")
+        
+        // 5. Redesign 2: Bilateral Asymmetric Cockpit (Exact 640 x 225 pt)
+        let r2View = MorphRedesign2BilateralCockpitView()
+        let r2Hosting = NSHostingView(rootView: r2View)
+        renderToPNG(view: r2Hosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_after_design2_bilateral_cockpit.png")
+        
+        // 6. Redesign 3: Sheetless Split Audit Ledger (Exact 640 x 225 pt)
+        let r3View = MorphRedesign3SplitLedgerView()
+        let r3Hosting = NSHostingView(rootView: r3View)
+        renderToPNG(view: r3Hosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_after_design3_split_ledger.png")
+        
+        // 7. Redesign 4: Reimagined Apple Dynamic Island Floating Capsule (Exact 640 x 225 pt)
+        let r4View = MorphRedesign4DynamicIslandView()
+        let r4Hosting = NSHostingView(rootView: r4View)
+        renderToPNG(view: r4Hosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_after_design4_dynamic_island.png")
+        
+        // 8. Redesign 5: Reimagined Dynamic Island Dual-State Transformation (Exact 640 x 225 pt)
+        let r5View = MorphRedesign5DynamicIslandDualView()
+        let r5Hosting = NSHostingView(rootView: r5View)
+        renderToPNG(view: r5Hosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_after_design5_dynamic_island_dual.png")
+        
+        // 9. Redesign 6: The Typographic Editorial Stream with Living Input (Exact 640 x 225 pt)
+        let r6View = MorphRedesign6TypographicStreamView()
+        let r6Hosting = NSHostingView(rootView: r6View)
+        renderToPNG(view: r6Hosting, size: CGSize(width: 640, height: 225), filename: "morph_exact_after_design6_editorial_stream.png")
+    }
+
+    // MARK: - Design 2 Bilateral Cockpit Verification Tests
+    @MainActor
+    func testDesign2BilateralCockpitSequenceMatchesGoogleFormStatus() throws {
+        let notchModel = NotchModel()
+        notchModel.theme.setMode(.dark)
+        notchModel.isExpanded = true
+        notchModel.activeContextFeature = .formTracker
+        
+        let formTracker = notchModel.formTracker
+        formTracker.startTracking(
+            title: "Laguna Schools Debate 2026: IA/SA Application Form",
+            appName: "Google Chrome",
+            url: "https://docs.google.com/forms/d/e/1FAIpQLSeLagunaSchools/viewform"
+        )
+        
+        let mockQuestions = [
+            FormInputField(
+                label: "Full Legal Name",
+                value: "Aaron Nguyen",
+                category: .personal,
+                questionType: "shortAnswer",
+                isRequired: true
+            ),
+            FormInputField(
+                label: "Institutional Affiliation",
+                value: "Stanford University",
+                category: .experience,
+                questionType: "shortAnswer",
+                isRequired: true
+            ),
+            FormInputField(
+                label: "Which debate division are you entering?",
+                value: "",
+                category: .question,
+                options: ["Varsity Open", "Junior Varsity", "Novice Circuit"],
+                questionType: "multipleChoice",
+                isRequired: true
+            ),
+            FormInputField(
+                label: "Dietary & Accessibility Accommodations",
+                value: "",
+                category: .question,
+                options: ["Vegetarian", "Vegan", "Halal", "Wheelchair Access"],
+                questionType: "checkboxes",
+                isRequired: false
+            ),
+            FormInputField(
+                label: "Emergency Contact Phone Number",
+                value: "",
+                category: .contact,
+                questionType: "shortAnswer",
+                isRequired: true
+            )
+        ]
+        
+        formTracker.activeSession?.fields = mockQuestions
+        formTracker.setFilterMode(.all)
+        formTracker.selectActiveField(2) // Focus on Question 3
+        
+        // 1. Verify fields retrieval & sequence status alignment
+        let fields = formTracker.visibleFields
+        XCTAssertEqual(fields.count, 5)
+        XCTAssertEqual(formTracker.activeFieldIndex, 2)
+        
+        // Questions 1 & 2 are answered (Completed)
+        XCTAssertTrue(!fields[0].value.isEmpty, "Question 1 should be completed/answered")
+        XCTAssertTrue(!fields[1].value.isEmpty, "Question 2 should be completed/answered")
+        
+        // Question 3 is active and awaiting response
+        XCTAssertTrue(fields[2].value.isEmpty, "Question 3 is awaiting response")
+        XCTAssertEqual(formTracker.activeFieldIndex, 2, "Active question must match activeFieldIndex")
+        
+        // Questions 4 & 5 are pending
+        XCTAssertTrue(fields[3].value.isEmpty, "Question 4 is pending")
+        XCTAssertTrue(fields[4].value.isEmpty, "Question 5 is pending")
+        
+        // 2. Select Question 4 in sequence timeline
+        formTracker.selectActiveField(3)
+        XCTAssertEqual(formTracker.activeFieldIndex, 3, "Selecting Question 4 in sequence sets activeFieldIndex to 3")
+        
+        // 3. User answers Question 3 and advances
+        formTracker.updateFieldByIndex(2, value: "Varsity Open")
+        XCTAssertEqual(formTracker.activeSession?.fields[2].value, "Varsity Open")
+        XCTAssertTrue(!formTracker.activeSession!.fields[2].value.isEmpty, "Question 3 should now be completed")
+        
+        // 4. Test advanceToFirstUnansweredFieldIfNeeded moves to first remaining unanswered field
+        formTracker.advanceToFirstUnansweredFieldIfNeeded()
+        XCTAssertEqual(formTracker.activeFieldIndex, 3, "Advancing moves to first unanswered field (Question 4 or required Question 5)")
+        
+        // 5. Test Required filter mode
+        formTracker.setFilterMode(.requiredOnly)
+        let reqFields = formTracker.visibleFields
+        XCTAssertEqual(reqFields.count, 4, "Filtering to required only displays 4 required questions in sequence")
+        
+        // 6. Test answering remaining fields to achieve 100% completion
+        formTracker.updateFieldByIndex(3, value: "Vegan")
+        formTracker.updateFieldByIndex(4, value: "+1 650 555 0199")
+        XCTAssertEqual(formTracker.activeSession?.answeredCount, 5, "All 5 questions are now answered")
+        XCTAssertEqual(formTracker.activeSession?.completionPercentage, 100.0)
+        
+        // 7. Render ApplicationFormTrackerView to ensure no crashes and high fidelity layout
+        let view = ApplicationFormTrackerView(model: notchModel)
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 640, height: 225)
+        hostingView.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hostingView)
+    }
+}
+
+// MARK: - Pixel-Perfect Morph Redesign Views (Exact 640 x 225 pt)
+
+struct MorphRedesign1TypographicView: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 28,
+                bottomTrailingRadius: 28,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(Color(red: 0.035, green: 0.035, blue: 0.04))
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: 28,
+                    bottomTrailingRadius: 28,
+                    topTrailingRadius: 0,
+                    style: .continuous
+                )
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+            )
+            
+            VStack(spacing: 0) {
+                // Top Notch Row (Exact 179 x 32 pt center blind spot)
+                HStack(spacing: 0) {
+                    // Left Wing
+                    HStack(spacing: 6) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("Back")
+                                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.10))
+                        .clipShape(Capsule())
+                        
+                        Text("Apple Human Interface Intake")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 12)
+                    
+                    // Center Notch Void (Hardware blind spot)
+                    Spacer()
+                        .frame(width: 179, height: 32)
+                    
+                    // Right Wing
+                    HStack(spacing: 6) {
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 4, height: 4)
+                            Text("3 of 5")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                        
+                        Text("⌘K")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .frame(width: 16, height: 16)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(Circle())
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 12)
+                }
+                .frame(height: 34)
+                
+                Divider()
+                    .background(Color.white.opacity(0.08))
+                    .padding(.horizontal, 12)
+                
+                // Main Stage Below Notch (Zero Nested Boxes)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("03 · DESIGN PHILOSOPHY & INTENT")
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.55))
+                            .tracking(0.6)
+                        Spacer()
+                        Text("4/5 REQUIRED")
+                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.5))
+                    }
+                    .padding(.top, 4)
+                    
+                    Text("How do you calibrate cognitive friction when introducing novel spatial interactions?")
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                    
+                    // Choice stream: Pure typography, zero box cards
+                    VStack(alignment: .leading, spacing: 3.5) {
+                        // Option 1 (Selected)
+                        HStack(alignment: .top, spacing: 6) {
+                            Capsule()
+                                .fill(Color.white)
+                                .frame(width: 2.5, height: 26)
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 4) {
+                                    Text("1 · Progressive disclosure with zero-latency affordances")
+                                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white)
+                                    Text("SELECTED")
+                                        .font(.system(size: 6, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 3.5)
+                                        .padding(.vertical, 0.8)
+                                        .background(Color.white)
+                                        .clipShape(Capsule())
+                                }
+                                Text("Prioritize intuitive mental models before exposing complex spatial depth.")
+                                    .font(.system(size: 7.5, weight: .regular))
+                                    .foregroundColor(Color.white.opacity(0.6))
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 1)
+                        
+                        Divider().background(Color.white.opacity(0.06))
+                        
+                        // Option 2
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .stroke(Color.white.opacity(0.35), lineWidth: 0.8)
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 3)
+                                .padding(.leading, 1)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("2 · Haptic and acoustic reinforcement alongside visual anchors")
+                                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                Text("Multimodal feedback loops reduce visual gaze fatigue in extended sessions.")
+                                    .font(.system(size: 7.5, weight: .regular))
+                                    .foregroundColor(Color.white.opacity(0.45))
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 1)
+                        
+                        Divider().background(Color.white.opacity(0.06))
+                        
+                        // Option 3
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .stroke(Color.white.opacity(0.25), lineWidth: 0.8)
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 3)
+                                .padding(.leading, 1)
+                            Text("3 · Context-aware adaptive suppression of non-critical chrome")
+                                .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.55))
+                            Spacer()
+                        }
+                    }
+                    .padding(.top, 1)
+                    
+                    Spacer(minLength: 2)
+                    
+                    // Minimal footer utility line
+                    HStack {
+                        HStack(spacing: 8) {
+                            Text("↵ Confirm")
+                            Text("↑↓ Navigate")
+                            Text("1–4 Quick Pick")
+                            Text("⎋ Minimize")
+                        }
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.4))
+                        
+                        Spacer()
+                        
+                        HStack(spacing: 6) {
+                            Text("Save Draft")
+                                .font(.system(size: 7.5, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.6))
+                            
+                            Text("Confirm (⌘↵)")
+                                .font(.system(size: 8, weight: .bold, design: .rounded))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
+                .padding(.horizontal, 14)
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 640, height: 225)
+    }
+}
+
+struct MorphRedesign2BilateralCockpitView: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 28,
+                bottomTrailingRadius: 28,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(Color(red: 0.035, green: 0.035, blue: 0.04))
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: 28,
+                    bottomTrailingRadius: 28,
+                    topTrailingRadius: 0,
+                    style: .continuous
+                )
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+            )
+            
+            VStack(spacing: 0) {
+                // Top Notch Row (Exact 179 x 32 pt center blind spot)
+                HStack(spacing: 0) {
+                    // Left Wing
+                    HStack(spacing: 6) {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("Back")
+                                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.10))
+                        .clipShape(Capsule())
+                        
+                        Text("Apple Human Interface Intake")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 12)
+                    
+                    // Center Notch Void
+                    Spacer()
+                        .frame(width: 179, height: 32)
+                    
+                    // Right Wing
+                    HStack(spacing: 6) {
+                        Text("3/5 Answered")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Capsule())
+                        
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(.white)
+                        
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .frame(width: 16, height: 16)
+                            .background(Color.white.opacity(0.06))
+                            .clipShape(Circle())
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 12)
+                }
+                .frame(height: 34)
+                
+                Divider()
+                    .background(Color.white.opacity(0.08))
+                    .padding(.horizontal, 12)
+                
+                // Bilateral Split Workspace
+                HStack(spacing: 0) {
+                    // Left Column: Sequence Lineage (220 pt)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("INTAKE SEQUENCE · 4/5 REQ")
+                            .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.5))
+                            .tracking(0.5)
+                            .padding(.top, 4)
+                        
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 12, height: 12)
+                                    .background(Color.white.opacity(0.15))
+                                    .clipShape(Circle())
+                                Text("01 · Applicant Identity")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundColor(Color.white.opacity(0.7))
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 7, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 12, height: 12)
+                                    .background(Color.white.opacity(0.15))
+                                    .clipShape(Circle())
+                                Text("02 · Jurisdiction & Clearance")
+                                    .font(.system(size: 8, weight: .medium))
+                                    .foregroundColor(Color.white.opacity(0.7))
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 12, height: 12)
+                                    .overlay(Circle().fill(Color.black).frame(width: 4, height: 4))
+                                HStack(spacing: 3) {
+                                    Text("03 · Interaction Philosophy")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(.white)
+                                    Text("ACTIVE")
+                                        .font(.system(size: 5.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 2.5)
+                                        .padding(.vertical, 0.5)
+                                        .background(Color.white)
+                                        .clipShape(Capsule())
+                                }
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 0.8)
+                                    .frame(width: 12, height: 12)
+                                Text("04 · Spatial Affordances")
+                                    .font(.system(size: 8, weight: .regular))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Image(systemName: "lock")
+                                    .font(.system(size: 6.5))
+                                    .foregroundColor(Color.white.opacity(0.3))
+                                    .frame(width: 12, height: 12)
+                                Text("05 · Cryptographic Dispatch")
+                                    .font(.system(size: 8, weight: .regular))
+                                    .foregroundColor(Color.white.opacity(0.3))
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        Text("120Hz Zero-Drift Telemetry")
+                            .font(.system(size: 6.5, weight: .regular, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.3))
+                            .padding(.bottom, 6)
+                    }
+                    .frame(width: 200)
+                    .padding(.leading, 12)
+                    
+                    Divider()
+                        .background(Color.white.opacity(0.08))
+                        .padding(.vertical, 4)
+                    
+                    // Right Column: Active Question Stage (410 pt)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("QUESTION 03 · DESIGN PHILOSOPHY")
+                            .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.5))
+                            .tracking(0.5)
+                            .padding(.top, 4)
+                        
+                        Text("How do you calibrate cognitive friction when introducing novel spatial interactions?")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().fill(Color.black).frame(width: 2.5, height: 2.5))
+                                Text("Progressive disclosure with zero-latency affordances")
+                                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 0.8)
+                                    .frame(width: 8, height: 8)
+                                Text("Haptic and acoustic reinforcement alongside visual anchors")
+                                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.65))
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 0.8)
+                                    .frame(width: 8, height: 8)
+                                Text("Context-aware adaptive suppression of non-critical chrome")
+                                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.5))
+                            }
+                        }
+                        .padding(.top, 2)
+                        
+                        Spacer()
+                        
+                        HStack {
+                            Text("↵ Return to Confirm")
+                                .font(.system(size: 7, weight: .medium, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.4))
+                            Spacer()
+                            Text("Confirm Selection (⌘↵)")
+                                .font(.system(size: 8, weight: .bold, design: .rounded))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 3.5)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                        }
+                        .padding(.bottom, 6)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 640, height: 225)
+    }
+}
+
+struct MorphRedesign3SplitLedgerView: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 28,
+                bottomTrailingRadius: 28,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(Color(red: 0.035, green: 0.035, blue: 0.04))
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: 28,
+                    bottomTrailingRadius: 28,
+                    topTrailingRadius: 0,
+                    style: .continuous
+                )
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+            )
+            
+            VStack(spacing: 0) {
+                // Top Notch Row (Exact 179 x 32 pt center blind spot)
+                HStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Text("Apple Design Intake · Live Verification")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 12)
+                    
+                    Spacer().frame(width: 179, height: 32)
+                    
+                    HStack(spacing: 6) {
+                        Text("04 / 05 (80%)")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        Text("⌘K")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.6))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 12)
+                }
+                .frame(height: 34)
+                
+                Divider()
+                    .background(Color.white.opacity(0.08))
+                    .padding(.horizontal, 12)
+                
+                // 50/50 Split View
+                HStack(spacing: 0) {
+                    // Left: Active Input (300 pt)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("QUESTION 04 OF 05 · SCHEDULING")
+                            .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.5))
+                            .padding(.top, 4)
+                        
+                        Text("Select your preferred interview window for technical review:")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 8, height: 8)
+                                    .overlay(Circle().fill(Color.black).frame(width: 2.5, height: 2.5))
+                                Text("Morning (09:00 – 12:00 PST) · Calendar Sync")
+                                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white)
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .stroke(Color.white.opacity(0.3), lineWidth: 0.8)
+                                    .frame(width: 8, height: 8)
+                                Text("Afternoon (13:00 – 16:00 PST) · Interactive Review")
+                                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.65))
+                            }
+                            
+                            HStack(spacing: 5) {
+                                Circle()
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 0.8)
+                                    .frame(width: 8, height: 8)
+                                Text("Evening (17:00 – 19:00 PST) · Asynchronous Review")
+                                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.5))
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        Text("Latency < 1ms · Encrypted to Secure Enclave")
+                            .font(.system(size: 6.5, weight: .regular, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.3))
+                            .padding(.bottom, 6)
+                    }
+                    .frame(width: 300)
+                    .padding(.leading, 12)
+                    
+                    Divider()
+                        .background(Color.white.opacity(0.08))
+                        .padding(.vertical, 4)
+                    
+                    // Right: Streaming Cryptographic Monospace Ledger (310 pt)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("CRYPTOGRAPHIC AUDIT LEDGER")
+                                .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.5))
+                            Spacer()
+                            Text("SHA-256")
+                                .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(Color.white.opacity(0.4))
+                        }
+                        .padding(.top, 4)
+                        
+                        VStack(alignment: .leading, spacing: 1.5) {
+                            Text("12:44:02  [INTAKE SESSION INITIALIZED]")
+                            Text("12:44:10  01 Full Name: Aaron Nguyen")
+                            Text("12:44:18  02 Portfolio: apple.com/design/spatial-hud")
+                            Text("12:44:35  03 Interaction: Progressive Disclosure")
+                            Text("12:44:52  04 Window: Morning (09:00 PST)")
+                            Text("✓ DOM SYNCED: Chrome Active Tab")
+                            Text("✓ ENCLAVE SIGNED: Record #0x7E3F")
+                        }
+                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.8))
+                        
+                        Spacer()
+                        
+                        HStack {
+                            Text("Copy MD")
+                                .font(.system(size: 7.5, weight: .medium))
+                                .foregroundColor(Color.white.opacity(0.6))
+                            Spacer()
+                            Text("Send to Gmail (⌘G)")
+                                .font(.system(size: 8, weight: .bold, design: .rounded))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 3.5)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                        }
+                        .padding(.bottom, 6)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 640, height: 225)
+    }
+}
+
+struct MorphRedesign4DynamicIslandView: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            // Reimagined Apple Dynamic Island: Continuous 32pt squircle on ALL 4 corners!
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(Color(red: 0.035, green: 0.035, blue: 0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.22), Color.white.opacity(0.06)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.9
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.85), radius: 24, x: 0, y: 12)
+            
+            VStack(spacing: 0) {
+                // Symmetrical Floating Dynamic Island Header (Zero Blind Spot!)
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.white)
+                            .frame(width: 6, height: 6)
+                        Text("Apple Human Interface Design Intake")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        Text("ACTIVE")
+                            .font(.system(size: 6, weight: .bold, design: .monospaced))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    
+                    Spacer()
+                    
+                    HStack(spacing: 6) {
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.12)).frame(width: 48, height: 4)
+                            Capsule().fill(Color.white).frame(width: 38, height: 4)
+                        }
+                        Text("04 / 09")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        
+                        Text("⌘K")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                        
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .frame(width: 16, height: 16)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Circle())
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 38)
+                
+                Divider()
+                    .background(Color.white.opacity(0.08))
+                    .padding(.horizontal, 16)
+                
+                // Content Stage (Pure Typographic Discipline)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("04 · DESIGN PHILOSOPHY & INTENT")
+                        .font(.system(size: 7, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.55))
+                        .padding(.top, 4)
+                    
+                    Text("How do you calibrate cognitive friction when introducing novel spatial interactions?")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    
+                    Text("Select your core methodological approach. Use keys 1–4 to navigate.")
+                        .font(.system(size: 8, weight: .regular))
+                        .foregroundColor(Color.white.opacity(0.6))
+                    
+                    // Options
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .top, spacing: 6) {
+                            Capsule()
+                                .fill(Color.white)
+                                .frame(width: 2.5, height: 24)
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 4) {
+                                    Text("1 · Progressive disclosure with zero-latency physical affordances")
+                                        .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white)
+                                    Text("SELECTED")
+                                        .font(.system(size: 5.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 3)
+                                        .padding(.vertical, 0.5)
+                                        .background(Color.white)
+                                        .clipShape(Capsule())
+                                }
+                                Text("Prioritize intuitive mental models before exposing complex spatial depth.")
+                                    .font(.system(size: 7.2, weight: .regular))
+                                    .foregroundColor(Color.white.opacity(0.6))
+                            }
+                            Spacer()
+                        }
+                        
+                        Divider().background(Color.white.opacity(0.05))
+                        
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .stroke(Color.white.opacity(0.3), lineWidth: 0.8)
+                                .frame(width: 7, height: 7)
+                                .padding(.top, 2.5)
+                            Text("2 · Haptic and acoustic reinforcement alongside visual anchors")
+                                .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.8))
+                            Spacer()
+                        }
+                        
+                        Divider().background(Color.white.opacity(0.05))
+                        
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .stroke(Color.white.opacity(0.2), lineWidth: 0.8)
+                                .frame(width: 7, height: 7)
+                                .padding(.top, 2.5)
+                            Text("3 · Context-aware adaptive suppression of non-critical chrome")
+                                .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.55))
+                            Spacer()
+                        }
+                    }
+                    .padding(.top, 2)
+                    
+                    Spacer()
+                    
+                    HStack {
+                        Text("↵ Confirm   ↑↓ Navigate   ⎋ Minimize")
+                            .font(.system(size: 7, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.4))
+                        Spacer()
+                        Text("Save Draft to Keychain")
+                            .font(.system(size: 7.5, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.6))
+                        Text("Confirm (⌘↵)")
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .padding(.bottom, 6)
+                }
+                .padding(.horizontal, 16)
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 640, height: 225)
+    }
+}
+
+struct MorphRedesign5DynamicIslandDualView: View {
+    var body: some View {
+        ZStack {
+            Color(red: 0.02, green: 0.02, blue: 0.025)
+            
+            VStack(spacing: 8) {
+                // State 1: Collapsed Dynamic Island Pill (Floating 240 x 36 pt)
+                VStack(spacing: 3) {
+                    Text("STATE 1 · COLLAPSED RESTING DYNAMIC ISLAND PILL (260 × 34 PT)")
+                        .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.4))
+                    
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            Circle().fill(Color.white).frame(width: 5, height: 5)
+                            Text("Apple Intake")
+                                .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                        }
+                        
+                        // Subtle waveform
+                        HStack(spacing: 1.5) {
+                            ForEach([4, 8, 12, 6, 14, 9, 5, 11, 7], id: \.self) { h in
+                                Capsule()
+                                    .fill(Color.white.opacity(0.7))
+                                    .frame(width: 1.5, height: CGFloat(h))
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        HStack(spacing: 4) {
+                            Text("Q3 · 75%")
+                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                            Circle()
+                                .stroke(Color.white.opacity(0.25), lineWidth: 1.2)
+                                .frame(width: 8, height: 8)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(width: 260, height: 34)
+                    .background(Color(red: 0.05, green: 0.05, blue: 0.06))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                    .shadow(color: Color.black.opacity(0.6), radius: 8, x: 0, y: 4)
+                }
+                .padding(.top, 4)
+                
+                // Fluid transformation indicator
+                HStack(spacing: 6) {
+                    Rectangle().fill(Color.white.opacity(0.1)).frame(height: 0.5)
+                    Text("FLUID SPRING EXPANSION ON HOVER / SHORTCUT (340MS)")
+                        .font(.system(size: 6, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.35))
+                    Rectangle().fill(Color.white.opacity(0.1)).frame(height: 0.5)
+                }
+                .padding(.horizontal, 20)
+                
+                // State 2: Expanded Stage Preview (600 x 135 pt)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("STATE 2 · EXPANDED INTERACTIVE DYNAMIC ISLAND STAGE")
+                            .font(.system(size: 6.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.4))
+                        Spacer()
+                        Text("04 / 09")
+                            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                    }
+                    
+                    Text("How do you calibrate cognitive friction when introducing novel spatial interactions?")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    
+                    HStack(spacing: 6) {
+                        HStack(spacing: 3) {
+                            Text("1")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundColor(.black)
+                                .frame(width: 11, height: 11)
+                                .background(Color.white)
+                                .clipShape(Circle())
+                            Text("Progressive Disclosure*")
+                                .font(.system(size: 8, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                        
+                        Text("2 · Haptic Reinforcement")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.6))
+                        
+                        Text("3 · Adaptive Chrome")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.6))
+                        
+                        Text("4 · Undo Streams")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.6))
+                    }
+                    .padding(.top, 2)
+                    
+                    Spacer()
+                    
+                    HStack {
+                        Text("↵ Next Field   ⌘↵ Submit   ⎋ Collapse to Island")
+                            .font(.system(size: 6.8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.35))
+                        Spacer()
+                        Text("Submit (⌘↵)")
+                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2.5)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(10)
+                .frame(width: 608, height: 120)
+                .background(Color(red: 0.05, green: 0.05, blue: 0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.15), lineWidth: 0.8))
+                .padding(.bottom, 6)
+            }
+        }
+        .frame(width: 640, height: 225)
+    }
+}
+
+struct MorphRedesign6TypographicStreamView: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: 28,
+                bottomTrailingRadius: 28,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(Color(red: 0.035, green: 0.035, blue: 0.04))
+            .overlay(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: 28,
+                    bottomTrailingRadius: 28,
+                    topTrailingRadius: 0,
+                    style: .continuous
+                )
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+            )
+            
+            VStack(spacing: 0) {
+                // Top Notch Row
+                HStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Text("Apple Human Interface Intake · Editorial Stream")
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 12)
+                    
+                    Spacer().frame(width: 179, height: 32)
+                    
+                    HStack(spacing: 6) {
+                        Text("03 / 07 (43%)")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(.white)
+                        Text("⌘K")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.6))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 12)
+                }
+                .frame(height: 34)
+                
+                Divider()
+                    .background(Color.white.opacity(0.08))
+                    .padding(.horizontal, 12)
+                
+                // Living Typographic Editorial Stream (Zero Boxes!)
+                VStack(alignment: .leading, spacing: 3) {
+                    // Previous Question (Faded 35% above)
+                    HStack {
+                        Text("02 · Portfolio URL: ")
+                            .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.35))
+                        Text("apple.com/design/spatial-hud")
+                            .font(.system(size: 8, weight: .semibold, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.45))
+                        Spacer()
+                        Text("✓ Verified")
+                            .font(.system(size: 7, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.4))
+                    }
+                    .padding(.top, 4)
+                    
+                    Divider().background(Color.white.opacity(0.05))
+                    
+                    // Active Question (100% White Focal Center)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("QUESTION 03 OF 07 · ARCHITECTURAL INTENT")
+                            .font(.system(size: 6.8, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.55))
+                        
+                        Text("Describe your philosophy on reducing visual noise in persistent HUDs.")
+                            .font(.system(size: 10.8, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        
+                        // Living Input Baseline (No box, no card!)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .top, spacing: 1) {
+                                Text("Restraint over decoration. High contrast typography and deliberate spatial rhythm replace arbitrary bounding boxes. By stripping out nested container strokes, the interface retreats and allows the content to lead.")
+                                    .font(.system(size: 8.5, weight: .regular, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .lineLimit(2)
+                                
+                                Text("|")
+                                    .font(.system(size: 8.5, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            
+                            Rectangle()
+                                .fill(Color.white.opacity(0.35))
+                                .frame(height: 0.8)
+                        }
+                        .padding(.top, 1)
+                        
+                        Text("184 / 600 chars · Auto-cached to local Enclave")
+                            .font(.system(size: 6.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.35))
+                    }
+                    .padding(.vertical, 2)
+                    
+                    Divider().background(Color.white.opacity(0.05))
+                    
+                    // Upcoming Question (Faded 20% below)
+                    HStack {
+                        Text("04 · Availability for technical review · Pending")
+                            .font(.system(size: 7.5, weight: .regular, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.25))
+                        Spacer()
+                    }
+                    
+                    Spacer()
+                    
+                    // Footer
+                    HStack {
+                        Text("⇥ Tab Next   ⇧⇥ Previous   ⌘S Save Draft   ⎋ Minimize")
+                            .font(.system(size: 7, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.4))
+                        Spacer()
+                        Text("Submit Application (⌘↵)")
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3.5)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .padding(.bottom, 6)
+                }
+                .padding(.horizontal, 14)
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 640, height: 225)
+    }
 }

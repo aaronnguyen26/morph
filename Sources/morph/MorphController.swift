@@ -10,10 +10,20 @@ public final class MorphController: NSObject {
     public private(set) var panel: NotchPanel!
     public private(set) var hostingView: PassthroughHostingView<MorphIslandView>!
     public private(set) var collapseWorkItem: DispatchWorkItem?
+    public private(set) var hoverIntentWorkItem: DispatchWorkItem?
+    public var hoverDwellDelay: TimeInterval = MorphEnvironment.isTestingEnvironment ? 0.0 : 0.32
     private var shrinkWorkItem: DispatchWorkItem?
+    private var lastMousePoint: NSPoint?
+    private var lastMouseTimestamp: TimeInterval = 0
+    private var lastClickTimestamp: TimeInterval = 0
+    public private(set) var lastUnderlyingInteractionTimestamp: TimeInterval = 0
     private var cancellables = Set<AnyCancellable>()
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var clickMonitor: Any?
+    private var keyMonitor: Any?
+    private var scrollMonitor: Any?
+    private var appSwitchObserver: NSObjectProtocol?
     private var mousePollTimer: Timer?
     
     public init(model: NotchModel? = nil) {
@@ -40,11 +50,17 @@ public final class MorphController: NSObject {
         
         let width = model.currentWidth
         let height = model.currentHeight
-        let x = screen.frame.midX - (width / 2)
-        let y = screen.frame.maxY - height
+        let x = floor(screen.frame.midX - (width / 2))
+        let topBarHeight = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
+        let topClearance: CGFloat = 14.0
+        let y = floor(screen.frame.maxY - topBarHeight - topClearance - height)
         let initialFrame = NSRect(x: x, y: y, width: width, height: height)
         
         self.panel = NotchPanel(contentRect: initialFrame)
+        if !MorphEnvironment.isTestingEnvironment {
+            // Click-through by default while collapsed so background browser tabs are 100% clickable
+            self.panel.ignoresMouseEvents = true
+        }
         
         let islandView = MorphIslandView(
             model: model,
@@ -349,22 +365,78 @@ public final class MorphController: NSObject {
             self.checkMousePosition(NSEvent.mouseLocation)
             return event
         }
+        
+        // 4. Universal platform click & drag monitor: detects mouse down & drag events in ANY underlying application
+        // (code editors, terminal windows, web browsers, design tools, document suites, Finder, etc.)
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [
+            .leftMouseDown, .rightMouseDown, .otherMouseDown,
+            .leftMouseDragged, .rightMouseDragged, .otherMouseDragged
+        ]) { [weak self] _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.registerUnderlyingAppInteraction()
+            }
+        }
+        
+        // 5. Universal platform keystroke monitor: detects active typing in ANY underlying application
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.registerUnderlyingAppInteraction()
+            }
+        }
+        
+        // 6. Universal platform scroll monitor: detects trackpad/mousewheel scrolling in ANY underlying application
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] _ in
+            guard let self = self else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.registerUnderlyingAppInteraction()
+            }
+        }
+        
+        // 7. Universal workspace application activation observer: detects Cmd+Tab or clicking windows
+        appSwitchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                self?.registerUnderlyingAppInteraction()
+            }
+        }
+    }
+    
+    /// Records user interaction with ANY underlying application on macOS, immediately cancelling
+    /// any pending hover dwell expansion and enforcing a cooldown buffer.
+    public func registerUnderlyingAppInteraction() {
+        if !model.isExpanded {
+            hoverIntentWorkItem?.cancel()
+            hoverIntentWorkItem = nil
+            let now = ProcessInfo.processInfo.systemUptime
+            lastUnderlyingInteractionTimestamp = now
+            lastClickTimestamp = now
+        }
     }
     
     public func activeUIRect() -> NSRect {
+        if let panel = self.panel {
+            return panel.frame
+        }
         let screen = targetScreen()
         let w = model.isExpanded ? model.expandedWidth : model.currentWidth
         let h = model.isExpanded ? model.expandedHeight : model.currentHeight
-        let x = screen.frame.midX - (w / 2)
-        let y = screen.frame.maxY - h
+        let x = floor(screen.frame.midX - (w / 2))
+        let topBarHeight = max(screen.safeAreaInsets.top, screen.frame.maxY - screen.visibleFrame.maxY)
+        let topClearance: CGFloat = 14.0
+        let y = floor(screen.frame.maxY - topBarHeight - topClearance - h)
         return NSRect(x: x, y: y, width: w, height: h)
     }
     
     public func isMouseInsideMorphUI(_ mouseLoc: NSPoint) -> Bool {
         let baseRect = activeUIRect()
-        let hPadding: CGFloat = model.isExpanded ? 16 : 14
-        let bottomPadding: CGFloat = model.isExpanded ? 16 : 14
-        let topPadding: CGFloat = 10
+        let hPadding: CGFloat = model.isExpanded ? 16 : (model.isCompactActive ? 14 : 0)
+        let bottomPadding: CGFloat = model.isExpanded ? 16 : (model.isCompactActive ? 12 : 0)
+        let topPadding: CGFloat = model.isExpanded ? 10 : 0
         
         let sensitiveRect = NSRect(
             x: baseRect.origin.x - hPadding,
@@ -377,55 +449,121 @@ public final class MorphController: NSObject {
     
     public func checkMousePosition(_ mouseLoc: NSPoint) {
         let isInside = isMouseInsideMorphUI(mouseLoc)
+        let now = ProcessInfo.processInfo.systemUptime
+        
+        // Calculate cursor velocity to distinguish fast sweeps to browser tabs from intentional hovering
+        var velocity: CGFloat = 0
+        if let lastPt = lastMousePoint, lastMouseTimestamp > 0 {
+            let dt = now - lastMouseTimestamp
+            if dt > 0.001 {
+                let dist = hypot(mouseLoc.x - lastPt.x, mouseLoc.y - lastPt.y)
+                velocity = dist / CGFloat(dt)
+            }
+        }
+        lastMousePoint = mouseLoc
+        lastMouseTimestamp = now
         
         if isInside {
             collapseWorkItem?.cancel()
             collapseWorkItem = nil
+            
             if !model.isExpanded {
-                handleMouseEnter()
+                // If user interacted recently (< 450ms ago) in ANY background application
+                // (clicks, drags, typing, scrolling, app switches), they are actively working
+                // in their underlying workspace — suppress hover expansion!
+                let timeSinceInteraction = max(now - lastUnderlyingInteractionTimestamp, now - lastClickTimestamp)
+                if timeSinceInteraction < 0.45 {
+                    hoverIntentWorkItem?.cancel()
+                    hoverIntentWorkItem = nil
+                    return
+                }
+                
+                // If the user is moving their mouse swiftly across (e.g. clicking tabs, moving to toolbar, selecting text),
+                // do not expand or intercept!
+                if velocity > 140 {
+                    hoverIntentWorkItem?.cancel()
+                    hoverIntentWorkItem = nil
+                    return
+                }
+                
+                if hoverDwellDelay <= 0 {
+                    handleMouseEnter()
+                    return
+                }
+                
+                // Intentional Hover Dwell: require hoverDwellDelay pause/dwell over the island before expanding
+                if hoverIntentWorkItem == nil {
+                    let workItem = DispatchWorkItem { [weak self] in
+                        guard let self = self else { return }
+                        if self.isMouseInsideMorphUI(NSEvent.mouseLocation) {
+                            self.handleMouseEnter()
+                        }
+                        self.hoverIntentWorkItem = nil
+                    }
+                    self.hoverIntentWorkItem = workItem
+                    DispatchQueue.main.asyncAfter(deadline: .now() + hoverDwellDelay, execute: workItem)
+                }
             } else {
                 model.isHovered = true
             }
         } else {
-            if model.isExpanded && !model.isPinned && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen {
+            hoverIntentWorkItem?.cancel()
+            hoverIntentWorkItem = nil
+            
+            if model.isExpanded && !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen {
                 if collapseWorkItem == nil {
                     handleMouseExit()
                 }
             } else if !model.isExpanded {
                 model.isHovered = false
+                if !MorphEnvironment.isTestingEnvironment {
+                    panel?.ignoresMouseEvents = true
+                }
             }
         }
     }
     
     public func handleMouseEnter() {
+        hoverIntentWorkItem?.cancel()
+        hoverIntentWorkItem = nil
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
         shrinkWorkItem?.cancel()
         shrinkWorkItem = nil
         
-        guard !model.isHovered || !model.isExpanded else { return }
-        model.isHovered = true
+        guard !model.isExpanded else {
+            model.isHovered = true
+            return
+        }
         
-        if !model.isExpanded {
-            model.syncExpandedFeatureWithActiveContext()
-            expandPanel()
-            // Fluid Apple Dynamic Island expansion spring: swift organic attack with natural settle
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                self.model.isExpanded = true
-            }
-            if !MorphEnvironment.isTestingEnvironment {
-                panel.makeKey()
-            }
+        model.isHovered = true
+        // Enable mouse interaction when expanded
+        if !MorphEnvironment.isTestingEnvironment {
+            panel?.ignoresMouseEvents = false
+        }
+        
+        model.syncExpandedFeatureWithActiveContext()
+        expandPanel()
+        // Fluid Apple Dynamic Island expansion spring: swift organic attack with natural settle
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            self.model.isExpanded = true
+        }
+        if !MorphEnvironment.isTestingEnvironment {
+            panel.makeKey()
         }
     }
     
     public func handleMouseExit() {
-        guard !model.isPinned && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen else { return }
+        guard !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen else { return }
+        if !MorphEnvironment.isTestingEnvironment && isMouseInsideMorphUI(NSEvent.mouseLocation) {
+            model.isHovered = true
+            return
+        }
         
         collapseWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            guard !self.model.isPinned && !self.model.calendar.isAddingEvent && !self.model.dropShelf.isDraggingOut && !self.model.dropShelf.isHeldOpen else { return }
+            guard !self.model.isPinned && !self.model.isCommandBarPresented && !self.model.calendar.isAddingEvent && !self.model.dropShelf.isDraggingOut && !self.model.dropShelf.isHeldOpen else { return }
             
             // Sensitive verification: Is cursor still outside Morph's UI space?
             let currentMouse = NSEvent.mouseLocation
@@ -472,12 +610,9 @@ public final class MorphController: NSObject {
         let screen = targetScreen()
         let w = model.currentWidth.rounded()
         let h = model.currentHeight.rounded()
-        let x = floor(screen.frame.midX - (w / 2))
-        let y = floor(screen.frame.maxY - h)
-        let targetFrame = NSRect(x: x, y: y, width: w, height: h)
-        if panel.frame != targetFrame || !panel.isVisible {
-            NSLog("[MORPH-FORM] resizePanelToRestingState: w=%.1f, h=%.1f, mode=%@, oldFrame=%@ -> newFrame=%@", w, h, model.compactHUDMode.rawValue, NSStringFromRect(panel.frame), NSStringFromRect(targetFrame))
-            panel.updatePosition(screen: screen, width: w, height: h, animate: false)
+        panel.updatePosition(screen: screen, width: w, height: h, animate: false)
+        if !model.isExpanded && !MorphEnvironment.isTestingEnvironment {
+            panel.ignoresMouseEvents = true
         }
     }
     
@@ -492,6 +627,8 @@ public final class MorphController: NSObject {
     
     /// Tears down observers, monitors, and explicitly orders out the panel
     public func teardown() {
+        hoverIntentWorkItem?.cancel()
+        hoverIntentWorkItem = nil
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
         shrinkWorkItem?.cancel()
@@ -504,6 +641,22 @@ public final class MorphController: NSObject {
         if let lm = localMonitor {
             NSEvent.removeMonitor(lm)
             localMonitor = nil
+        }
+        if let cm = clickMonitor {
+            NSEvent.removeMonitor(cm)
+            clickMonitor = nil
+        }
+        if let km = keyMonitor {
+            NSEvent.removeMonitor(km)
+            keyMonitor = nil
+        }
+        if let sm = scrollMonitor {
+            NSEvent.removeMonitor(sm)
+            scrollMonitor = nil
+        }
+        if let aso = appSwitchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(aso)
+            appSwitchObserver = nil
         }
         mousePollTimer?.invalidate()
         mousePollTimer = nil

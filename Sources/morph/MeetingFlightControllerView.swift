@@ -3,6 +3,7 @@ import SwiftUI
 public struct MeetingFlightControllerView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject var controller: MeetingFlightControllerModel
+    @ObservedObject public var theme: MorphTheme = .shared
     @State private var noteSavedFeedback: Bool = false
     
     public init(model: NotchModel) {
@@ -13,7 +14,7 @@ public struct MeetingFlightControllerView: View {
     @ViewBuilder
     public var body: some View {
         Group {
-            if controller.isMeetingActiveOrDetected {
+            if controller.isMeetingActiveOrDetected || controller.upcomingMeeting != nil {
                 VStack(spacing: 8) {
                     // Header Bar
                     meetingHeaderBar
@@ -44,30 +45,47 @@ public struct MeetingFlightControllerView: View {
             HStack(spacing: 6) {
                 Image(systemName: controller.isInCall ? controller.activeService.iconName : "video.badge.waveform.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(controller.isInCall ? controller.activeService.badgeColor : .cyan)
+                    .foregroundColor(theme.textPrimary)
                 
                 Text("Meeting Cockpit")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                 
                 if controller.isInCall {
                     HStack(spacing: 4) {
                         Text(controller.activeService.rawValue.uppercased())
                             .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                            .foregroundColor(controller.activeService.badgeColor)
+                            .foregroundColor(theme.badgeText)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.10))
+                    .background(theme.badgeBackground)
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                    )
                 } else if controller.isMeetingDetected {
                     Text("DETECTED")
                         .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(theme.badgeText)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.cyan.opacity(0.15))
+                        .background(theme.badgeBackground)
                         .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(theme.activeBorder, lineWidth: 0.5)
+                        )
+                } else if controller.upcomingMeeting != nil {
+                    Text("UPCOMING")
+                        .font(.system(size: 8.5, weight: .heavy, design: .rounded))
+                        .foregroundColor(theme.badgeText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(theme.badgeBackground)
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
             }
             
@@ -80,11 +98,14 @@ public struct MeetingFlightControllerView: View {
                     Text(appName)
                         .font(.system(size: 9.5, weight: .semibold))
                 }
-                .foregroundColor(Color.white.opacity(0.7))
+                .foregroundColor(theme.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background(Color.white.opacity(0.08))
+                .background(theme.cardBackground)
                 .clipShape(Capsule())
+                .overlay(
+                    Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                )
             }
         }
         .padding(.horizontal, 4)
@@ -99,62 +120,84 @@ public struct MeetingFlightControllerView: View {
                     HStack(spacing: 5) {
                         Image(systemName: controller.activeService.iconName)
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(controller.activeService.badgeColor)
+                            .foregroundColor(theme.textPrimary)
                         
                         Text(controller.activeCallTitle ?? "Active Meeting")
                             .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.textPrimary)
                             .lineLimit(1)
                     }
                     
                     HStack(spacing: 6) {
                         Text(controller.formattedCallDuration)
                             .font(.system(size: 18, weight: .heavy, design: .monospaced))
-                            .foregroundColor(.white)
+                            .foregroundColor(theme.textPrimary)
                         
                         Text("in call")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.5))
+                            .foregroundColor(theme.textTertiary)
                     }
                 }
                 
                 Spacer(minLength: 0)
                 
                 // Call Management Controls
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     // Mute Toggle
                     Button(action: {
                         controller.toggleMute()
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3.5) {
                             Image(systemName: controller.isMuted ? "mic.slash.fill" : "mic.fill")
-                                .font(.system(size: 9.5, weight: .bold))
+                                .font(.system(size: 9, weight: .bold))
                             Text(controller.isMuted ? "Unmute" : "Mute")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: 9.5, weight: .bold))
                         }
-                        .foregroundColor(controller.isMuted ? .white : .black)
-                        .padding(.horizontal, 9)
+                        .foregroundColor(controller.isMuted ? .white : theme.activePillText)
+                        .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(controller.isMuted ? Color.red.opacity(0.85) : Color.white)
+                        .background(controller.isMuted ? Color.red.opacity(0.85) : theme.activePillBackground)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .help("Mute / Unmute Microphone")
                     
+                    // Camera Toggle
+                    Button(action: {
+                        controller.toggleCamera()
+                    }) {
+                        HStack(spacing: 3.5) {
+                            Image(systemName: controller.engine.isCameraOff ? "video.slash.fill" : "video.fill")
+                                .font(.system(size: 9, weight: .bold))
+                            Text(controller.engine.isCameraOff ? "Cam Off" : "Camera")
+                                .font(.system(size: 9.5, weight: .semibold))
+                        }
+                        .foregroundColor(theme.textPrimary)
+                        .padding(.horizontal, 7.5)
+                        .padding(.vertical, 5)
+                        .background(controller.engine.isCameraOff ? theme.cardBackgroundElevated : theme.cardBackground)
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help(controller.engine.isCameraOff ? "Turn Camera On" : "Turn Camera Off")
+                    
                     // Show In-App Meeting Window Stage
                     Button(action: {
                         controller.engine.showMeetingWindow(scratchpadModel: model.scratchpad)
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3.5) {
                             Image(systemName: "macwindow")
                                 .font(.system(size: 9))
                             Text("Stage")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 9.5, weight: .semibold))
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
+                        .foregroundColor(theme.textPrimary)
+                        .padding(.horizontal, 7.5)
                         .padding(.vertical, 5)
-                        .background(Color.white.opacity(0.12))
+                        .background(theme.cardBackgroundElevated)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -164,14 +207,14 @@ public struct MeetingFlightControllerView: View {
                     Button(action: {
                         controller.endCall()
                     }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 3.5) {
                             Image(systemName: "phone.down.fill")
                                 .font(.system(size: 9, weight: .bold))
                             Text("End Call")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 9.5, weight: .semibold))
                         }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(Color.red.opacity(0.85))
                         .clipShape(Capsule())
@@ -184,11 +227,11 @@ public struct MeetingFlightControllerView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(theme.cardBackgroundSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
             
             // Right Pane: In-Meeting Scratchpad Notes
@@ -196,15 +239,19 @@ public struct MeetingFlightControllerView: View {
                 HStack {
                     Image(systemName: "note.text")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                     Text("Take Notes in Scratchpad")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                     Spacer()
                     if noteSavedFeedback {
                         Text("Appended!")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.green)
+                            .foregroundColor(theme.badgeText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(theme.badgeBackground)
+                            .clipShape(Capsule())
                             .transition(.opacity)
                     }
                 }
@@ -212,28 +259,22 @@ public struct MeetingFlightControllerView: View {
                 TextField("Key decisions, takeaways, action items...", text: $controller.quickNotes)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .padding(8)
-                    .background(Color.black.opacity(0.5))
+                    .background(theme.surfaceInset)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                            .stroke(theme.hairlineBorder, lineWidth: 0.5)
                     )
+                    .onSubmit {
+                        appendNoteWithFeedback()
+                    }
                 
                 HStack {
                     Spacer()
                     Button(action: {
-                        controller.appendNoteToScratchpad(model.scratchpad)
-                        withAnimation {
-                            noteSavedFeedback = true
-                        }
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 1_500_000_000)
-                            withAnimation {
-                                noteSavedFeedback = false
-                            }
-                        }
+                        appendNoteWithFeedback()
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "plus.bubble.fill")
@@ -241,10 +282,10 @@ public struct MeetingFlightControllerView: View {
                             Text("Append to Notes")
                                 .font(.system(size: 9.5, weight: .bold))
                         }
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.activePillText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4.5)
-                        .background(Color.white)
+                        .background(theme.activePillBackground)
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -255,14 +296,30 @@ public struct MeetingFlightControllerView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(theme.cardBackgroundSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
         }
         .frame(maxHeight: 124)
+    }
+    
+    private func appendNoteWithFeedback() {
+        let trimmed = controller.quickNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        controller.appendNoteToScratchpad(model.scratchpad)
+        MorphHaptics.generic()
+        withAnimation {
+            noteSavedFeedback = true
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            withAnimation {
+                noteSavedFeedback = false
+            }
+        }
     }
     
     // MARK: - 2. Pre-Meeting Readiness View
@@ -281,29 +338,32 @@ public struct MeetingFlightControllerView: View {
                 HStack(spacing: 6) {
                     Text(minutesUntil == 0 ? "Starting Now" : "Meeting in \(minutesUntil)m")
                         .font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundColor(.black)
+                        .foregroundColor(theme.activePillText)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2.5)
-                        .background(Color.white)
+                        .background(theme.activePillBackground)
                         .clipShape(Capsule())
                     
                     HStack(spacing: 3.5) {
                         Image(systemName: detectedService.iconName)
                             .font(.system(size: 8.5, weight: .bold))
-                            .foregroundColor(detectedService.badgeColor)
+                            .foregroundColor(theme.textPrimary)
                         Text(detectedService.rawValue)
                             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                            .foregroundColor(Color.white.opacity(0.85))
+                            .foregroundColor(theme.textSecondary)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.white.opacity(0.08))
+                    .background(theme.cardBackground)
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                    )
                 }
                 
                 Text(event.title)
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
                 
                 HStack(spacing: 6) {
@@ -312,17 +372,17 @@ public struct MeetingFlightControllerView: View {
                     Text(formattedTimeRange(event: event))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                 }
-                .foregroundColor(Color.white.opacity(0.6))
+                .foregroundColor(theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(theme.cardBackgroundSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
             
             // 1-Click Launch Button Card
@@ -334,22 +394,16 @@ public struct MeetingFlightControllerView: View {
                     HStack(spacing: 5) {
                         Image(systemName: detectedService.iconName)
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.black)
+                            .foregroundColor(theme.activePillText)
                         Text("Take Call")
                             .font(.system(size: 12.5, weight: .heavy, design: .rounded))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(theme.activePillText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.white, Color(white: 0.9)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .background(theme.activePillBackground)
                     .clipShape(Capsule())
-                    .shadow(color: Color.white.opacity(0.25), radius: 6)
+                    .shadow(color: theme.windowShadow.opacity(0.25), radius: 6)
                 }
                 .buttonStyle(.plain)
                 .help("Take call directly in Morph with Zoom/Meet stage")
@@ -364,7 +418,7 @@ public struct MeetingFlightControllerView: View {
                         Text("Open in Browser")
                             .font(.system(size: 9, weight: .medium))
                     }
-                    .foregroundColor(Color.white.opacity(0.6))
+                    .foregroundColor(theme.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -372,11 +426,11 @@ public struct MeetingFlightControllerView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.04))
+                    .fill(theme.cardBackgroundSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
         }
         .frame(maxHeight: 124)
@@ -390,35 +444,38 @@ public struct MeetingFlightControllerView: View {
                 HStack(spacing: 6) {
                     Image(systemName: controller.activeService.iconName)
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(controller.activeService.badgeColor)
+                        .foregroundColor(theme.textPrimary)
                     
                     Text("\(controller.activeService.rawValue) Detected")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                     
                     Text("READY TO JOIN")
                         .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(theme.badgeText)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.cyan.opacity(0.15))
+                        .background(theme.badgeBackground)
                         .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(theme.activeBorder, lineWidth: 0.5)
+                        )
                 }
                 
                 Text(controller.activeCallTitle ?? (controller.activeService == .googleMeet ? "Google Meet Call" : "Zoom Meeting"))
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.7))
+                    .foregroundColor(theme.textSecondary)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(theme.cardBackgroundSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
             
             // Right Pane: 1-Click Join Meet / Zoom Button
@@ -429,22 +486,16 @@ public struct MeetingFlightControllerView: View {
                     HStack(spacing: 5) {
                         Image(systemName: controller.activeService.iconName)
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.black)
+                            .foregroundColor(theme.activePillText)
                         Text(controller.activeService == .googleMeet ? "Join Meet" : "Join Zoom")
                             .font(.system(size: 12.5, weight: .heavy, design: .rounded))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(theme.activePillText)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.white, Color(white: 0.9)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .background(theme.activePillBackground)
                     .clipShape(Capsule())
-                    .shadow(color: Color.white.opacity(0.25), radius: 6)
+                    .shadow(color: theme.windowShadow.opacity(0.25), radius: 6)
                 }
                 .buttonStyle(.plain)
                 .help("Automatically join \(controller.activeService.rawValue) call")
@@ -453,11 +504,11 @@ public struct MeetingFlightControllerView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.04))
+                    .fill(theme.cardBackgroundSubtle)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
             )
         }
         .frame(maxHeight: 124)
@@ -490,17 +541,17 @@ public struct CompactMeetingWingLeft: View {
                     if controller.isInCall {
                         Image(systemName: controller.activeService.iconName)
                             .font(.system(size: 9.5, weight: .bold))
-                            .foregroundColor(controller.activeService.badgeColor)
+                            .foregroundColor(.white)
                         Text(controller.formattedCallDuration)
                             .font(.system(size: 10.5, weight: .heavy, design: .monospaced))
                             .foregroundColor(.white)
                     } else if controller.isMeetingDetected {
                         Image(systemName: controller.activeService.iconName)
                             .font(.system(size: 9.5, weight: .bold))
-                            .foregroundColor(controller.activeService.badgeColor)
+                            .foregroundColor(.white)
                         Text(controller.activeService == .googleMeet ? "Meet" : "Zoom")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundColor(.cyan)
+                            .foregroundColor(Color.white.opacity(0.85))
                     }
                 }
                 .padding(.leading, 12)

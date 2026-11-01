@@ -107,6 +107,12 @@ public final class DropShelfModel: ObservableObject {
         stagedItems.count
     }
     
+    public var formattedTotalSize: String {
+        let totalBytes = stagedItems.reduce(Int64(0)) { $0 + max(0, $1.fileSize) }
+        guard totalBytes > 0 else { return "0 B" }
+        return ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
+    }
+    
     public var isHoldModeActive: Bool {
         holdShelfOnDrop || holdFilesAfterDrag
     }
@@ -207,8 +213,15 @@ public final class DropShelfModel: ObservableObject {
     }
     
     public func revealInFinder(item: DropShelfItem) {
-        NSWorkspace.shared.activateFileViewerSelecting([item.url])
         lastActionMessage = "Revealed in Finder: \(item.name)"
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([item.url])
+    }
+    
+    public func openItem(_ item: DropShelfItem) {
+        lastActionMessage = "Opened: \(item.name)"
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSWorkspace.shared.open(item.url)
     }
     
     public func copyFilePath(item: DropShelfItem) {

@@ -1,8 +1,80 @@
 import SwiftUI
+import AppKit
 
-/// Focus Timer V4: Ultra-Minimal Extendable Zen Dial (Zero Buttons)
+/// Captures two-finger vertical trackpad scroll wheel events over the Zen Dial
+/// without obstructing SwiftUI tap or rotary drag gestures.
+struct DialScrollWheelCatcher: NSViewRepresentable {
+    var onScrollStep: (Int) -> Void
+    
+    func makeNSView(context: Context) -> ScrollWheelCatcherNSView {
+        let view = ScrollWheelCatcherNSView()
+        view.onScrollStep = onScrollStep
+        return view
+    }
+    
+    func updateNSView(_ nsView: ScrollWheelCatcherNSView, context: Context) {
+        nsView.onScrollStep = onScrollStep
+    }
+    
+    final class ScrollWheelCatcherNSView: NSView {
+        var onScrollStep: ((Int) -> Void)?
+        private var accumulatedDeltaY: CGFloat = 0
+        private var localMonitor: Any?
+        
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            return nil
+        }
+        
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor = localMonitor {
+                NSEvent.removeMonitor(monitor)
+                localMonitor = nil
+            }
+            guard window != nil else { return }
+            localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+                guard let self = self, let win = self.window, event.window == win else {
+                    return event
+                }
+                let locInView = self.convert(event.locationInWindow, from: nil)
+                if self.bounds.contains(locInView) {
+                    self.scrollWheel(with: event)
+                }
+                return event
+            }
+        }
+        
+        override func removeFromSuperview() {
+            if let monitor = localMonitor {
+                NSEvent.removeMonitor(monitor)
+                localMonitor = nil
+            }
+            super.removeFromSuperview()
+        }
+        
+        override func scrollWheel(with event: NSEvent) {
+            let delta = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY
+            guard abs(delta) > 0.05 else { return }
+            
+            if event.hasPreciseScrollingDeltas {
+                accumulatedDeltaY += delta
+                let threshold: CGFloat = 12.0
+                if abs(accumulatedDeltaY) >= threshold {
+                    let step = accumulatedDeltaY > 0 ? 5 : -5
+                    accumulatedDeltaY = 0
+                    onScrollStep?(step)
+                }
+            } else {
+                let step = delta > 0 ? 5 : -5
+                onScrollStep?(step)
+            }
+        }
+    }
+}
+
+/// Focus Timer V4: Ultra-Minimal Extendable Zen Dial
 /// Matches morph_v4_focus_timer.png with Apple-grade continuous direct ring manipulation,
-/// integrated focus audio vibes, and precise cycle/momentum telemetry.
+/// two-finger scroll wheel adjustment, quick presets, and authentic cycle/momentum telemetry.
 public struct PomodoroView: View {
     @ObservedObject public var pomodoro: PomodoroModel
     @ObservedObject public var theme: MorphTheme = .shared
@@ -59,9 +131,16 @@ public struct PomodoroView: View {
         return pomodoro.formattedTime
     }
     
+    private var currentElapsedMins: Int {
+        guard pomodoro.mode == .work, pomodoro.totalDuration > pomodoro.timeRemaining else {
+            return 0
+        }
+        return max(0, Int((pomodoro.totalDuration - pomodoro.timeRemaining) / 60.0))
+    }
+    
     private var momentumText: String {
         let completedMins = pomodoro.completedSessionsCount * 25
-        let totalMins = max(75, completedMins) // 1h 15m baseline
+        let totalMins = max(SupabaseService.shared.currentUser.totalFocusMinutes, completedMins) + currentElapsedMins
         let h = totalMins / 60
         let m = totalMins % 60
         return "\(h)h \(m)m"
@@ -69,47 +148,67 @@ public struct PomodoroView: View {
     
     private var cycleBlocksCount: Int {
         let raw = pomodoro.completedSessionsCount % 4
-        return raw == 0 && pomodoro.completedSessionsCount > 0 ? 4 : max(3, raw)
+        return (raw == 0 && pomodoro.completedSessionsCount > 0) ? 4 : raw
+    }
+    
+    private var modePillLabel: String {
+        switch pomodoro.mode {
+        case .work: return "FOCUS"
+        case .shortBreak: return "BREAK"
+        case .longBreak: return "LONG"
+        }
+    }
+    
+    private var nextModeInCycle: PomodoroMode {
+        switch pomodoro.mode {
+        case .work: return .shortBreak
+        case .shortBreak: return .longBreak
+        case .longBreak: return .work
+        }
     }
     
     public var body: some View {
         HStack(alignment: .center, spacing: 20) {
-            // MARK: - Left Flank (Session Cycle Progress)
-            leftTelemetryFlank
-                .frame(width: 140, alignment: .leading)
+            // MARK: - Left Flank (Session Cycle Progress & Presets)
+            leftCycleFlank
+                .frame(width: 145, alignment: .leading)
             
             // MARK: - Centerpiece Zen Dial (Direct Ring Manipulation)
             centerZenDial
                 .frame(maxWidth: .infinity, alignment: .center)
             
             // MARK: - Right Flank (Momentum & Controls)
-            rightTelemetryFlank
-                .frame(width: 140, alignment: .trailing)
+            rightMomentumFlank
+                .frame(width: 145, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    // MARK: - Left Flank: Cycle Telemetry
-    private var leftTelemetryFlank: some View {
-        VStack(alignment: .leading, spacing: 4) {
+    // MARK: - Left Flank: Cycle Telemetry & Quick Presets
+    private var leftCycleFlank: some View {
+        VStack(alignment: .leading, spacing: 4.5) {
             Text("CYCLE")
                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.textTertiary)
                 .tracking(1.2)
             
-            // 4-Block Session Dots
-            HStack(spacing: 4.5) {
-                ForEach(0..<4) { index in
+            // 4-Block Session Dots (Highlights active in-progress block when running)
+            HStack(spacing: 5) {
+                ForEach(0..<4, id: \.self) { index in
                     let isFilled = index < cycleBlocksCount
+                    let isActiveBlock = pomodoro.isRunning && pomodoro.mode == .work && index == (pomodoro.completedSessionsCount % 4)
                     Circle()
-                        .fill(isFilled ? theme.textPrimary : Color.clear)
+                        .fill(isFilled ? theme.textPrimary : (isActiveBlock ? theme.textSecondary : Color.clear))
                         .overlay(
                             Circle()
-                                .stroke(isFilled ? Color.clear : theme.textTertiary.opacity(0.35), lineWidth: 1)
+                                .stroke(
+                                    isFilled || isActiveBlock ? theme.textPrimary : theme.textTertiary.opacity(0.4),
+                                    lineWidth: isActiveBlock ? 1.25 : 1
+                                )
                         )
-                        .frame(width: 5.5, height: 5.5)
+                        .frame(width: 6, height: 6)
                 }
             }
             .padding(.vertical, 1)
@@ -118,9 +217,32 @@ public struct PomodoroView: View {
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(theme.textPrimary)
             
-            Text("Auto-Break: \(Int((pomodoro.preferredDurations[.shortBreak] ?? PomodoroMode.shortBreak.defaultDuration) / 60))m")
-                .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.textTertiary)
+            // Quick Duration Presets
+            HStack(spacing: 3.5) {
+                ForEach(pomodoro.currentPresets, id: \.self) { preset in
+                    let isSelected = pomodoro.currentMinutes == preset && !pomodoro.isRunning
+                    Button(action: {
+                        MorphHaptics.alignment()
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                            pomodoro.setCustomDuration(minutes: preset, saveAsPreference: true)
+                        }
+                    }) {
+                        Text("\(preset)m")
+                            .font(.system(size: 8, weight: isSelected ? .bold : .semibold, design: .monospaced))
+                            .foregroundColor(isSelected ? theme.activePillText : theme.textSecondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(isSelected ? theme.activePillBackground : theme.cardBackground)
+                            .clipShape(Capsule())
+                            .overlay(
+                                Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Set \(preset) minute duration")
+                }
+            }
+            .padding(.top, 2)
         }
     }
     
@@ -131,7 +253,7 @@ public struct PomodoroView: View {
                 // Background Ring Track
                 Circle()
                     .stroke(
-                        theme.isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08),
+                        theme.dialTrack,
                         lineWidth: strokeWidth
                     )
                     .frame(width: dialRadius * 2, height: dialRadius * 2)
@@ -140,7 +262,7 @@ public struct PomodoroView: View {
                 Circle()
                     .trim(from: 0.0, to: CGFloat(arcFraction))
                     .stroke(
-                        theme.textPrimary,
+                        theme.accentColor(for: pomodoro.mode),
                         style: StrokeStyle(lineWidth: strokeWidth + 0.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
@@ -159,6 +281,15 @@ public struct PomodoroView: View {
                     )
                     .offset(x: needleThumbOffset.x, y: needleThumbOffset.y)
                     .animation(isDraggingDial ? nil : .spring(response: 0.35, dampingFraction: 0.82), value: arcFraction)
+                
+                // Two-Finger Scroll Wheel Catcher overlaid quietly on the Zen Dial
+                DialScrollWheelCatcher { delta in
+                    MorphHaptics.alignment()
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                        pomodoro.adjustTime(deltaMinutes: delta > 0 ? 5 : -5)
+                    }
+                }
+                .frame(width: 114, height: 114)
                 
                 // Interactive Dragging Ring (Expanded hit area)
                 Circle()
@@ -179,18 +310,17 @@ public struct PomodoroView: View {
                 
                 // Central Telemetry & Tap-to-Action Core
                 VStack(spacing: 1.5) {
-                    // Mode Pill (Tap to toggle Focus / Break)
+                    // Mode Pill (Tap to cycle Focus -> Short Break -> Long Break -> Focus)
                     Button(action: {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                            let nextMode: PomodoroMode = (pomodoro.mode == .work ? .shortBreak : .work)
-                            pomodoro.switchMode(nextMode)
+                            pomodoro.switchMode(nextModeInCycle)
                         }
                     }) {
                         HStack(spacing: 3) {
-                            Text(pomodoro.mode == .work ? "FOCUS" : "BREAK")
+                            Text(modePillLabel)
                                 .font(.system(size: 8, weight: .bold, design: .rounded))
                             Circle()
-                                .fill(theme.textPrimary)
+                                .fill(theme.accentColor(for: pomodoro.mode))
                                 .frame(width: 3.5, height: 3.5)
                         }
                         .foregroundColor(theme.textPrimary)
@@ -203,7 +333,7 @@ public struct PomodoroView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .help("Click to toggle Focus / Break mode")
+                    .help("Click to cycle Focus / Short Break / Long Break")
                     
                     // Large Bold Tabular Digits
                     Text(displayedTime)
@@ -233,11 +363,11 @@ public struct PomodoroView: View {
             .frame(width: 114, height: 114)
             
             // Subtitle matching design
-            Text("Drag ring to extend (5m – 120m)")
+            Text("Drag ring or scroll to adjust")
                 .font(.system(size: 7.5, weight: .medium, design: .monospaced))
                 .foregroundColor(theme.textTertiary)
         }
-        .help("Tap center to Start/Pause • Drag ring to adjust time")
+        .help("Tap center to Start/Pause • Drag ring or scroll to adjust time")
     }
     
     // MARK: - Rotary Drag Math
@@ -261,6 +391,10 @@ public struct PomodoroView: View {
             snappedMinutes = max(5, ((rawMinutes + 2) / 5) * 5)
         }
         
+        if snappedMinutes != pomodoro.currentMinutes {
+            MorphHaptics.alignment()
+        }
+        
         if dragMinutes != snappedMinutes {
             dragMinutes = snappedMinutes
             pomodoro.setCustomDuration(minutes: snappedMinutes, saveAsPreference: false)
@@ -268,8 +402,8 @@ public struct PomodoroView: View {
     }
     
     // MARK: - Right Flank: Momentum & Controls
-    private var rightTelemetryFlank: some View {
-        VStack(alignment: .trailing, spacing: 4) {
+    private var rightMomentumFlank: some View {
+        VStack(alignment: .trailing, spacing: 4.5) {
             Text("MOMENTUM")
                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.textTertiary)
@@ -279,62 +413,36 @@ public struct PomodoroView: View {
                 .font(.system(size: 15, weight: .bold, design: .monospaced))
                 .foregroundColor(theme.textPrimary)
             
-            Text("Target: 2h 00m")
-                .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.textTertiary)
-            
-            HStack(spacing: 4) {
-                // Integrated YouTube Music Focus Beats Launcher (when model available)
-                if let model = model {
-                    Button(action: {
-                        if model.media.isPlaying {
-                            model.media.pause()
-                        } else {
-                            model.media.playQuickVibe("focus")
-                        }
-                    }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: model.media.isPlaying ? "pause.fill" : "headphones")
-                                .font(.system(size: 7, weight: .bold))
-                            Text(model.media.isPlaying ? "Music" : "Beats")
-                                .font(.system(size: 8, weight: .medium, design: .rounded))
-                        }
-                        .foregroundColor(theme.textPrimary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(theme.isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05))
-                        .clipShape(Capsule())
-                        .overlay(
-                            Capsule().stroke(theme.isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.12), lineWidth: 0.5)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help(model.media.isPlaying ? "Pause Focus Beats" : "Play YouTube Music Focus Beats")
-                }
-                
-                // Reset Button
+            HStack(spacing: 6) {
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         pomodoro.reset()
                     }
                 }) {
-                    HStack(spacing: 3.5) {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 7.5, weight: .bold))
-                        Text("Reset (⇧⌘R)")
-                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                    }
-                    .foregroundColor(theme.textSecondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(theme.isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05))
-                    .clipShape(Capsule())
-                    .overlay(
-                        Capsule().stroke(theme.isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.12), lineWidth: 0.5)
-                    )
+                    Text("Reset (⇧⌘R)")
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textTertiary)
+                        .underline(true, color: theme.textTertiary.opacity(0.4))
                 }
                 .buttonStyle(.plain)
                 .help("Reset Session (⇧⌘R)")
+                
+                Text("•")
+                    .font(.system(size: 8))
+                    .foregroundColor(theme.textTertiary.opacity(0.4))
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        pomodoro.switchMode(nextModeInCycle)
+                    }
+                }) {
+                    Text("Skip (⇧⌘S)")
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textTertiary)
+                        .underline(true, color: theme.textTertiary.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .help("Skip Session / Break (⇧⌘S)")
             }
         }
     }

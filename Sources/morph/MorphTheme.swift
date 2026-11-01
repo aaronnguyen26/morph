@@ -1,5 +1,39 @@
 import SwiftUI
+import AppKit
 import Combine
+
+/// Tactile trackpad haptic feedback engine for macOS Force Touch trackpads.
+/// Automatically suppresses hardware actuator calls when running inside the test suite
+/// while recording invocation counts for deterministic verification.
+@MainActor
+public enum MorphHaptics {
+    public static private(set) var lastPerformedFeedbackCount: Int = 0
+    
+    public static func resetTestCounter() {
+        lastPerformedFeedbackCount = 0
+    }
+    
+    /// Subtle detent click for rotary dial increments, scrubbers, and alignment snaps.
+    public static func alignment() {
+        lastPerformedFeedbackCount += 1
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+    }
+    
+    /// Distinct tactile step for tab transitions, mode changes, and pin toggles.
+    public static func levelChange() {
+        lastPerformedFeedbackCount += 1
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+    }
+    
+    /// Crisp confirmation tap for completed actions, clipboard copies, and mascot impulses.
+    public static func generic() {
+        lastPerformedFeedbackCount += 1
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+    }
+}
 
 /// Supported appearance modes for Morph.
 public enum MorphThemeMode: String, CaseIterable, Identifiable {
@@ -52,6 +86,7 @@ public final class MorphTheme: ObservableObject {
         } else {
             mode = .dark
         }
+        MorphHaptics.levelChange()
     }
     
     public func setMode(_ newMode: MorphThemeMode) {
@@ -209,5 +244,47 @@ public final class MorphTheme: ObservableObject {
     public var windowShadow: Color {
         isDark ? Color.black.opacity(0.65)
                : Color.black.opacity(0.16)
+    }
+    
+    /// High-contrast monochromatic border for active drag-and-drop targets
+    public var dropTargetBorder: Color {
+        isDark ? Color.white.opacity(0.68)
+               : Color.black.opacity(0.45)
+    }
+    
+    /// Subtle monochromatic ambient bloom for active drag-and-drop targets
+    public var dropTargetGlow: Color {
+        isDark ? Color.white.opacity(0.22)
+               : Color.black.opacity(0.12)
+    }
+    
+    /// Monochromatic badge surface for status pills and extension tags
+    public var badgeBackground: Color {
+        isDark ? Color.white.opacity(0.14)
+               : Color.black.opacity(0.08)
+    }
+    
+    /// High-legibility monochromatic badge label color
+    public var badgeText: Color {
+        isDark ? Color.white.opacity(0.92)
+               : Color(red: 0.07, green: 0.07, blue: 0.09).opacity(0.92)
+    }
+    
+    /// Interactive hover highlight surface
+    public var elevatedHoverBackground: Color {
+        isDark ? Color.white.opacity(0.18)
+               : Color.black.opacity(0.12)
+    }
+    
+    /// Crisp focus ring border for active text inputs and command palettes
+    public var focusRingBorder: Color {
+        isDark ? Color.white.opacity(0.42)
+               : Color.black.opacity(0.36)
+    }
+    
+    /// Recessed well background for text editors and search inputs
+    public var surfaceInset: Color {
+        isDark ? Color.black.opacity(0.38)
+               : Color.black.opacity(0.04)
     }
 }

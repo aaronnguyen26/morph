@@ -131,6 +131,7 @@ public final class PomodoroModel: ObservableObject {
         guard !isRunning else { return }
         isRunning = true
         isCompleted = false
+        MorphHaptics.levelChange()
         
         timerCancellable = Timer.publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
@@ -143,9 +144,15 @@ public final class PomodoroModel: ObservableObject {
     }
     
     public func pause() {
+        let wasRunning = isRunning
         isRunning = false
         timerCancellable?.cancel()
         timerCancellable = nil
+        if wasRunning {
+            MorphHaptics.levelChange()
+        } else {
+            MorphHaptics.levelChange()
+        }
         saveState()
     }
     
@@ -170,6 +177,7 @@ public final class PomodoroModel: ObservableObject {
         totalDuration = preferredDuration(for: newMode)
         timeRemaining = totalDuration
         isCompleted = false
+        MorphHaptics.levelChange()
         saveState()
     }
     
@@ -212,6 +220,7 @@ public final class PomodoroModel: ObservableObject {
             if mode == .work {
                 completedSessionsCount += 1
             }
+            MorphHaptics.generic()
             saveState()
         }
     }

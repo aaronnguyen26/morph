@@ -180,6 +180,7 @@ public struct ProfileView: View {
                 
                 // Sign Out Button
                 Button(action: {
+                    MorphHaptics.levelChange()
                     model.signOutProfile()
                 }) {
                     HStack(spacing: 4) {
@@ -188,14 +189,14 @@ public struct ProfileView: View {
                         Text("Sign Out")
                             .font(.system(size: 10, weight: .semibold))
                     }
-                    .foregroundColor(.red.opacity(0.9))
+                    .foregroundColor(model.theme.textSecondary)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(Color.red.opacity(model.theme.isDark ? 0.12 : 0.08))
+                    .background(model.theme.cardBackgroundSubtle)
                     .clipShape(Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(Color.red.opacity(0.24), lineWidth: 0.5)
+                            .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                     )
                 }
                 .buttonStyle(.plain)
@@ -203,6 +204,7 @@ public struct ProfileView: View {
                 
                 // Manual Sync Button
                 Button(action: {
+                    MorphHaptics.generic()
                     Task {
                         await supabase.fetchProfile()
                     }
@@ -226,13 +228,13 @@ public struct ProfileView: View {
             
             // Clean Info Cards Row
             HStack(spacing: 8) {
-                // Identity Card
+                // Focus Telemetry Card
                 VStack(spacing: 2) {
-                    Text("INITIALS")
+                    Text("FOCUS TIME")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .foregroundColor(model.theme.textTertiary)
-                    Text(supabase.currentUser.displayInitials)
-                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    Text(formattedTotalFocusTime)
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(model.theme.textPrimary)
                 }
                 .frame(maxWidth: .infinity)
@@ -244,13 +246,13 @@ public struct ProfileView: View {
                         .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                 )
                 
-                // Status Card
+                // Streak Card
                 VStack(spacing: 2) {
-                    Text("STATUS")
+                    Text("STREAK")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
                         .foregroundColor(model.theme.textTertiary)
-                    Text(supabase.currentUser.currentStatus)
-                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    Text("\(supabase.currentUser.streakDays) Days")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(model.theme.textPrimary)
                         .lineLimit(1)
                 }
@@ -263,11 +265,11 @@ public struct ProfileView: View {
                         .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
                 )
                 
-                // Google Calendar SSO Card (Zero status dots)
+                // Google Calendar SSO Card (Zero status dots, strictly monochromatic)
                 VStack(spacing: 2) {
                     Text("CALENDAR SSO")
                         .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(model.theme.isDark ? .cyan.opacity(0.8) : Color.blue.opacity(0.85))
+                        .foregroundColor(model.theme.textSecondary)
                     HStack(spacing: 3) {
                         Text(model.calendar.isSignedIn ? "Synced" : "Pending")
                             .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -280,7 +282,7 @@ public struct ProfileView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(model.theme.isDark ? Color.cyan.opacity(0.18) : Color.blue.opacity(0.25), lineWidth: 0.5)
+                        .stroke(model.calendar.isSignedIn ? model.theme.activeBorder : model.theme.hairlineBorder, lineWidth: 0.5)
                 )
                 
                 // Cloud Database Card
@@ -357,16 +359,77 @@ public struct ProfileView: View {
         }
     }
     
+    private var formattedTotalFocusTime: String {
+        let total = max(0, supabase.currentUser.totalFocusMinutes)
+        let hours = total / 60
+        let mins = total % 60
+        if hours > 0 {
+            return "\(hours)h \(mins)m"
+        }
+        return "\(mins)m"
+    }
+    
     // MARK: - Edit / Customization Mode
     private var editProfileView: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             // Edit Header Row
-            HStack {
+            HStack(spacing: 8) {
+                Button(action: {
+                    chooseProfilePicture(forOnboarding: false)
+                }) {
+                    ZStack {
+                        Circle()
+                            .fill(model.theme.cardBackgroundElevated)
+                            .frame(width: 24, height: 24)
+                            .overlay(
+                                Circle().stroke(model.theme.activeBorder, lineWidth: 0.8)
+                            )
+                        if let base64 = draftAvatarBase64,
+                           let data = Data(base64Encoded: base64),
+                           let nsImage = NSImage(data: data) {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 24, height: 24)
+                                .clipShape(Circle())
+                        } else {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(model.theme.textPrimary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Click to change profile avatar photo")
+                
                 Text("Customize Profile")
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(model.theme.textPrimary)
                 
                 Spacer()
+                
+                // Quick Status Preset Pills
+                HStack(spacing: 4) {
+                    ForEach(["Deep Focus", "In Flow", "Building"], id: \.self) { preset in
+                        let isSelected = draftStatus == preset
+                        Button(action: {
+                            draftStatus = preset
+                            MorphHaptics.alignment()
+                        }) {
+                            Text(preset)
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundColor(isSelected ? model.theme.activePillText : model.theme.textSecondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2.5)
+                                .background(isSelected ? model.theme.activePillBackground : model.theme.cardBackground)
+                                .clipShape(Capsule())
+                                .overlay(
+                                    Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
                 
                 Button(action: {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
@@ -375,23 +438,27 @@ public struct ProfileView: View {
                 }) {
                     Text("Cancel")
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(model.theme.textSecondary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.08))
+                        .background(model.theme.cardBackground)
                         .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
                 .buttonStyle(.plain)
                 
                 Button(action: {
+                    MorphHaptics.generic()
                     saveProfileChanges()
                 }) {
                     Text("Save Changes")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.black)
+                        .foregroundColor(model.theme.activePillText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(Color.white)
+                        .background(model.theme.activePillBackground)
                         .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -402,43 +469,55 @@ public struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("FIRST NAME")
                         .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     TextField("First Name", text: $draftFirstName)
                         .font(.system(size: 11, weight: .medium))
                         .textFieldStyle(.plain)
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06))
+                        .background(model.theme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("LAST NAME")
                         .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     TextField("Last Name", text: $draftLastName)
                         .font(.system(size: 11, weight: .medium))
                         .textFieldStyle(.plain)
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06))
+                        .background(model.theme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("INITIALS")
                         .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     TextField("Initials", text: $draftInitials)
                         .font(.system(size: 11, weight: .bold))
                         .textFieldStyle(.plain)
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06))
+                        .background(model.theme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                         .frame(width: 60)
                 }
             }
@@ -448,29 +527,37 @@ public struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ROLE / TITLE")
                         .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     TextField("Target Role", text: $draftRole)
                         .font(.system(size: 11, weight: .medium))
                         .textFieldStyle(.plain)
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06))
+                        .background(model.theme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CURRENT STATUS")
                         .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     TextField("Current Status", text: $draftStatus)
                         .font(.system(size: 11, weight: .medium))
                         .textFieldStyle(.plain)
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06))
+                        .background(model.theme.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                 }
             }
             
@@ -479,20 +566,24 @@ public struct ProfileView: View {
                 HStack {
                     Text("ACCOUNT EMAIL (SSO TO GOOGLE CALENDAR)")
                         .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(model.theme.textTertiary)
                     Spacer()
                     Text("Auto-configures Google Calendar")
                         .font(.system(size: 7, weight: .medium))
-                        .foregroundColor(.cyan.opacity(0.8))
+                        .foregroundColor(model.theme.textSecondary)
                 }
                 TextField("user@gmail.com", text: $draftEmail)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .textFieldStyle(.plain)
-                    .foregroundColor(.white)
+                    .foregroundColor(model.theme.textPrimary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.06))
+                    .background(model.theme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    )
             }
         }
     }
@@ -504,25 +595,25 @@ public struct ProfileView: View {
             HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(0.12))
+                        .fill(model.theme.cardBackgroundElevated)
                         .frame(width: 36, height: 36)
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                                .stroke(model.theme.activeBorder, lineWidth: 1)
                         )
                     Image(systemName: "lock.shield.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sign In to Morph")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                     
                     Text("Enter your username and password to access your profile & calendar")
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(model.theme.textSecondary)
                         .lineLimit(1)
                 }
                 
@@ -544,10 +635,10 @@ public struct ProfileView: View {
                         Text("Sign In")
                             .font(.system(size: 11, weight: .bold))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(model.theme.activePillText)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
-                    .background(Color.white)
+                    .background(model.theme.activePillBackground)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -564,11 +655,15 @@ public struct ProfileView: View {
                         .font(.system(size: 9.5, weight: .medium))
                     Spacer()
                 }
-                .foregroundColor(.orange)
+                .foregroundColor(model.theme.textPrimary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 3)
-                .background(Color.orange.opacity(0.12))
+                .background(model.theme.cardBackgroundElevated)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(model.theme.activeBorder, lineWidth: 0.5)
+                )
             }
             
             // Credentials Form: Username & Password
@@ -578,25 +673,29 @@ public struct ProfileView: View {
                     HStack {
                         Text("USERNAME OR EMAIL")
                             .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(model.theme.textTertiary)
                         Spacer()
                         Text("Auto-configures Google Calendar SSO")
                             .font(.system(size: 7, weight: .medium))
-                            .foregroundColor(.cyan.opacity(0.8))
+                            .foregroundColor(model.theme.textSecondary)
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "person.fill")
                             .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(model.theme.textTertiary)
                         TextField("Username or email (e.g. aaron / user@gmail.com)", text: $signInUsername)
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .textFieldStyle(.plain)
-                            .foregroundColor(.white)
+                            .foregroundColor(model.theme.textPrimary)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.06))
+                    .background(model.theme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    )
                     .onSubmit {
                         executeSignIn()
                     }
@@ -607,25 +706,29 @@ public struct ProfileView: View {
                     HStack {
                         Text("PASSWORD")
                             .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(model.theme.textTertiary)
                         Spacer()
                         Text("Secure Account Access")
                             .font(.system(size: 7, weight: .medium))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(model.theme.textTertiary)
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "key.fill")
                             .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(model.theme.textTertiary)
                         SecureField("••••••••••••", text: $signInPassword)
                             .font(.system(size: 11, weight: .medium))
                             .textFieldStyle(.plain)
-                            .foregroundColor(.white)
+                            .foregroundColor(model.theme.textPrimary)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.06))
+                    .background(model.theme.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    )
                     .onSubmit {
                         executeSignIn()
                     }
@@ -683,33 +786,36 @@ public struct ProfileView: View {
             HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(Color.white.opacity(0.12))
+                        .fill(model.theme.cardBackgroundElevated)
                         .frame(width: 36, height: 36)
                         .overlay(
                             Circle()
-                                .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                                .stroke(model.theme.activeBorder, lineWidth: 1)
                         )
                     Image(systemName: "sparkles")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.yellow)
+                        .foregroundColor(model.theme.textPrimary)
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
                         Text("Welcome to Morph!")
                             .font(.system(size: 13.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
+                            .foregroundColor(model.theme.textPrimary)
                         Text("FIRST TIME SETUP")
                             .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(.yellow)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.yellow.opacity(0.15))
+                            .foregroundColor(model.theme.badgeText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(model.theme.badgeBackground)
                             .clipShape(Capsule())
+                            .overlay(
+                                Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                            )
                     }
                     Text("Set up your name, profile picture, and occupation")
                         .font(.system(size: 9.5, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(model.theme.textSecondary)
                         .lineLimit(1)
                 }
                 
@@ -725,10 +831,10 @@ public struct ProfileView: View {
                         Image(systemName: "arrow.right.circle.fill")
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    .foregroundColor(.black)
+                    .foregroundColor(model.theme.activePillText)
                     .padding(.horizontal, 11)
                     .padding(.vertical, 5)
-                    .background(Color.white)
+                    .background(model.theme.activePillBackground)
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -741,11 +847,11 @@ public struct ProfileView: View {
                 VStack(spacing: 4) {
                     ZStack {
                         Circle()
-                            .fill(Color.white.opacity(0.12))
+                            .fill(model.theme.cardBackgroundElevated)
                             .frame(width: 48, height: 48)
                             .overlay(
                                 Circle()
-                                    .stroke(Color.white.opacity(0.24), lineWidth: 1)
+                                    .stroke(model.theme.activeBorder, lineWidth: 1)
                             )
                         
                         if let base64 = onboardingAvatarBase64,
@@ -760,17 +866,17 @@ public struct ProfileView: View {
                             VStack(spacing: 2) {
                                 Image(systemName: "person.crop.circle.badge.plus")
                                     .font(.system(size: 16))
-                                    .foregroundColor(.white.opacity(0.8))
+                                    .foregroundColor(model.theme.textSecondary)
                                 Text(onboardingInitials.isEmpty ? "PHOTO" : onboardingInitials)
                                     .font(.system(size: 8, weight: .bold, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.9))
+                                    .foregroundColor(model.theme.textPrimary)
                             }
                         }
                     }
                     
                     // Upload / Choose photo button
                     Button(action: {
-                        chooseProfilePicture()
+                        chooseProfilePicture(forOnboarding: true)
                     }) {
                         HStack(spacing: 3) {
                             Image(systemName: "photo")
@@ -778,11 +884,14 @@ public struct ProfileView: View {
                             Text(onboardingAvatarBase64 == nil ? "Choose Photo" : "Change")
                                 .font(.system(size: 8.5, weight: .semibold))
                         }
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2.5)
-                        .background(Color.white.opacity(0.12))
+                        .background(model.theme.cardBackgroundElevated)
                         .clipShape(Capsule())
+                        .overlay(
+                            Capsule().stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                        )
                     }
                     .buttonStyle(.plain)
                     .help("Select an image from your Mac")
@@ -795,44 +904,56 @@ public struct ProfileView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("FIRST NAME")
                                 .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(model.theme.textTertiary)
                             TextField("First Name", text: $onboardingFirstName)
                                 .font(.system(size: 11, weight: .medium))
                                 .textFieldStyle(.plain)
-                                .foregroundColor(.white)
+                                .foregroundColor(model.theme.textPrimary)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.06))
+                                .background(model.theme.cardBackground)
                                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                                )
                         }
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text("LAST NAME")
                                 .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(model.theme.textTertiary)
                             TextField("Last Name", text: $onboardingLastName)
                                 .font(.system(size: 11, weight: .medium))
                                 .textFieldStyle(.plain)
-                                .foregroundColor(.white)
+                                .foregroundColor(model.theme.textPrimary)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.06))
+                                .background(model.theme.cardBackground)
                                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                                )
                         }
                     }
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text("OCCUPATION / TARGET ROLE")
                             .font(.system(size: 7.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(model.theme.textTertiary)
                         TextField("e.g. Senior Software Engineer", text: $onboardingRole)
                             .font(.system(size: 11, weight: .medium))
                             .textFieldStyle(.plain)
-                            .foregroundColor(.white)
+                            .foregroundColor(model.theme.textPrimary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.06))
+                            .background(model.theme.cardBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                            )
                     }
                 }
             }
@@ -846,7 +967,7 @@ public struct ProfileView: View {
         return combined.isEmpty ? supabase.currentUser.displayInitials : combined
     }
     
-    private func chooseProfilePicture() {
+    private func chooseProfilePicture(forOnboarding: Bool = true) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -859,7 +980,12 @@ public struct ProfileView: View {
             if let tiffData = image.tiffRepresentation,
                let bitmap = NSBitmapImageRep(data: tiffData),
                let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
-                onboardingAvatarBase64 = jpegData.base64EncodedString()
+                let encoded = jpegData.base64EncodedString()
+                if forOnboarding {
+                    onboardingAvatarBase64 = encoded
+                } else {
+                    draftAvatarBase64 = encoded
+                }
             }
         }
     }
@@ -900,24 +1026,27 @@ public struct ProfileView: View {
                 Spacer()
                 Text("⌘ Standard")
                     .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(model.theme.textSecondary)
             }
-            .foregroundColor(.white)
+            .foregroundColor(model.theme.textPrimary)
             .padding(.bottom, 2)
             
             Divider()
-                .background(Color.white.opacity(0.12))
+                .background(model.theme.hairlineBorder)
             
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 6) {
                     shortcutCategory(
-                        title: "Navigation & Tabs",
+                        title: "Navigation & Command Bar",
                         items: [
+                            ("⌘K", "Quick Command Bar"),
                             ("⌘1 / ⌘0", "Home Screen"),
                             ("⌘2", "Focus Timer"),
                             ("⌘3", "Music Player"),
                             ("⌘4", "Scratchpad Notes"),
                             ("⌘5 / ⌘,", "Profile & Preferences"),
+                            ("⌘6", "Calendar & Agenda"),
+                            ("⌘⇧[ / ⌘⇧]", "Previous / Next Tab"),
                             ("⌘[", "Back to Home")
                         ]
                     )
@@ -950,7 +1079,7 @@ public struct ProfileView: View {
                     shortcutCategory(
                         title: "Focus Timer",
                         items: [
-                            ("⌘⏎", "Start / Pause Focus"),
+                            ("⌘⏎ / ⌘T", "Start / Pause Focus"),
                             ("⌘⇧R", "Reset Timer"),
                             ("⌘⇧S", "Skip Session / Break")
                         ]
@@ -962,6 +1091,7 @@ public struct ProfileView: View {
                             ("⌘N", "New Note / Clear"),
                             ("⌘S", "Save Note"),
                             ("⌘⇧C", "Copy All Notes"),
+                            ("⌘⇧P", "Pin Note to Notch"),
                             ("⌘A / ⌘C / ⌘V", "Select All / Copy / Paste"),
                             ("⌘Z / ⌘⇧Z", "Undo / Redo")
                         ]
@@ -973,35 +1103,35 @@ public struct ProfileView: View {
         }
         .padding(12)
         .frame(width: 300)
-        .background(Color(white: 0.08))
+        .background(model.theme.canvasBackground)
     }
     
     private func shortcutCategory(title: String, items: [(String, String)]) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title.uppercased())
                 .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundColor(model.theme.textTertiary)
             
             ForEach(items, id: \.0) { item in
                 HStack {
                     Text(item.0)
                         .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
+                        .foregroundColor(model.theme.textPrimary)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1.5)
-                        .background(Color.white.opacity(0.08))
+                        .background(model.theme.cardBackgroundElevated)
                         .cornerRadius(3)
                     
                     Spacer()
                     
                     Text(item.1)
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.white.opacity(0.75))
+                        .foregroundColor(model.theme.textSecondary)
                 }
             }
         }
         .padding(5)
-        .background(Color.white.opacity(0.03))
+        .background(model.theme.cardBackgroundSubtle)
         .cornerRadius(5)
     }
 }

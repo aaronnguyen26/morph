@@ -6,6 +6,12 @@ import Combine
 public final class ScratchpadModel: ObservableObject {
     @Published public var text: String = "" {
         didSet {
+            if !text.isEmpty && canUndoClear {
+                canUndoClear = false
+                cachedClearedText = nil
+                undoTimer?.cancel()
+                undoTimer = nil
+            }
             updateCounts()
             persistText()
         }
@@ -30,11 +36,33 @@ public final class ScratchpadModel: ObservableObject {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        MorphHaptics.generic()
         
         showCopiedAlert = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.showCopiedAlert = false
         }
+    }
+    
+    public func insertBulletItem() {
+        if text.isEmpty || text.hasSuffix("\n") {
+            text += "• "
+        } else {
+            text += "\n• "
+        }
+        MorphHaptics.alignment()
+    }
+    
+    public func insertTimestamp() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        let stamp = "[\(formatter.string(from: Date()))] "
+        if text.isEmpty || text.hasSuffix("\n") || text.hasSuffix(" ") {
+            text += stamp
+        } else {
+            text += " " + stamp
+        }
+        MorphHaptics.alignment()
     }
     
     public func clear() {
@@ -44,7 +72,7 @@ public final class ScratchpadModel: ObservableObject {
         text = ""
         
         undoTimer?.cancel()
-        undoTimer = Timer.publish(every: 2.5, on: .main, in: .common)
+        undoTimer = Timer.publish(every: 8.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.canUndoClear = false
@@ -56,11 +84,11 @@ public final class ScratchpadModel: ObservableObject {
     
     public func undoClear() {
         guard canUndoClear, let cached = cachedClearedText else { return }
-        text = cached
         canUndoClear = false
         cachedClearedText = nil
         undoTimer?.cancel()
         undoTimer = nil
+        text = cached
     }
     
     private func updateCounts() {

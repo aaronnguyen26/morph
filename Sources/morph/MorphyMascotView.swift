@@ -44,6 +44,18 @@ public struct MorphyMascotView: View {
         self.model = model
     }
     
+    private var isFocusing: Bool {
+        model.pomodoro.isRunning
+    }
+    
+    private var isPlayingMedia: Bool {
+        model.media.isPlaying
+    }
+    
+    private var isInCall: Bool {
+        model.meetingController.isInCall
+    }
+    
     public var body: some View {
         ZStack {
             // Ambient Radiant Glow Falloff (Meta Muse Aura)
@@ -51,7 +63,9 @@ public struct MorphyMascotView: View {
                 .fill(
                     RadialGradient(
                         colors: [
-                            model.theme.isDark ? Color.white.opacity(isHovered ? 0.18 : 0.08) : Color.black.opacity(isHovered ? 0.10 : 0.04),
+                            model.theme.isDark
+                                ? Color.white.opacity(isHovered ? 0.20 : (isFocusing || isPlayingMedia || isInCall ? 0.14 : 0.08))
+                                : Color.black.opacity(isHovered ? 0.12 : (isFocusing || isPlayingMedia || isInCall ? 0.08 : 0.04)),
                             Color.clear
                         ],
                         center: .center,
@@ -64,38 +78,54 @@ public struct MorphyMascotView: View {
             // Outer Concentric Track (Dashed Specular Track)
             Circle()
                 .stroke(
-                    model.theme.isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.08),
-                    style: StrokeStyle(lineWidth: 1, dash: [3, 5])
+                    model.theme.isDark
+                        ? Color.white.opacity(isFocusing ? 0.22 : 0.12)
+                        : Color.black.opacity(isFocusing ? 0.16 : 0.08),
+                    style: StrokeStyle(lineWidth: 1, dash: isFocusing ? [5, 3] : [3, 5])
                 )
                 .frame(width: 58, height: 58)
                 .rotationEffect(.degrees(outerRotation))
             
-            // Secondary Inset Track (Solid Hairline)
+            // Secondary Inset Track (Solid Hairline / Deep-Focus Orbital Ring Highlight)
             Circle()
                 .stroke(
-                    model.theme.isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.05),
-                    lineWidth: 0.75
+                    model.theme.isDark
+                        ? Color.white.opacity(isFocusing ? 0.28 : (isInCall ? 0.18 : 0.08))
+                        : Color.black.opacity(isFocusing ? 0.20 : (isInCall ? 0.12 : 0.05)),
+                    lineWidth: isFocusing ? 1.25 : 0.75
                 )
                 .frame(width: 44, height: 44)
+            
+            // Steady Deep-Focus Orbital Progress Ring Highlight when Pomodoro is running
+            if isFocusing {
+                Circle()
+                    .trim(from: 0, to: CGFloat(max(0.08, model.pomodoro.progress)))
+                    .stroke(
+                        model.theme.textPrimary.opacity(0.65),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 44, height: 44)
+            }
             
             // Outer Orbiting Constellation Dots (OpenAI Voice Mode Inspiration)
             ZStack {
                 // Dot 1 (Lead Specular Dot)
                 Circle()
                     .fill(model.theme.textPrimary)
-                    .frame(width: 4.5, height: 4.5)
+                    .frame(width: isFocusing ? 5.0 : 4.5, height: isFocusing ? 5.0 : 4.5)
                     .shadow(color: model.theme.textPrimary.opacity(0.6), radius: 3)
                     .offset(x: 29, y: 0)
                 
                 // Dot 2 (Harmonic Orbit Dot)
                 Circle()
-                    .fill(model.theme.textPrimary.opacity(0.65))
+                    .fill(model.theme.textPrimary.opacity(isFocusing ? 0.80 : 0.65))
                     .frame(width: 3.2, height: 3.2)
                     .offset(x: -25, y: -14)
                 
                 // Dot 3 (Fine Orbit Pip)
                 Circle()
-                    .fill(model.theme.textPrimary.opacity(0.40))
+                    .fill(model.theme.textPrimary.opacity(isFocusing ? 0.55 : 0.40))
                     .frame(width: 2.5, height: 2.5)
                     .offset(x: -12, y: 26)
             }
@@ -139,12 +169,12 @@ public struct MorphyMascotView: View {
                             .stroke(
                                 LinearGradient(
                                     colors: model.theme.isDark
-                                        ? [Color.white.opacity(0.5), Color.white.opacity(0.1)]
-                                        : [Color.black.opacity(0.2), Color.black.opacity(0.05)],
+                                        ? [Color.white.opacity(isFocusing ? 0.72 : 0.5), Color.white.opacity(0.1)]
+                                        : [Color.black.opacity(isFocusing ? 0.35 : 0.2), Color.black.opacity(0.05)],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
-                                lineWidth: 1
+                                lineWidth: isFocusing ? 1.25 : 1
                             )
                     )
                     .shadow(
@@ -167,21 +197,24 @@ public struct MorphyMascotView: View {
                     .offset(y: -6)
                     .mask(Circle().frame(width: 26, height: 26))
                 
-                // OpenAI Living Harmonic 3-Dot Voice Cluster inside the Core
-                HStack(spacing: 3) {
+                // OpenAI Living Harmonic 3-Dot Voice / Focus Cluster inside the Core
+                HStack(spacing: isFocusing ? 2.5 : 3) {
                     Circle()
-                        .fill(model.theme.textPrimary.opacity(0.85))
-                        .frame(width: 2.8, height: 2.8)
-                    Circle()
+                        .fill(model.theme.textPrimary.opacity(isFocusing ? 0.95 : 0.85))
+                        .frame(width: isInCall ? 3.2 : 2.8, height: isInCall && isPulsing ? 5.2 : 2.8)
+                    Capsule()
                         .fill(model.theme.textPrimary)
-                        .frame(width: model.media.isPlaying ? 4.2 : 3.4, height: model.media.isPlaying ? 4.2 : 3.4)
-                        .scaleEffect(isPulsing ? 1.15 : 0.88)
+                        .frame(
+                            width: isFocusing ? 5.5 : (isPlayingMedia ? 4.2 : 3.4),
+                            height: isFocusing ? 2.8 : (isPlayingMedia || isInCall ? 4.6 : 3.4)
+                        )
+                        .scaleEffect(isPulsing ? (isFocusing ? 1.06 : 1.15) : 0.88)
                     Circle()
-                        .fill(model.theme.textPrimary.opacity(0.85))
-                        .frame(width: 2.8, height: 2.8)
+                        .fill(model.theme.textPrimary.opacity(isFocusing ? 0.95 : 0.85))
+                        .frame(width: isInCall ? 3.2 : 2.8, height: isInCall && isPulsing ? 5.2 : 2.8)
                 }
             }
-            .scaleEffect((coreScale + tapImpulse) * (model.media.isPlaying ? 1.06 : 1.0))
+            .scaleEffect((coreScale + tapImpulse) * (isPlayingMedia || isInCall ? 1.06 : (isFocusing ? 1.03 : 1.0)))
         }
         .frame(width: 68, height: 68)
         .contentShape(Circle())
@@ -209,6 +242,7 @@ public struct MorphyMascotView: View {
     }
     
     private func triggerMascotImpulse() {
+        MorphHaptics.generic()
         withAnimation(.spring(response: 0.22, dampingFraction: 0.55)) {
             tapImpulse = 0.18
             outerRotation += 45

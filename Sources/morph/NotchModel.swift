@@ -57,7 +57,7 @@ public enum ContextualFeature: String, Identifiable, Equatable {
 
 @MainActor
 public final class NotchModel: ObservableObject {
-    // Exact Hardware Notch Baseline
+    // Apple Dynamic Island & Physical Notch Resting Baseline
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
     
@@ -68,6 +68,7 @@ public final class NotchModel: ObservableObject {
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
+    @Published public var isCommandBarPresented: Bool = false
     @Published public var selectedTab: MorphTab = .home
     @Published public var activeContextFeature: ContextualFeature? = nil
     @Published public var latestTabBeforeContextualFeature: MorphTab? = nil
@@ -314,7 +315,6 @@ public final class NotchModel: ObservableObject {
         }
         
         self.screenName = screen.localizedName
-        
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             let width = right.minX - left.maxX
             let height = screen.frame.height - left.minY
@@ -344,6 +344,7 @@ public final class NotchModel: ObservableObject {
         formTracker.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         theme.objectWillChange.sink { triggerChange() }.store(in: &cancellables)
         $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
+        $isCommandBarPresented.sink { _ in triggerChange() }.store(in: &cancellables)
         
         // Track the latest feature tab used by the user
         $selectedTab
@@ -524,6 +525,7 @@ public final class NotchModel: ObservableObject {
     
     public func togglePin() {
         isPinned.toggle()
+        MorphHaptics.levelChange()
         if isPinned {
             if !isExpanded {
                 syncExpandedFeatureWithActiveContext()
@@ -532,13 +534,36 @@ public final class NotchModel: ObservableObject {
         }
     }
     
+    public func toggleCommandBar() {
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+            if !isExpanded {
+                isExpanded = true
+                isCommandBarPresented = true
+            } else {
+                isCommandBarPresented.toggle()
+            }
+        }
+        MorphHaptics.levelChange()
+    }
+    
+    public func cycleTab(forward: Bool) {
+        let allTabs = MorphTab.allCases
+        guard let currentIndex = allTabs.firstIndex(of: selectedTab) else { return }
+        let nextIndex = forward
+            ? (currentIndex + 1) % allTabs.count
+            : (currentIndex - 1 + allTabs.count) % allTabs.count
+        openFeature(allTabs[nextIndex])
+    }
+    
     public func openFeature(_ tab: MorphTab) {
+        MorphHaptics.levelChange()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = tab
             if tab != .home {
                 lastUsedFeatureTab = tab
             }
             activeContextFeature = nil
+            isCommandBarPresented = false
             isExpanded = true
         }
     }
@@ -548,6 +573,7 @@ public final class NotchModel: ObservableObject {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = .home
             activeContextFeature = nil
+            isCommandBarPresented = false
         }
     }
     

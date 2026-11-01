@@ -3,11 +3,13 @@ import UniformTypeIdentifiers
 
 public struct DropShelfView: View {
     @ObservedObject var model: NotchModel
+    @ObservedObject private var theme: MorphTheme = .shared
     @State private var isTargeted: Bool = false
     @State private var isMiniDropTargeted: Bool = false
     
     public init(model: NotchModel) {
         self.model = model
+        self.theme = model.theme
     }
     
     private var shelf: DropShelfModel {
@@ -21,19 +23,19 @@ public struct DropShelfView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "tray.and.arrow.down.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                     
                     Text("Drop Shelf")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                     
                     if shelf.hasItems {
-                        Text("\(shelf.count) \(shelf.count == 1 ? "file" : "files")")
+                        Text("\(shelf.count) staged • \(shelf.formattedTotalSize)")
                             .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                            .foregroundColor(Color.white.opacity(0.8))
+                            .foregroundColor(theme.badgeText)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.white.opacity(0.12))
+                            .background(theme.badgeBackground)
                             .clipShape(Capsule())
                     }
                 }
@@ -44,7 +46,7 @@ public struct DropShelfView: View {
                     HStack(spacing: 4) {
                         Text(msg)
                             .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                            .foregroundColor(shelf.isDraggingOut || shelf.isHeldOpen ? .cyan : Color.white.opacity(0.7))
+                            .foregroundColor(shelf.isDraggingOut || shelf.isHeldOpen ? theme.textPrimary : theme.textSecondary)
                             .lineLimit(1)
                     }
                     .transition(.opacity)
@@ -52,6 +54,7 @@ public struct DropShelfView: View {
                 
                 // Hold Mode Toggle Option
                 Button(action: {
+                    MorphHaptics.levelChange()
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
                         shelf.toggleHoldMode()
                     }
@@ -62,13 +65,13 @@ public struct DropShelfView: View {
                         Text(shelf.isHoldModeActive ? "Hold: ON" : "Hold: OFF")
                             .font(.system(size: 9.5, weight: .semibold))
                     }
-                    .foregroundColor(shelf.isHoldModeActive ? Color.cyan : Color.white.opacity(0.70))
+                    .foregroundColor(shelf.isHoldModeActive ? theme.activePillText : theme.textSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(shelf.isHoldModeActive ? Color.cyan.opacity(0.18) : Color.white.opacity(0.08))
+                    .background(shelf.isHoldModeActive ? theme.activePillBackground : theme.cardBackground)
                     .clipShape(Capsule())
                     .overlay(
-                        Capsule().stroke(shelf.isHoldModeActive ? Color.cyan.opacity(0.4) : Color.white.opacity(0.12), lineWidth: 0.5)
+                        Capsule().stroke(shelf.isHoldModeActive ? theme.activeBorder : theme.hairlineBorder, lineWidth: 0.5)
                     )
                 }
                 .buttonStyle(.plain)
@@ -76,6 +79,7 @@ public struct DropShelfView: View {
                 
                 if shelf.hasItems {
                     Button(action: {
+                        MorphHaptics.generic()
                         shelf.copyAllFilePaths()
                     }) {
                         HStack(spacing: 4) {
@@ -84,17 +88,18 @@ public struct DropShelfView: View {
                             Text("Copy Paths")
                                 .font(.system(size: 9.5, weight: .semibold))
                         }
-                        .foregroundColor(.white)
+                        .foregroundColor(theme.textPrimary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.10))
+                        .background(theme.cardBackground)
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+                        .overlay(Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
                     .help("Copy all staged file paths to clipboard")
                     
                     Button(action: {
+                        MorphHaptics.levelChange()
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                             shelf.clearAll()
                         }
@@ -105,12 +110,12 @@ public struct DropShelfView: View {
                             Text("Clear")
                                 .font(.system(size: 9.5, weight: .semibold))
                         }
-                        .foregroundColor(Color.white.opacity(0.75))
+                        .foregroundColor(theme.textSecondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.08))
+                        .background(theme.cardBackground)
                         .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                        .overlay(Capsule().stroke(theme.hairlineBorder, lineWidth: 0.5))
                     }
                     .buttonStyle(.plain)
                     .help("Clear all files from Drop Shelf")
@@ -139,37 +144,37 @@ public struct DropShelfView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(
                     isTargeted || shelf.isDraggingOverNotch
-                        ? Color.white.opacity(0.85)
-                        : Color.white.opacity(0.20),
+                        ? theme.dropTargetBorder
+                        : theme.hairlineBorder,
                     style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
                 )
                 .background(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(
                             isTargeted || shelf.isDraggingOverNotch
-                                ? Color.white.opacity(0.08)
-                                : Color.white.opacity(0.02)
+                                ? theme.cardBackgroundElevated
+                                : theme.cardBackgroundSubtle
                         )
                 )
                 .shadow(
-                    color: (isTargeted || shelf.isDraggingOverNotch) ? Color.white.opacity(0.25) : Color.clear,
+                    color: (isTargeted || shelf.isDraggingOverNotch) ? theme.dropTargetGlow : Color.clear,
                     radius: 12
                 )
             
             VStack(spacing: 6) {
                 Image(systemName: "arrow.down.doc.fill")
                     .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(isTargeted || shelf.isDraggingOverNotch ? .white : Color.white.opacity(0.55))
+                    .foregroundColor(isTargeted || shelf.isDraggingOverNotch ? theme.textPrimary : theme.textSecondary)
                     .scaleEffect(isTargeted || shelf.isDraggingOverNotch ? 1.15 : 1.0)
                     .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isTargeted)
                 
                 Text("Drop PDFs & Files Here to Stage")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .foregroundColor(theme.textPrimary)
                 
                 Text("Hold mode is \(shelf.isHoldModeActive ? "ON (files stay held)" : "OFF (files removed on drag)"). Stash files here, then drag them out anywhere.")
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.45))
+                    .foregroundColor(theme.textTertiary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 16)
             }
@@ -183,7 +188,7 @@ public struct DropShelfView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(shelf.stagedItems) { item in
-                        DropShelfCardView(item: item, shelf: shelf)
+                        DropShelfCardView(item: item, shelf: shelf, theme: theme)
                     }
                     
                     // Compact mini drop append target at end of carousel
@@ -200,21 +205,21 @@ public struct DropShelfView: View {
         ZStack {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(
-                    isMiniDropTargeted || isTargeted ? Color.white.opacity(0.7) : Color.white.opacity(0.18),
+                    isMiniDropTargeted || isTargeted ? theme.dropTargetBorder : theme.hairlineBorder,
                     style: StrokeStyle(lineWidth: 1.2, dash: [4, 3])
                 )
                 .background(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isMiniDropTargeted || isTargeted ? Color.white.opacity(0.08) : Color.white.opacity(0.02))
+                        .fill(isMiniDropTargeted || isTargeted ? theme.cardBackgroundElevated : theme.cardBackgroundSubtle)
                 )
             
             VStack(spacing: 4) {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.6))
+                    .foregroundColor(theme.textSecondary)
                 Text("Drop more")
                     .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(theme.textTertiary)
             }
         }
         .frame(width: 90, height: 116)
@@ -254,11 +259,14 @@ public struct DropShelfView: View {
 public struct DropShelfCardView: View {
     public let item: DropShelfItem
     @ObservedObject var shelf: DropShelfModel
+    @ObservedObject var theme: MorphTheme
     @State private var isHovered: Bool = false
+    @State private var hasPushedCursor: Bool = false
     
-    public init(item: DropShelfItem, shelf: DropShelfModel) {
+    public init(item: DropShelfItem, shelf: DropShelfModel, theme: MorphTheme = .shared) {
         self.item = item
         self.shelf = shelf
+        self.theme = theme
     }
     
     private var isCurrentlyDragged: Bool {
@@ -279,11 +287,23 @@ public struct DropShelfCardView: View {
         .opacity(isCurrentlyDragged ? 0.65 : 1.0)
         .onHover { hov in
             isHovered = hov
-            if hov {
+            if hov && !hasPushedCursor {
                 NSCursor.openHand.push()
-            } else {
+                hasPushedCursor = true
+            } else if !hov && hasPushedCursor {
                 NSCursor.pop()
+                hasPushedCursor = false
             }
+        }
+        .onDisappear {
+            if hasPushedCursor {
+                NSCursor.pop()
+                hasPushedCursor = false
+            }
+        }
+        .onTapGesture(count: 2) {
+            MorphHaptics.generic()
+            shelf.openItem(item)
         }
         .onDrag {
             shelf.startDragOut(for: item)
@@ -301,21 +321,21 @@ public struct DropShelfCardView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: item.isPDF ? 28 : 26, height: item.isPDF ? 28 : 26)
                     .clipShape(RoundedRectangle(cornerRadius: item.isPDF ? 4 : 3))
-                    .shadow(color: item.isPDF ? Color.red.opacity(0.25) : Color.clear, radius: 4)
+                    .shadow(color: item.isPDF ? theme.dropTargetGlow : Color.clear, radius: 4)
             } else {
                 Image(systemName: item.isPDF ? "doc.text.fill" : "doc.fill")
                     .font(.system(size: 20))
-                    .foregroundColor(item.isPDF ? .red : Color.white.opacity(0.7))
+                    .foregroundColor(item.isPDF ? theme.textPrimary : theme.textSecondary)
                     .frame(width: 26, height: 26)
             }
             
             if !item.pathExtension.isEmpty {
                 Text(item.pathExtension)
                     .font(.system(size: 8, weight: .heavy, design: .rounded))
-                    .foregroundColor(item.isPDF ? Color.white : Color.white.opacity(0.75))
+                    .foregroundColor(item.isPDF ? theme.activePillText : theme.badgeText)
                     .padding(.horizontal, 4.5)
                     .padding(.vertical, 1.5)
-                    .background(item.isPDF ? Color.red.opacity(0.75) : Color.white.opacity(0.12))
+                    .background(item.isPDF ? theme.activePillBackground : theme.badgeBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
             }
             
@@ -325,9 +345,9 @@ public struct DropShelfCardView: View {
             if shelf.isHoldModeActive {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 6.5, weight: .bold))
-                    .foregroundColor(Color.cyan)
+                    .foregroundColor(theme.textPrimary)
                     .padding(2.5)
-                    .background(Color.cyan.opacity(0.12))
+                    .background(theme.badgeBackground)
                     .clipShape(Circle())
                     .help("Hold mode active: File will remain on shelf after drag-out")
             }
@@ -335,9 +355,9 @@ public struct DropShelfCardView: View {
             // Drag Grip
             Image(systemName: "hand.draw.fill")
                 .font(.system(size: 7.5, weight: .semibold))
-                .foregroundColor(isHovered ? Color.cyan : Color.white.opacity(0.35))
+                .foregroundColor(isHovered ? theme.textPrimary : theme.textTertiary)
                 .padding(2.5)
-                .background(Color.white.opacity(isHovered ? 0.12 : 0.04))
+                .background(isHovered ? theme.cardBackgroundElevated : theme.cardBackgroundSubtle)
                 .clipShape(Circle())
                 .help("Drag this file out to Finder, Desktop, Mail, or any app")
             
@@ -348,9 +368,9 @@ public struct DropShelfCardView: View {
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 7.5, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.55))
+                    .foregroundColor(theme.textSecondary)
                     .frame(width: 16, height: 16)
-                    .background(Color.white.opacity(0.08))
+                    .background(theme.cardBackground)
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
@@ -362,13 +382,13 @@ public struct DropShelfCardView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(item.name)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             
             Text(item.subtitle)
                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                .foregroundColor(Color.white.opacity(0.55))
+                .foregroundColor(theme.textSecondary)
                 .lineLimit(1)
         }
     }
@@ -384,24 +404,25 @@ public struct DropShelfCardView: View {
                     Text("Finder")
                         .font(.system(size: 8.5, weight: .semibold))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(theme.textPrimary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2.5)
-                .background(Color.white.opacity(0.12))
+                .background(theme.cardBackgroundElevated)
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
             .help("Reveal in Finder")
             
             Button(action: {
+                MorphHaptics.generic()
                 shelf.copyFilePath(item: item)
             }) {
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(theme.textPrimary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2.5)
-                    .background(Color.white.opacity(0.10))
+                    .background(theme.cardBackground)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -412,10 +433,10 @@ public struct DropShelfCardView: View {
             }) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .foregroundColor(theme.textPrimary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2.5)
-                    .background(Color.white.opacity(0.10))
+                    .background(theme.cardBackground)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -425,15 +446,15 @@ public struct DropShelfCardView: View {
     
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(isCurrentlyDragged ? Color.cyan.opacity(0.15) : (isHovered ? Color.white.opacity(0.09) : Color.white.opacity(0.05)))
+            .fill(isCurrentlyDragged ? theme.cardBackgroundElevated : (isHovered ? theme.cardBackgroundElevated : theme.cardBackground))
     }
     
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
             .stroke(
                 isCurrentlyDragged
-                    ? Color.cyan.opacity(0.7)
-                    : (isHovered ? Color.white.opacity(0.24) : Color.white.opacity(0.12)),
+                    ? theme.dropTargetBorder
+                    : (isHovered ? theme.activeBorder : theme.hairlineBorder),
                 lineWidth: isCurrentlyDragged ? 1.5 : 0.5
             )
     }
@@ -457,11 +478,11 @@ public struct CompactDropShelfWingLeft: View {
                 if shelf.isDraggingOverNotch {
                     Image(systemName: "arrow.down.to.line.compact")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(.white)
                     
                     Text("Drop to Stash")
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(.white)
                 } else {
                     HStack(spacing: 4) {
                         Image(systemName: "tray.and.arrow.down.fill")
@@ -471,7 +492,7 @@ public struct CompactDropShelfWingLeft: View {
                         if shelf.isHoldModeActive {
                             Image(systemName: "pin.fill")
                                 .font(.system(size: 6.5, weight: .bold))
-                                .foregroundColor(.cyan)
+                                .foregroundColor(Color.white.opacity(0.85))
                         }
                     }
                     
@@ -513,16 +534,16 @@ public struct CompactDropShelfWingRight: View {
                     .foregroundColor(.black)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2.5)
-                    .background(Color.cyan)
+                    .background(Color.white)
                     .clipShape(Capsule())
             } else if shelf.hasItems {
                 if shelf.isHeldOpen {
                     Text("Held")
                         .font(.system(size: 8, weight: .bold, design: .rounded))
-                        .foregroundColor(.cyan)
+                        .foregroundColor(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.cyan.opacity(0.12))
+                        .background(Color.white.opacity(0.18))
                         .clipShape(Capsule())
                 }
                 
