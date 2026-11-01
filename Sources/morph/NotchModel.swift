@@ -47,6 +47,29 @@ public enum CompactHUDMode: String, Equatable {
     case formTrackerActive
 }
 
+public enum MorphIslandState: String, CaseIterable, Equatable {
+    case resting = "Normal Resting (State 1)"
+    case extendedPill = "Extended Morph Pill (State 2)"
+    case fullExpanded = "Full Big UI (State 3)"
+}
+
+public struct MorphUniversalAnimation {
+    /// State 1 <-> State 2: Asymmetric fluid elongation & contraction
+    public static let stateElongation = Animation.spring(response: 0.35, dampingFraction: 0.78)
+    
+    /// State 2 <-> State 3 or State 1 <-> State 3: Fluid 4-sided squircle modal expansion
+    public static let stateExpansion = Animation.spring(response: 0.38, dampingFraction: 0.82)
+    
+    /// State 3 -> State 2 or State 3 -> State 1: Crisp controlled modal retraction
+    public static let stateRetraction = Animation.spring(response: 0.30, dampingFraction: 0.86)
+    
+    /// Universal tab switching animation inside State 3
+    public static let tabSwitch = Animation.spring(response: 0.28, dampingFraction: 0.82)
+    
+    /// Universal wing entrance / exit for live activity pills
+    public static let wingTransition = Animation.spring(response: 0.32, dampingFraction: 0.80)
+}
+
 public enum ContextualFeature: String, Identifiable, Equatable {
     case meetingFlight = "Meeting Cockpit"
     case dropShelf = "Drop Shelf"
@@ -306,6 +329,17 @@ public final class NotchModel: ObservableObject {
             return compactHeight
         } else {
             return idleHeight
+        }
+    }
+    
+    /// The universal 3-tier operational state of Morph
+    public var islandState: MorphIslandState {
+        if isExpanded {
+            return .fullExpanded
+        } else if isCompactActive {
+            return .extendedPill
+        } else {
+            return .resting
         }
     }
     

@@ -122,18 +122,24 @@ public struct MorphIslandView: View {
                 )
                 
                 // Content: Idle / Compact Notch vs Expanded Island
-                if model.isExpanded {
-                    expandedView
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
-                            removal: .opacity
-                        ))
-                } else if model.isCompactActive {
-                    compactActiveNotchView
-                        .transition(.opacity)
-                } else {
-                    idleFlushNotchView
-                        .transition(.opacity)
+                Group {
+                    switch model.islandState {
+                    case .fullExpanded:
+                        expandedView
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
+                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+                            ))
+                    case .extendedPill:
+                        compactActiveNotchView
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .center)),
+                                removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .center))
+                            ))
+                    case .resting:
+                        idleFlushNotchView
+                            .transition(.opacity)
+                    }
                 }
             }
             .clipShape(
@@ -162,10 +168,10 @@ public struct MorphIslandView: View {
             .onChange(of: isNotchDragTargeted) { _, targeted in
                 model.dropShelf.isDraggingOverNotch = targeted
             }
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: model.isExpanded)
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: model.isCompactActive)
-            .animation(.spring(response: 0.30, dampingFraction: 0.82), value: model.selectedTab)
-            .animation(.spring(response: 0.38, dampingFraction: 0.82), value: model.activeContextFeature)
+            .animation(MorphUniversalAnimation.stateExpansion, value: model.isExpanded)
+            .animation(MorphUniversalAnimation.stateElongation, value: model.isCompactActive)
+            .animation(MorphUniversalAnimation.tabSwitch, value: model.selectedTab)
+            .animation(MorphUniversalAnimation.stateExpansion, value: model.activeContextFeature)
             
             Spacer(minLength: 0)
         }
@@ -210,6 +216,12 @@ public struct MorphIslandView: View {
             HStack(spacing: 0) {
                 // Left Wing: Outside camera notch, 100% visible
                 leftCompactWing
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .leading).combined(with: .opacity),
+                            removal: .move(edge: .leading).combined(with: .opacity)
+                        )
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
                 
                 // Center: Hardware camera notch blind spot (zero elements behind camera!)
@@ -219,6 +231,12 @@ public struct MorphIslandView: View {
                 
                 // Right Wing: Outside camera notch, 100% visible
                 rightCompactWing
+                    .transition(
+                        .asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        )
+                    )
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(height: model.idleHeight)
@@ -236,7 +254,7 @@ public struct MorphIslandView: View {
         .contentShape(Rectangle())
         .onTapGesture {
             model.syncExpandedFeatureWithActiveContext()
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            withAnimation(MorphUniversalAnimation.stateExpansion) {
                 model.isExpanded = true
             }
         }
@@ -312,7 +330,7 @@ public struct MorphIslandView: View {
                         .foregroundColor(.white)
                     
                     let snippet = model.scratchpad.text
-                        .replacingOccurrences(of: "\n", with: " • ")
+                        .replacingOccurrences(of: "\n", with: " — ")
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     
                     Text(snippet.isEmpty ? "Tap to view scratchpad" : snippet)

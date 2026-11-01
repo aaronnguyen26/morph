@@ -494,7 +494,7 @@ pages = [
      {
          "summary": "Live Pomodoro countdown activity with tabular digits and phase indicators running while user codes or writes",
          "left_title": "◷ Focus Session (Work)",
-         "left_sub": "Phase 1 • Deep Work",
+         "left_sub": "Phase 1 — Deep Work",
          "right_title": "24:59",
          "right_sub": "Remaining Time",
          "kind": "standard"
@@ -507,7 +507,7 @@ pages = [
      {
          "summary": "Live music streaming activity displaying track title, artist, and animated frequency equalizer bars",
          "left_title": "♫ BIRDS OF A FEATHER",
-         "left_sub": "Billie Eilish • HIT ME HARD",
+         "left_sub": "Billie Eilish — HIT ME HARD",
          "right_title": "Now Playing",
          "right_sub": "Spatial Audio",
          "kind": "waveform"
@@ -533,7 +533,7 @@ pages = [
      {
          "summary": "Live meeting countdown indicator with 1-click video call join button ready before meetings start",
          "left_title": "In 14m: Design Review & Standup",
-         "left_sub": "Virtual Room A • 4 Attendees",
+         "left_sub": "Virtual Room A — 4 Attendees",
          "right_title": "⇲ Join Call",
          "right_sub": "FaceTime / Meet",
          "kind": "button"
@@ -545,8 +545,8 @@ pages = [
     (6, "Profile & Preferences", "Apple ID & System Control Center",
      {
          "summary": "Apple ID cloud synchronization status, MacBook battery telemetry, and system performance health",
-         "left_title": " Aaron Nguyen • Apple ID",
-         "left_sub": "iCloud Synced • All Macs",
+         "left_title": " Minh Nguyen — Apple ID",
+         "left_sub": "iCloud Synced — All Macs",
          "right_title": "98% ⚡ Battery",
          "right_sub": "Optimized Charging",
          "kind": "standard"
@@ -585,7 +585,7 @@ pages = [
      {
          "summary": "Live question tracker and field intelligence indicator displaying current question number and autofill readiness",
          "left_title": "Q2/12 SHORT: Full Name",
-         "left_sub": "Google Forms • Polar Browser",
+         "left_sub": "Google Forms — Polar Browser",
          "right_title": "⚡ AUTOFILL",
          "right_sub": "Press 1 or Enter",
          "kind": "standard"

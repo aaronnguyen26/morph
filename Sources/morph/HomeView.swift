@@ -54,13 +54,13 @@ public struct HomeView: View {
     
     private var contextualSubtitle: String {
         if model.pomodoro.isRunning {
-            return "Focus block in progress • \(model.pomodoro.formattedTime)"
+            return "Focus in Progress — \(model.pomodoro.formattedTime)"
         } else if model.media.isPlaying {
-            return "Now playing • \(model.media.trackTitle.isEmpty ? "YouTube Music" : model.media.trackTitle)"
+            return "Now Playing — \(model.media.trackTitle.isEmpty ? "YouTube Music" : model.media.trackTitle)"
         } else if model.meetingController.isInCall {
-            return "In meeting • \(model.meetingController.formattedCallDuration)"
+            return "In Meeting — \(model.meetingController.formattedCallDuration)"
         } else {
-            return "Ready for your first focus session"
+            return "Ready for Focus"
         }
     }
     
@@ -104,6 +104,7 @@ public struct HomeView: View {
     // MARK: - Left Flank: Glance Telemetry
     private var leftGlanceFlank: some View {
         Button(action: {
+            MorphHaptics.levelChange()
             model.openFeature(.calendar)
         }) {
             VStack(alignment: .leading, spacing: 3.5) {
@@ -122,10 +123,16 @@ public struct HomeView: View {
                     .foregroundColor(model.theme.textSecondary)
                     .lineLimit(1)
                 
-                Text(nextMeetingSummary)
-                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
-                    .foregroundColor(model.theme.textTertiary)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(nextMeetingSummary)
+                        .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(model.theme.textPrimary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Capsule())
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -152,10 +159,11 @@ public struct HomeView: View {
         VStack(spacing: 4) {
             // Living Orbital Mascot
             MorphyMascotView(model: model)
-                .frame(height: 60)
+                .frame(height: 56)
             
             // Personalized Greeting
             Button(action: {
+                MorphHaptics.levelChange()
                 model.openFeature(.profile)
             }) {
                 Text("\(greetingText), \(model.supabase.currentUser.firstName)")
@@ -172,11 +180,20 @@ public struct HomeView: View {
             }
             .help("Open Profile (⌘5)")
             
-            // Dynamic Context Subtitle
-            Text(contextualSubtitle)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(model.theme.textTertiary)
-                .lineLimit(1)
+            // Dynamic Context Status Capsule (Apple Frosted Glass)
+            HStack(spacing: 4) {
+                Text(contextualSubtitle)
+                    .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(model.theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2.5)
+            .background(Color.white.opacity(0.06))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+            )
         }
     }
     
@@ -191,7 +208,10 @@ public struct HomeView: View {
             
             // Focus Session Action Capsule
             HStack(spacing: 5) {
-                Button(action: { model.openFeature(.timer) }) {
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.openFeature(.timer)
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "flame.fill")
                             .font(.system(size: 8))
@@ -204,6 +224,7 @@ public struct HomeView: View {
                 Spacer(minLength: 2)
                 
                 Button(action: {
+                    MorphHaptics.alignment()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                         model.pomodoro.toggle()
                     }
@@ -233,7 +254,10 @@ public struct HomeView: View {
             
             // YouTube Music Action Capsule
             HStack(spacing: 5) {
-                Button(action: { model.openFeature(.music) }) {
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.openFeature(.music)
+                }) {
                     HStack(spacing: 4) {
                         Image(systemName: "play.circle.fill")
                             .font(.system(size: 8))
@@ -246,6 +270,7 @@ public struct HomeView: View {
                 Spacer(minLength: 2)
                 
                 Button(action: {
+                    MorphHaptics.alignment()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
                         model.media.togglePlay()
                     }
@@ -275,6 +300,7 @@ public struct HomeView: View {
             
             // Scratchpad Action Capsule
             Button(action: {
+                MorphHaptics.levelChange()
                 model.openFeature(.notes)
             }) {
                 HStack(spacing: 5) {

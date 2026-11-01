@@ -545,7 +545,7 @@ public final class MorphController: NSObject {
         model.syncExpandedFeatureWithActiveContext()
         expandPanel()
         // Fluid Apple Dynamic Island expansion spring: swift organic attack with natural settle
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
             self.model.isExpanded = true
         }
         if !MorphEnvironment.isTestingEnvironment {
@@ -575,7 +575,7 @@ public final class MorphController: NSObject {
             
             self.model.isHovered = false
             // Crisp, zero-clutter collapse spring: quick, controlled retraction without bouncing or stutter
-            withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
+            withAnimation(MorphUniversalAnimation.stateRetraction) {
                 self.model.isExpanded = false
             }
             self.scheduleWindowShrink()
@@ -598,7 +598,7 @@ public final class MorphController: NSObject {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             guard !self.model.isExpanded else { return }
-            self.resizePanelToRestingState()
+            self.applyRestingPanelGeometry()
             self.shrinkWorkItem = nil
         }
         self.shrinkWorkItem = workItem
@@ -607,12 +607,22 @@ public final class MorphController: NSObject {
     }
     
     private func resizePanelToRestingState() {
+        let w = model.currentWidth.rounded()
+        if w < panel.frame.width && !model.isExpanded {
+            // Shrinking: give retraction spring buffer so shrinking wings don't get clipped
+            scheduleWindowShrink()
+        } else {
+            applyRestingPanelGeometry()
+        }
+    }
+    
+    private func applyRestingPanelGeometry() {
         let screen = targetScreen()
         let w = model.currentWidth.rounded()
         let h = model.currentHeight.rounded()
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
         if !model.isExpanded && !MorphEnvironment.isTestingEnvironment {
-            panel.ignoresMouseEvents = true
+            panel.ignoresMouseEvents = (model.compactHUDMode == .none)
         }
     }
     
