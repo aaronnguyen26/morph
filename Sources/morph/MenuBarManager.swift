@@ -32,12 +32,13 @@ public final class MenuBarManager: NSObject {
     }
     
     private func observeModel() {
-        Publishers.Merge5(
+        Publishers.Merge6(
             model.$isExpanded.map { _ in () },
             model.$isPinned.map { _ in () },
             model.$selectedTab.map { _ in () },
             model.pomodoro.$isRunning.map { _ in () },
-            model.theme.$mode.map { _ in () }
+            model.theme.$mode.map { _ in () },
+            model.$interactionMode.map { _ in () }
         )
         .receive(on: RunLoop.main)
         .sink { [weak self] in
@@ -83,6 +84,23 @@ public final class MenuBarManager: NSObject {
         pinItem.keyEquivalentModifierMask = [.command, .option]
         pinItem.target = self
         menu.addItem(pinItem)
+        
+        // Mode Submenu
+        let modeSubmenu = NSMenu()
+        for mode in MorphInteractionMode.allCases {
+            let isSelected = (mode == model.interactionMode)
+            let item = NSMenuItem(
+                title: "\(mode.rawValue) \(isSelected ? "✓" : "")",
+                action: #selector(selectInteractionMode(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = mode
+            item.target = self
+            modeSubmenu.addItem(item)
+        }
+        let modeMenuItem = NSMenuItem(title: "Interaction Mode", action: nil, keyEquivalent: "")
+        modeMenuItem.submenu = modeSubmenu
+        menu.addItem(modeMenuItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -172,6 +190,19 @@ public final class MenuBarManager: NSObject {
     
     @objc private func copyNotes() {
         model.scratchpad.copyAll()
+    }
+    
+    @objc private func selectInteractionMode(_ sender: NSMenuItem) {
+        if let mode = sender.representedObject as? MorphInteractionMode {
+            model.interactionMode = mode
+            if mode == .spotlightBar {
+                model.isExpanded = false
+            } else {
+                model.isSpotlightBarActive = false
+                model.isTimerPopupActive = false
+            }
+            controller.updatePanelGeometry()
+        }
     }
     
     @objc private func selectThemeMode(_ sender: NSMenuItem) {

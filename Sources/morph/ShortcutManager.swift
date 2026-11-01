@@ -836,6 +836,8 @@ public final class ShortcutManager: NSObject, ObservableObject {
         model.isCommandBarPresented = false
         withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
             model.isExpanded = false
+            model.isSpotlightBarActive = false
+            model.isTimerPopupActive = false
         }
         controller.handleMouseExit()
     }
