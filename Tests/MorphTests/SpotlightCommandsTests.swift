@@ -120,7 +120,7 @@ final class SpotlightCommandsTests: XCTestCase {
         
         model.handleSpotlightSubmit()
         XCTAssertFalse(model.isSpotlightBarActive)
-        XCTAssertTrue(model.isExpanded)
+        XCTAssertFalse(model.isExpanded)
         XCTAssertEqual(model.selectedTab, .calendar)
         XCTAssertTrue(model.calendar.events.contains(where: { $0.title == "Sarah" }))
         
@@ -187,11 +187,11 @@ final class SpotlightCommandsTests: XCTestCase {
         XCTAssertEqual(MorphSpotlightCommandParser.detectType(from: "what do i have today"), .calendar)
         
         let planCmd = MorphSpotlightCommandParser.parse("what my plan for today")
-        XCTAssertEqual(planCmd, .calendar(action: .view))
+        XCTAssertEqual(planCmd, .calendar(action: .todaySummary))
         
         model.spotlightQuery = "what my plan for today"
         model.handleSpotlightSubmit()
-        XCTAssertTrue(model.isExpanded)
+        XCTAssertFalse(model.isExpanded)
         XCTAssertEqual(model.selectedTab, .calendar)
         
         // Focus timer conversational queries

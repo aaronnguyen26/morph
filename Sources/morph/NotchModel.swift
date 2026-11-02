@@ -97,6 +97,31 @@ public struct MorphTimerQueryParser {
         var extractedMinutes: Int? = nil
         var textWithoutTime = raw
         
+        // Natural verbal hour/fraction checks:
+        if lower.contains("an hour and a half") || lower.contains("hour and a half") || lower.contains("one and a half hours") || lower.contains("1.5 hours") {
+            extractedMinutes = 90
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)an hour and a half", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)hour and a half", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)one and a half hours", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)1.5 hours", with: "", options: .regularExpression)
+        } else if lower.contains("half an hour") || lower.contains("half hour") {
+            extractedMinutes = 30
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)half an hour", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)half hour", with: "", options: .regularExpression)
+        } else if lower.contains("quarter of an hour") || lower.contains("quarter hour") {
+            extractedMinutes = 15
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)quarter of an hour", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)quarter hour", with: "", options: .regularExpression)
+        } else if lower.contains("two hours") || lower.contains("2 hours") {
+            extractedMinutes = 120
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)two hours", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)2 hours", with: "", options: .regularExpression)
+        } else if lower.contains("an hour") || lower.contains("one hour") {
+            extractedMinutes = 60
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)an hour", with: "", options: .regularExpression)
+            textWithoutTime = textWithoutTime.replacingOccurrences(of: "(?i)one hour", with: "", options: .regularExpression)
+        }
+        
         // 1. Check for hour patterns: e.g. "1h 30m", "1.5h", "2h", "1 hr", "1 hour"
         if let hourRegex = try? NSRegularExpression(pattern: #"(?i)(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)(?:\s*(\d+)\s*(?:m|mins?|minutes?))?"#) {
             let ns = raw as NSString
@@ -614,6 +639,9 @@ public final class NotchModel: ObservableObject {
         case .timer(let minutes, let title, let autoStart):
             startFocusTimerInPill(minutes: minutes, title: title, autoStart: autoStart, asBackgroundTaskPill: true)
             
+        case .timerControl(let action):
+            executeTimerControlAction(action)
+            
         case .music(let action):
             executeMusicAction(action)
             
@@ -630,11 +658,79 @@ public final class NotchModel: ObservableObject {
     
     private func isGeneralAIQuery(_ query: String) -> Bool {
         let lower = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let directQuestions = ["time", "what time", "what time is it", "clock", "date", "what is the date", "what's the date", "today's date", "day is it", "what day is it", "hello", "hi", "hey", "good morning", "good afternoon", "good evening"]
+        let directQuestions = [
+            "time", "what time", "what time is it", "clock",
+            "date", "what is the date", "what's the date", "today's date", "day is it", "what day is it",
+            "hello", "hi", "hey", "good morning", "good afternoon", "good evening",
+            "how are you", "focus tip", "give me a tip", "quote", "motivate me", "joke", "tell me a joke"
+        ]
         if directQuestions.contains(where: { lower == $0 || lower.contains($0) }) {
             return false
         }
+        
+        // Comprehensive questions, study plans, guides & deep explanations open the large UI
+        if lower.hasPrefix("how to") || lower.hasPrefix("how do") || lower.hasPrefix("why") || lower.hasPrefix("explain") || lower.contains("study plan") || lower.contains("help") || lower.contains("features") || lower.contains("commands") || lower.contains("cross entropy") {
+            return true
+        }
+        
+        // Direct task entries (e.g. "reading response #4", "finish the design") stay in the pill HUD
+        let taskIndicators = ["reading", "essay", "homework", "review", "code", "design", "write", "finish", "prepare", "draft", "project", "presentation", "assignment", "paper"]
+        if taskIndicators.contains(where: { lower.contains($0) }) {
+            return false
+        }
         return true
+    }
+    
+    public func executeTimerControlAction(_ action: TimerControlAction) {
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        
+        switch action {
+        case .pause:
+            self.pomodoro.pause()
+            self.activeBackgroundTaskPill = .timer(title: "Paused", minutes: self.pomodoro.remainingMinutes)
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .resume:
+            self.pomodoro.start()
+            self.isPomodoroSessionActive = true
+            let title = self.customTimerTitle.isEmpty ? "Focus Session" : self.customTimerTitle
+            self.activeBackgroundTaskPill = .timer(title: title, minutes: self.pomodoro.remainingMinutes)
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .stop:
+            self.stopFocusTimerFromPill()
+            
+        case .adjust(let minutesDelta):
+            self.pomodoro.adjustTime(deltaMinutes: minutesDelta)
+            if !self.isPomodoroSessionActive {
+                self.isPomodoroSessionActive = true
+                self.pomodoro.start()
+            }
+            let sign = minutesDelta >= 0 ? "+\(minutesDelta)m" : "\(minutesDelta)m"
+            self.activeBackgroundTaskPill = .timer(title: "Adjusted (\(sign))", minutes: self.pomodoro.remainingMinutes)
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .queryStatus:
+            let mins = self.pomodoro.remainingMinutes
+            let secs = Int(self.pomodoro.timeRemaining) % 60
+            let timeStr = String(format: "%02d:%02d", mins, secs)
+            let stateStr = self.pomodoro.isRunning ? "Remaining" : "Paused"
+            self.activeBackgroundTaskPill = .timer(title: "\(stateStr) \(timeStr)", minutes: mins)
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+        }
     }
     
     public func displayInBigUI(aiResponse: MorphAIResponse) {
@@ -701,6 +797,46 @@ public final class NotchModel: ObservableObject {
                 ctrl.scheduleWindowShrink()
             }
             
+        case .volumeUp:
+            let newVol = min(1.0, self.media.volume + 0.1)
+            self.media.setVolume(newVol)
+            self.activeBackgroundTaskPill = .media(trackTitle: "Volume \(Int(round(newVol * 100)))%", artist: self.media.trackTitle.isEmpty ? "Morph Media" : self.media.trackTitle)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .volumeDown:
+            let newVol = max(0.0, self.media.volume - 0.1)
+            self.media.setVolume(newVol)
+            self.activeBackgroundTaskPill = .media(trackTitle: "Volume \(Int(round(newVol * 100)))%", artist: self.media.trackTitle.isEmpty ? "Morph Media" : self.media.trackTitle)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .mute:
+            self.media.toggleMute()
+            let status = self.media.isMuted ? "Muted" : "Unmuted"
+            self.activeBackgroundTaskPill = .media(trackTitle: status, artist: self.media.trackTitle.isEmpty ? "Morph Media" : self.media.trackTitle)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .queryStatus:
+            let title = self.media.trackTitle.isEmpty ? (self.media.isPlaying ? "Playing Audio" : "No track playing") : self.media.trackTitle
+            let artist = self.media.artistName.isEmpty ? (self.media.isPlaying ? "Playing" : "Paused") : self.media.artistName
+            self.activeBackgroundTaskPill = .media(trackTitle: title, artist: artist)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
         case .open:
             // General music request -> open larger UI to Music page so user can pick
             openFeature(.music)
@@ -740,6 +876,25 @@ public final class NotchModel: ObservableObject {
             self.scratchpad.clear()
             self.isNotePinnedToNotch = false
             self.activeBackgroundTaskPill = .note(previewText: "Notes cleared")
+            self.selectedTab = .notes
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .readPreview:
+            let currentNotes = self.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = currentNotes.isEmpty ? "No notes saved yet" : (currentNotes.components(separatedBy: .newlines).first ?? currentNotes)
+            self.activeBackgroundTaskPill = .note(previewText: preview)
+            self.selectedTab = .notes
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .copyToClipboard:
+            self.scratchpad.copyAll()
+            self.activeBackgroundTaskPill = .note(previewText: "Copied notes to clipboard")
             self.selectedTab = .notes
             self.isExpanded = false
             if let ctrl = MorphController.shared {

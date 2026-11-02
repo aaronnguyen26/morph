@@ -1,7 +1,16 @@
 import Foundation
 
+public enum TimerControlAction: Equatable {
+    case pause
+    case resume
+    case stop
+    case adjust(minutesDelta: Int)
+    case queryStatus
+}
+
 public enum MorphSpotlightCommand: Equatable {
     case timer(minutes: Int, title: String, autoStart: Bool)
+    case timerControl(action: TimerControlAction)
     case music(action: MusicAction)
     case note(action: NoteAction)
     case calendar(action: CalendarAction)
@@ -15,12 +24,18 @@ public enum MusicAction: Equatable {
     case next
     case previous
     case open
+    case volumeUp
+    case volumeDown
+    case mute
+    case queryStatus
 }
 
 public enum NoteAction: Equatable {
     case add(text: String, pinToNotch: Bool)
     case view
     case clear
+    case readPreview
+    case copyToClipboard
 }
 
 public enum CalendarAction: Equatable {
@@ -52,86 +67,132 @@ public struct MorphSpotlightCommandParser {
         }
     }
     
+    public static func normalizeQuery(_ text: String) -> String {
+        var clean = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let typoMap: [String: String] = [
+            "timr": "timer",
+            "tmr": "timer",
+            "focustimer": "focus timer",
+            "pomodro": "pomodoro",
+            "pomo": "pomodoro",
+            "calender": "calendar",
+            "calander": "calendar",
+            "scedule": "schedule",
+            "scheudle": "schedule",
+            "notepadd": "notes",
+            "scratcpad": "scratchpad",
+            "todoo": "todo",
+            "paly": "play",
+            "plau": "play",
+            "musci": "music",
+            "songg": "song"
+        ]
+        
+        let words = clean.components(separatedBy: .whitespaces)
+        let normalizedWords = words.map { word -> String in
+            let trimmedWord = word.trimmingCharacters(in: .punctuationCharacters)
+            if let correction = typoMap[trimmedWord] {
+                return word.replacingOccurrences(of: trimmedWord, with: correction)
+            }
+            return word
+        }
+        clean = normalizedWords.joined(separator: " ")
+        return clean
+    }
+
     public static func detectType(from query: String) -> CommandType {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .unknown }
         let lower = trimmed.lowercased()
+        let norm = normalizeQuery(lower)
         
         // 1. Direct conversational answer queries (time, date, identity, math)
-        if isDirectAnswerQuery(lower) {
+        if isDirectAnswerQuery(norm) {
             return .answer
         }
         
-        // 2. Note commands (explicit note/todo prefixes take high priority)
-        if isNoteQuery(lower) {
-            return .note
-        }
-        
-        // 3. Calendar queries (schedule inquiries & event creation with time/dates)
-        if isCalendarQuery(lower) {
-            return .calendar
-        }
-        
-        // 4. Music commands (natural listening requests, playback controls, genres, URLs)
-        if isMusicQuery(lower) {
-            return .music
-        }
-        
-        // 5. Timer check via explicit timer syntax or natural timer prompts
-        if isTimerQuery(lower) {
+        // 2. Timer live controls (e.g. "pause timer", "+5m", "stop timer", "time left")
+        if isTimerControlQuery(norm) {
             return .timer
         }
         
-        // 6. Navigation keywords
-        if lower == "home" || lower == "dashboard" {
+        // 3. Note commands (explicit note/todo prefixes take high priority)
+        if isNoteQuery(norm) {
+            return .note
+        }
+        
+        // 4. Calendar queries (schedule inquiries & event creation with time/dates)
+        if isCalendarQuery(norm) {
+            return .calendar
+        }
+        
+        // 5. Music commands (natural listening requests, playback controls, genres, URLs)
+        if isMusicQuery(norm) {
+            return .music
+        }
+        
+        // 6. Timer check via explicit timer syntax or natural timer prompts
+        if isTimerQuery(norm) {
+            return .timer
+        }
+        
+        // 7. Navigation keywords
+        if norm == "home" || norm == "dashboard" {
             return .navigation
         }
-        if lower == "profile" || lower == "settings" || lower == "preferences" || lower == "my profile" {
+        if norm == "profile" || norm == "settings" || norm == "preferences" || norm == "my profile" {
             return .navigation
         }
         
-        // 7. General questions / informational queries & conversational response
+        // 8. General questions / informational queries & conversational response
         return .answer
     }
     
     public static func parse(_ text: String) -> MorphSpotlightCommand {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
+        let norm = normalizeQuery(lower)
         
         // MARK: - 1. Direct Conversational Answers & Questions
         if let directAnswer = parseDirectAnswer(trimmed) {
             return directAnswer
         }
         
-        // MARK: - 2. Notes & Scratchpad Commands
-        if isNoteQuery(lower) {
+        // MARK: - 2. Timer Live Controls
+        if let controlAction = parseTimerControl(norm) {
+            return .timerControl(action: controlAction)
+        }
+        
+        // MARK: - 3. Notes & Scratchpad Commands
+        if isNoteQuery(norm) {
             return parseNoteCommand(trimmed)
         }
         
-        // MARK: - 3. Calendar Natural Language Queries
-        if isCalendarQuery(lower) {
+        // MARK: - 4. Calendar Natural Language Queries
+        if isCalendarQuery(norm) {
             return parseCalendarCommand(trimmed)
         }
         
-        // MARK: - 4. Music Player Commands
-        if isMusicQuery(lower) {
+        // MARK: - 5. Music Player Commands
+        if isMusicQuery(norm) {
             return parseMusicCommand(trimmed)
         }
         
-        // MARK: - 5. Focus Timer Commands
-        if isTimerQuery(lower) {
+        // MARK: - 6. Focus Timer Commands
+        if isTimerQuery(norm) {
             return parseTimerCommand(trimmed)
         }
         
-        // MARK: - 6. Navigation (Profile, Home)
-        if lower == "profile" || lower == "my profile" || lower == "open profile" || lower == "settings" || lower == "preferences" {
+        // MARK: - 7. Navigation (Profile, Home)
+        if norm == "profile" || norm == "my profile" || norm == "open profile" || norm == "settings" || norm == "preferences" {
             return .navigation(tab: .profile)
         }
-        if lower == "home" || lower == "dashboard" || lower == "open home" {
+        if norm == "home" || norm == "dashboard" || norm == "open home" {
             return .navigation(tab: .home)
         }
         
-        // MARK: - 7. Intelligent Conversational Assistant (No Arbitrary 25:00 Timer Fallback)
+        // MARK: - 8. Intelligent Conversational Assistant (Contained to 4 core features)
         return generateIntelligentResponse(for: trimmed)
     }
     
@@ -230,36 +291,105 @@ public struct MorphSpotlightCommandParser {
     }
     
     private static func isStandaloneTimerExpression(_ lower: String) -> Bool {
+        let norm = normalizeQuery(lower)
+        // Natural verbal hour/fraction checks:
+        if norm.contains("half an hour") || norm.contains("half hour") ||
+           norm.contains("an hour and a half") || norm.contains("hour and a half") || norm.contains("one and a half hours") ||
+           norm.contains("an hour") || norm.contains("one hour") || norm.contains("two hours") || norm.contains("quarter of an hour") {
+            return true
+        }
         // Explicit timer units: "25m", "15 mins", "1 hour", "45 min"
         if let regex = try? NSRegularExpression(pattern: #"^\s*(\d+)\s*(m|min|mins|minute|minutes|h|hr|hours?)\s*$"#) {
-            let range = NSRange(location: 0, length: (lower as NSString).length)
-            if regex.firstMatch(in: lower, range: range) != nil {
+            let range = NSRange(location: 0, length: (norm as NSString).length)
+            if regex.firstMatch(in: norm, range: range) != nil {
                 return true
             }
         }
         // Standalone numbers 1..180 (e.g. "15", "25", "30", "45", "60")
-        if let num = Int(lower.trimmingCharacters(in: .whitespaces)), num >= 1 && num <= 180 {
+        if let num = Int(norm.trimmingCharacters(in: .whitespaces)), num >= 1 && num <= 180 {
             return true
         }
         return false
     }
     
+    // MARK: - Timer Live Controls Intelligence
+    public static func isTimerControlQuery(_ lower: String) -> Bool {
+        let norm = normalizeQuery(lower)
+        
+        // Adjustments: +5m, +10m, +15m, +5, +10, -5m, -10m, -5, add 5 mins, subtract 5 mins, add 5m to timer
+        if let regex = try? NSRegularExpression(pattern: #"^(?:\+|\-|add\s+|subtract\s+|minus\s+)\s*(\d+)\s*(?:m|mins?|minutes?)?(?:\s+(?:to|from)\s+timer)?"#) {
+            let range = NSRange(location: 0, length: (norm as NSString).length)
+            if regex.firstMatch(in: norm, range: range) != nil {
+                return true
+            }
+        }
+        
+        let controlPhrases = [
+            "pause timer", "pause focus", "pause sprint", "pause countdown",
+            "resume timer", "resume focus", "resume sprint", "continue timer", "unpause timer", "restart timer",
+            "stop timer", "cancel timer", "reset timer", "end timer", "stop sprint", "stop focus",
+            "time left", "how much time left", "how much time is left", "timer status", "timer remaining", "check timer"
+        ]
+        if controlPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return true
+        }
+        return false
+    }
+    
+    public static func parseTimerControl(_ text: String) -> TimerControlAction? {
+        let norm = normalizeQuery(text)
+        
+        // Adjustments: e.g. "+5m", "-5m", "add 10 minutes", "subtract 5 mins"
+        if let regex = try? NSRegularExpression(pattern: #"^(\+|\-|add\s+|subtract\s+|minus\s+)\s*(\d+)"#) {
+            let ns = norm as NSString
+            if let match = regex.firstMatch(in: norm, range: NSRange(location: 0, length: ns.length)) {
+                let signStr = ns.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                let numStr = ns.substring(with: match.range(at: 2))
+                if let delta = Int(numStr) {
+                    let isNegative = signStr == "-" || signStr.hasPrefix("subtract") || signStr.hasPrefix("minus")
+                    let finalDelta = isNegative ? -delta : delta
+                    return .adjust(minutesDelta: finalDelta)
+                }
+            }
+        }
+        
+        // Pause
+        if norm.contains("pause") && (norm.contains("timer") || norm.contains("focus") || norm.contains("sprint")) {
+            return .pause
+        }
+        // Resume
+        if (norm.contains("resume") || norm.contains("continue") || norm.contains("unpause") || norm.contains("restart")) && (norm.contains("timer") || norm.contains("focus") || norm.contains("sprint")) {
+            return .resume
+        }
+        // Stop
+        if (norm.contains("stop") || norm.contains("cancel") || norm.contains("reset") || norm.contains("end")) && (norm.contains("timer") || norm.contains("focus") || norm.contains("sprint")) {
+            return .stop
+        }
+        // Status
+        if norm.contains("time left") || norm.contains("timer status") || norm.contains("timer remaining") || norm.contains("check timer") {
+            return .queryStatus
+        }
+        
+        return nil
+    }
+    
     private static func generateIntelligentResponse(for trimmed: String) -> MorphSpotlightCommand {
         let lower = trimmed.lowercased()
+        let norm = normalizeQuery(lower)
         
         // Conversational math check
-        if let mathAnswer = evaluateMathExpression(lower) {
+        if let mathAnswer = evaluateMathExpression(norm) {
             return .answer(text: mathAnswer, icon: "equal")
         }
         
         // Check for general task/thought entry (e.g. "reading response #4", "finish the design", "study biology")
         let taskIndicators = ["reading", "essay", "homework", "study", "review", "code", "design", "write", "finish", "prepare", "draft", "project", "presentation", "assignment", "paper", "exam", "quiz"]
-        if taskIndicators.contains(where: { lower.contains($0) }) {
+        if taskIndicators.contains(where: { norm.contains($0) }) {
             return .answer(text: "Ready to focus on \(trimmed.capitalized)? Type '25m' to start or 'note' to save", icon: "brain.head.profile")
         }
         
         // Machine Learning & Computer Science queries (e.g. cross entropy loss, loss function)
-        if lower.contains("cross entropy") || lower.contains("cross-entropy") || lower.contains("loss function") || lower.contains("negative log") || lower.contains("lecture notes") {
+        if norm.contains("cross entropy") || norm.contains("cross-entropy") || norm.contains("loss function") || norm.contains("negative log") || norm.contains("lecture notes") {
             return .answer(text: "Cross-Entropy Loss: ℓ(θ) = -∑ log(exp(θ_yᵀ x) / ∑ exp(θ_jᵀ x))", icon: "function")
         }
         
@@ -271,9 +401,10 @@ public struct MorphSpotlightCommandParser {
     public static func generateAIResponse(for query: String, briefAnswer: String? = nil, icon: String? = nil) -> MorphAIResponse {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
+        let norm = normalizeQuery(lower)
         
         // 1. Machine Learning & Mathematics (Cross-entropy loss, loss functions, optimization, calculus)
-        if lower.contains("cross entropy") || lower.contains("cross-entropy") || lower.contains("loss function") || lower.contains("negative log") || lower.contains("lecture notes") || lower.contains("2.12") || lower.contains("2.13") || lower.contains("2.14") {
+        if norm.contains("cross entropy") || norm.contains("cross-entropy") || norm.contains("loss function") || norm.contains("negative log") || norm.contains("lecture notes") || norm.contains("2.12") || norm.contains("2.13") || norm.contains("2.14") {
             return MorphAIResponse(
                 query: trimmed,
                 title: "Cross-Entropy Loss in Multiclass Classification",
@@ -296,7 +427,7 @@ public struct MorphSpotlightCommandParser {
         }
         
         // 2. Machine Learning Study Plan / Exam Prep
-        if lower.contains("study plan") || lower.contains("study for ml") || lower.contains("how to study") || lower.contains("exam") || lower.contains("quiz") {
+        if norm.contains("study plan") || norm.contains("study for ml") || norm.contains("how to study") || norm.contains("exam") || norm.contains("quiz") {
             return MorphAIResponse(
                 query: trimmed,
                 title: "Mastery Study Plan: Machine Learning",
@@ -318,7 +449,7 @@ public struct MorphSpotlightCommandParser {
         }
         
         // 3. Mathematical Calculations (e.g. "15 * 4", "125 / 5")
-        if let mathAnswer = evaluateMathExpression(lower) {
+        if let mathAnswer = evaluateMathExpression(norm) {
             return MorphAIResponse(
                 query: trimmed,
                 title: "Arithmetic Calculation",
@@ -339,7 +470,7 @@ public struct MorphSpotlightCommandParser {
         }
         
         // 4. Productivity & Focus Strategy
-        if lower.contains("focus") || lower.contains("productivity") || lower.contains("flow") || lower.contains("deep work") {
+        if norm.contains("focus") || norm.contains("productivity") || norm.contains("flow") || norm.contains("deep work") {
             return MorphAIResponse(
                 query: trimmed,
                 title: "Deep Flow Productivity Architecture",
@@ -360,31 +491,33 @@ public struct MorphSpotlightCommandParser {
             )
         }
         
-        // 5. Morph Capabilities & Identity
-        if lower == "who are you" || lower == "what are you" || lower == "what is morph" || lower.contains("what can you do") || lower == "help" {
+        // 5. Morph Capabilities & Identity (Contained to 4 core features)
+        if norm == "who are you" || norm == "what are you" || norm == "what is morph" || norm.contains("what can you do") || norm == "help" || norm.contains("features") || norm.contains("commands") || norm.contains("how does morph work") || norm.contains("how to use") {
             return MorphAIResponse(
                 query: trimmed,
                 title: "Morph Dynamic Island Architecture",
                 category: "System Capabilities",
                 icon: "sparkles",
-                summary: "Morph is an intelligent Dynamic Island for macOS designed for frictionless focus, media, scheduling, and AI assistance.",
-                detailedContent: "You can control Morph directly via keyboard or hover dwelling:\n• Focus Sprints: Type '25m' or 'timer 10m' to launch customizable countdowns with living progress indicators.\n• Music Cockpit: Type 'play lofi' or 'pause' to stream directly via YouTube Music.\n• Notes & Scratchpad: Type 'note [text]' to instantly capture thoughts onto the island.\n• Calendar: Type 'what is my plan' or 'meet with Minh at 3pm' to view and schedule events.\n• AI Assistant: Ask questions, formulas, or study topics directly from the spotlight bar.",
+                summary: "Morph is an intelligent Dynamic Island desktop companion containing 4 focused productivity features.",
+                detailedContent: "Morph operates seamlessly via keyboard prompts and resting stealth controls:\n\n1. Focus Timer: Start sprints ('25m', 'timer 45m', 'half an hour on math') and control live timers ('pause timer', '+5m', 'stop timer', 'time left').\n2. Notes & Scratchpad: Capture quick thoughts ('note [text]', 'remember to ...', 'todo: ...'), preview ('read notes'), copy to clipboard ('copy notes'), or reset ('clear notes').\n3. Calendar: Inquire about schedule ('what's on my calendar today', 'when is my next meeting', 'am i free today') or quick-schedule ('meet Sarah at 2:30pm for 45m').\n4. Music Player: Stream audio ('play lofi beats', 'put on jazz') and control playback ('pause', 'next', 'volume up', 'volume down', 'mute').",
                 keyPoints: [
-                    "100% Monochrome Apple Liquid Glass aesthetic",
-                    "Living 3D Morphy Mascot companion",
-                    "Non-intrusive click-through resting stealth mode"
+                    "Focus Timer: '25m', 'half an hour', 'pause timer', '+5m'",
+                    "Notes: 'note [text]', 'remember to ...', 'read notes', 'copy notes'",
+                    "Calendar: 'meetings today', 'meet Alex at 3pm for 45m'",
+                    "Music: 'play lofi', 'volume up', 'next song', 'mute'"
                 ],
                 suggestedActions: [
-                    "Explore Calendar",
+                    "Start Focus Timer",
                     "Open Scratchpad",
-                    "Start Focus Timer"
+                    "Explore Calendar",
+                    "Play Lofi Beats"
                 ]
             )
         }
         
         // 6. Task or Project Entry (e.g. "reading response #4", "design wireframes")
         let taskIndicators = ["reading", "essay", "homework", "study", "review", "code", "design", "write", "finish", "prepare", "draft", "project", "presentation", "assignment", "paper", "exam", "quiz"]
-        if taskIndicators.contains(where: { lower.contains($0) }) {
+        if taskIndicators.contains(where: { norm.contains($0) }) {
             return MorphAIResponse(
                 query: trimmed,
                 title: trimmed.capitalized,
@@ -432,6 +565,7 @@ public struct MorphSpotlightCommandParser {
     // MARK: 1. Calendar Intelligence
     public static func isCalendarQuery(_ lower: String) -> Bool {
         if lower.isEmpty { return false }
+        let norm = normalizeQuery(lower)
         
         // 1. Natural language schedule inquiries
         let inquiryPhrases = [
@@ -440,18 +574,20 @@ public struct MorphSpotlightCommandParser {
             "what do i have today", "what do i have scheduled", "what do i have",
             "on my calendar", "do i have meetings", "my meetings", "upcoming meetings",
             "upcoming events", "agenda", "today's agenda", "when is my next meeting",
+            "next meeting", "upcoming meeting", "what's next", "what is next",
             "check my calendar", "show my calendar", "view calendar", "open calendar",
             "show calendar", "calendar schedule", "do i have any meetings", "have any meetings",
-            "any meetings today", "meetings today", "meeting today"
+            "any meetings today", "meetings today", "meeting today",
+            "am i free today", "do i have time this afternoon", "free today"
         ]
-        if inquiryPhrases.contains(where: { lower.contains($0) }) {
+        if inquiryPhrases.contains(where: { norm.contains($0) }) {
             return true
         }
-        if (lower.contains("meeting") || lower.contains("meetings") || lower.contains("schedule") || lower.contains("calendar") || lower.contains("agenda")) &&
-           (lower.contains("today") || lower.contains("tomorrow") || lower.contains("upcoming") || lower.contains("next") || lower.contains("have") || lower.contains("any") || lower.contains("what") || lower.contains("check") || lower.contains("show")) {
+        if (norm.contains("meeting") || norm.contains("meetings") || norm.contains("schedule") || norm.contains("calendar") || norm.contains("agenda")) &&
+           (norm.contains("today") || norm.contains("tomorrow") || norm.contains("upcoming") || norm.contains("next") || norm.contains("have") || norm.contains("any") || norm.contains("what") || norm.contains("check") || norm.contains("show") || norm.contains("free")) {
             return true
         }
-        if lower == "calendar" || lower == "my calendar" || lower == "cal" || lower == "events" || lower == "today" {
+        if norm == "calendar" || norm == "my calendar" || norm == "cal" || norm == "events" || norm == "today" {
             return true
         }
         
@@ -459,22 +595,22 @@ public struct MorphSpotlightCommandParser {
         let eventPrefixes = [
             "meet ", "meeting ", "event ", "schedule ", "add event", "add meeting",
             "new event", "new meeting", "sync with ", "call with ", "coffee with ",
-            "lunch with ", "dinner with ", "interview with "
+            "lunch with ", "dinner with ", "interview with ", "appointment with "
         ]
         for p in eventPrefixes {
-            if lower.hasPrefix(p) {
+            if norm.hasPrefix(p) {
                 return true
             }
         }
         
         // 3. Time-marker based event additions (e.g. "coffee with Sarah at 10am")
-        if containsTimeMarker(lower) {
+        if containsTimeMarker(norm) {
             let eventKeywords = [
                 "meet", "meeting", "sync", "call", "1on1", "1:1", "coffee", "lunch",
                 "dinner", "interview", "appointment", "doctor", "dentist", "standup",
                 "review", "demo", "presentation", "session", "class", "lecture", "hangout"
             ]
-            if eventKeywords.contains(where: { lower.contains($0) }) {
+            if eventKeywords.contains(where: { norm.contains($0) }) {
                 return true
             }
         }
@@ -484,19 +620,19 @@ public struct MorphSpotlightCommandParser {
     
     public static func parseCalendarCommand(_ text: String) -> MorphSpotlightCommand {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
+        let norm = normalizeQuery(trimmed)
         
         // 1. General calendar requests to open/view the calendar UI:
-        let isExplicitViewRequest = (lower.contains("view") || lower.contains("open") || lower.contains("show") || lower.contains("browse")) && (lower.contains("calendar") || lower.contains("schedule")) && !lower.contains("today")
+        let isExplicitViewRequest = (norm.contains("view") || norm.contains("open") || norm.contains("show") || norm.contains("browse")) && (norm.contains("calendar") || norm.contains("schedule")) && !norm.contains("today")
         let generalPhrases = ["calendar", "cal", "events", "my calendar", "schedule", "calendar schedule", "view my calendar schedule", "open calendar schedule"]
-        if isExplicitViewRequest || generalPhrases.contains(lower) {
+        if isExplicitViewRequest || generalPhrases.contains(norm) {
             return .calendar(action: .open)
         }
         
         // 2. Specific fetchable schedule inquiries for today / next meeting -> display in background lengthened pill:
-        let isTodayOrNextInquiry = lower.contains("today") || lower.contains("next meeting") || lower.contains("upcoming meeting") || lower.contains("meetings today") || lower.contains("agenda today") || lower.contains("plan for today") || lower.contains("on my calendar") || lower.contains("on their calendar") || lower.contains("do i have meetings") || lower.contains("what do i have") || lower.contains("what's on my calendar") || lower.contains("what is on my calendar") || lower.contains("what on my calendar") || lower.contains("what on their calendar")
+        let isTodayOrNextInquiry = norm.contains("today") || norm.contains("next meeting") || norm.contains("upcoming meeting") || norm.contains("meetings today") || norm.contains("agenda today") || norm.contains("plan for today") || norm.contains("on my calendar") || norm.contains("on their calendar") || norm.contains("do i have meetings") || norm.contains("what do i have") || norm.contains("what's on my calendar") || norm.contains("what is on my calendar") || norm.contains("what on my calendar") || norm.contains("what on their calendar") || norm.contains("what's next") || norm.contains("what is next") || norm.contains("am i free") || norm.contains("free today")
         
-        if isTodayOrNextInquiry && !containsTimeMarker(lower) && !lower.hasPrefix("schedule ") && !lower.hasPrefix("add event") && !lower.hasPrefix("meet ") {
+        if isTodayOrNextInquiry && !containsTimeMarker(norm) && !norm.hasPrefix("schedule ") && !norm.hasPrefix("add event") && !norm.hasPrefix("meet ") {
             return .calendar(action: .todaySummary)
         }
         
@@ -541,9 +677,23 @@ public struct MorphSpotlightCommandParser {
             }
         }
         
-        // 3. Parse duration (e.g. "for 45m", "for 1 hour", "for 30 mins")
+        // 3. Parse duration (e.g. "for 45m", "for 1 hour", "for 30 mins", "for half an hour")
         var durationMinutes = 30
-        if let durRegex = try? NSRegularExpression(pattern: #"(?i)\bfor\s*(\d+)\s*(?:m|mins?|minutes?|hours?|h)\b"#) {
+        let lowerTitle = titleText.lowercased()
+        if lowerTitle.contains("for half an hour") || lowerTitle.contains("for half hour") {
+            durationMinutes = 30
+            titleText = titleText.replacingOccurrences(of: "(?i)for half an hour", with: "", options: .regularExpression)
+            titleText = titleText.replacingOccurrences(of: "(?i)for half hour", with: "", options: .regularExpression)
+        } else if lowerTitle.contains("for an hour and a half") || lowerTitle.contains("for 1.5 hours") {
+            durationMinutes = 90
+            titleText = titleText.replacingOccurrences(of: "(?i)for an hour and a half", with: "", options: .regularExpression)
+            titleText = titleText.replacingOccurrences(of: "(?i)for 1.5 hours", with: "", options: .regularExpression)
+        } else if lowerTitle.contains("for an hour") || lowerTitle.contains("for 1 hour") || lowerTitle.contains("for 1 hr") {
+            durationMinutes = 60
+            titleText = titleText.replacingOccurrences(of: "(?i)for an hour", with: "", options: .regularExpression)
+            titleText = titleText.replacingOccurrences(of: "(?i)for 1 hour", with: "", options: .regularExpression)
+            titleText = titleText.replacingOccurrences(of: "(?i)for 1 hr", with: "", options: .regularExpression)
+        } else if let durRegex = try? NSRegularExpression(pattern: #"(?i)\bfor\s*(\d+)\s*(?:m|mins?|minutes?|hours?|h)\b"#) {
             let ns = titleText as NSString
             if let match = durRegex.firstMatch(in: titleText, range: NSRange(location: 0, length: ns.length)) {
                 let numStr = ns.substring(with: match.range(at: 1))
@@ -574,9 +724,10 @@ public struct MorphSpotlightCommandParser {
     // MARK: 2. Music Intelligence
     public static func isMusicQuery(_ lower: String) -> Bool {
         if lower.isEmpty { return false }
+        let norm = normalizeQuery(lower)
         
-        // Guard against timer / stopwatch queries being misinterpreted as music (e.g. "put on a timer")
-        if lower.contains("timer") || lower.contains("countdown") || lower.contains("stopwatch") || lower.contains("pomodoro") {
+        // Guard against timer / stopwatch queries being misinterpreted as music
+        if norm.contains("timer") || norm.contains("countdown") || norm.contains("stopwatch") || norm.contains("pomodoro") {
             return false
         }
         
@@ -586,19 +737,23 @@ public struct MorphSpotlightCommandParser {
             "show music", "show music player", "open player", "browse music",
             "ytm", "youtube music", "spotify", "songs", "view player"
         ]
-        if openWords.contains(lower) {
+        if openWords.contains(norm) {
             return true
         }
         
-        // 2. Playback Controls
+        // 2. Playback Controls & Volume
         let controlPrefixes = [
             "pause", "stop playing", "stop song", "stop music", "pause audio", "pause song", "pause player", "mute music", "quiet",
             "resume", "resume music", "resume song", "unpause", "continue playing", "start playing",
             "next", "skip", "next track", "next song", "skip track", "skip song",
-            "prev", "previous", "previous track", "previous song", "back song", "last track", "replay", "rewind"
+            "prev", "previous", "previous track", "previous song", "back song", "last track", "replay", "rewind",
+            "volume up", "turn it up", "louder", "crank it up", "+vol", "boost volume",
+            "volume down", "turn it down", "quieter", "softer", "-vol", "lower volume",
+            "mute", "unmute",
+            "what's playing", "what is playing", "current song", "what song is this", "song info", "playing now"
         ]
         for c in controlPrefixes {
-            if lower == c || lower.hasPrefix(c + " ") {
+            if norm == c || norm.hasPrefix(c + " ") {
                 return true
             }
         }
@@ -611,7 +766,7 @@ public struct MorphSpotlightCommandParser {
             "song", "track", "audio", "album"
         ]
         for p in playPhrases {
-            if lower == p || lower.hasPrefix(p + " ") || lower.hasPrefix(p + ":") {
+            if norm == p || norm.hasPrefix(p + " ") || norm.hasPrefix(p + ":") {
                 return true
             }
         }
@@ -623,13 +778,13 @@ public struct MorphSpotlightCommandParser {
             "classical music", "hip hop", "rock music", "playlist", "radio station"
         ]
         for vibe in musicVibes {
-            if lower.contains(vibe) {
+            if norm.contains(vibe) {
                 return true
             }
         }
         
         // 5. YouTube / Music URLs
-        if lower.contains("music.youtube.com") || lower.contains("youtube.com/watch") || lower.contains("youtu.be/") {
+        if norm.contains("music.youtube.com") || norm.contains("youtube.com/watch") || norm.contains("youtu.be/") {
             return true
         }
         
@@ -638,34 +793,53 @@ public struct MorphSpotlightCommandParser {
     
     public static func parseMusicCommand(_ text: String) -> MorphSpotlightCommand {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
+        let norm = normalizeQuery(trimmed)
+        
+        // Volume controls
+        let volUpPhrases = ["volume up", "turn it up", "louder", "crank it up", "+vol", "boost volume", "volume +"]
+        if volUpPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return .music(action: .volumeUp)
+        }
+        let volDownPhrases = ["volume down", "turn it down", "quieter", "softer", "-vol", "lower volume", "volume -"]
+        if volDownPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return .music(action: .volumeDown)
+        }
+        if norm == "mute" || norm == "unmute" || norm == "mute music" || norm == "unmute music" {
+            return .music(action: .mute)
+        }
+        
+        // Song info / what's playing
+        let queryStatusPhrases = ["what's playing", "what is playing", "current song", "what song is this", "song info", "playing now", "now playing"]
+        if queryStatusPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return .music(action: .queryStatus)
+        }
         
         // Navigation / open
         let openPhrases = ["music", "music player", "player", "open music", "open music player", "show music", "show music player", "open player", "browse music", "ytm", "youtube music", "spotify", "songs", "playlist", "playlists", "view player"]
-        if openPhrases.contains(lower) {
+        if openPhrases.contains(norm) {
             return .music(action: .open)
         }
         
         // Pause / Stop
         let pausePhrases = ["pause", "pause music", "stop music", "pause song", "stop song", "pause player", "stop audio", "stop playing", "quiet", "silence", "mute music"]
-        if pausePhrases.contains(where: { lower == $0 || lower.hasPrefix($0 + " ") }) {
+        if pausePhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
             return .music(action: .pause)
         }
         
         // Next / Skip
         let nextPhrases = ["next", "skip", "next track", "next song", "skip song", "skip track", "next song please"]
-        if nextPhrases.contains(where: { lower == $0 || lower.hasPrefix($0 + " ") }) {
+        if nextPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
             return .music(action: .next)
         }
         
         // Previous
         let prevPhrases = ["prev", "previous", "previous track", "previous song", "back song", "last song", "replay", "rewind"]
-        if prevPhrases.contains(where: { lower == $0 || lower.hasPrefix($0 + " ") }) {
+        if prevPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
             return .music(action: .previous)
         }
         
         // Play standalone / Resume
-        if lower == "play" || lower == "resume" || lower == "resume music" || lower == "unpause" || lower == "continue music" || lower == "start playing" {
+        if norm == "play" || norm == "resume" || norm == "resume music" || norm == "unpause" || norm == "continue music" || norm == "start playing" {
             return .music(action: .play(query: nil))
         }
         
@@ -682,11 +856,11 @@ public struct MorphSpotlightCommandParser {
         
         for prefix in playPrefixes {
             let lowerP = prefix.lowercased()
-            if lower.hasPrefix(lowerP + " ") {
+            if norm.hasPrefix(lowerP + " ") {
                 var query = String(trimmed.dropFirst(lowerP.count + 1)).trimmingCharacters(in: .whitespacesAndNewlines)
                 query = cleanMusicQueryTrailing(query)
                 return .music(action: .play(query: query.isEmpty ? nil : query))
-            } else if lower.hasPrefix(lowerP) && (lowerP.hasSuffix(":") || lowerP.hasSuffix(" ")) {
+            } else if norm.hasPrefix(lowerP) && (lowerP.hasSuffix(":") || lowerP.hasSuffix(" ")) {
                 var query = String(trimmed.dropFirst(lowerP.count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 query = cleanMusicQueryTrailing(query)
                 return .music(action: .play(query: query.isEmpty ? nil : query))
@@ -732,6 +906,7 @@ public struct MorphSpotlightCommandParser {
     // MARK: 3. Notes & Scratchpad Intelligence
     public static func isNoteQuery(_ lower: String) -> Bool {
         if lower.isEmpty { return false }
+        let norm = normalizeQuery(lower)
         
         // 1. Explicit View / Navigation
         let viewWords = [
@@ -739,16 +914,23 @@ public struct MorphSpotlightCommandParser {
             "check notes", "open scratchpad", "show scratchpad", "view scratchpad",
             "my scratchpad", "todo list", "my todos"
         ]
-        if viewWords.contains(lower) {
+        if viewWords.contains(norm) {
             return true
         }
         
         // 2. Clear Action
-        if lower == "clear notes" || lower == "clear scratchpad" || lower == "delete notes" || lower == "empty scratchpad" {
+        let clearPhrases = ["clear notes", "clear scratchpad", "delete notes", "empty scratchpad", "erase notes"]
+        if clearPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
             return true
         }
         
-        // 3. Note capture prefixes
+        // 3. Inspection & Copy
+        let inspectPhrases = ["read notes", "show my notes", "what are my notes", "read scratchpad", "show scratchpad text", "view scratchpad", "copy notes", "copy scratchpad", "copy note"]
+        if inspectPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return true
+        }
+        
+        // 4. Note capture prefixes
         let notePrefixes = [
             "note", "notes", "todo", "todos", "to-do", "memo", "scratchpad",
             "take a note", "take note", "quick note",
@@ -758,7 +940,7 @@ public struct MorphSpotlightCommandParser {
             "add to notes", "add note", "add to scratchpad", "keep track of"
         ]
         for p in notePrefixes {
-            if lower == p || lower.hasPrefix(p + " ") || lower.hasPrefix(p + ":") || lower.hasPrefix(p + " - ") {
+            if norm == p || norm.hasPrefix(p + " ") || norm.hasPrefix(p + ":") || norm.hasPrefix(p + " - ") {
                 return true
             }
         }
@@ -768,21 +950,34 @@ public struct MorphSpotlightCommandParser {
     
     public static func parseNoteCommand(_ text: String) -> MorphSpotlightCommand {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
+        let norm = normalizeQuery(trimmed)
         
-        // View
+        // Clear
+        let clearPhrases = ["clear notes", "clear scratchpad", "delete notes", "empty scratchpad", "erase notes"]
+        if clearPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return .note(action: .clear)
+        }
+        
+        // Read preview
+        let readPhrases = ["read notes", "show my notes", "what are my notes", "read scratchpad", "show scratchpad text", "view scratchpad", "read notes preview"]
+        if readPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return .note(action: .readPreview)
+        }
+        
+        // Copy to clipboard
+        let copyPhrases = ["copy notes", "copy scratchpad", "copy note", "copy my notes"]
+        if copyPhrases.contains(where: { norm == $0 || norm.hasPrefix($0 + " ") }) {
+            return .note(action: .copyToClipboard)
+        }
+        
+        // View (opens large UI)
         let viewWords = [
             "notes", "scratchpad", "my notes", "open notes", "show notes", "view notes",
             "check notes", "open scratchpad", "show scratchpad", "view scratchpad",
             "my scratchpad", "todo list", "my todos"
         ]
-        if viewWords.contains(lower) {
+        if viewWords.contains(norm) {
             return .note(action: .view)
-        }
-        
-        // Clear
-        if lower == "clear notes" || lower == "clear scratchpad" || lower == "delete notes" || lower == "empty scratchpad" {
-            return .note(action: .clear)
         }
         
         // Capture prefixes to strip
@@ -812,10 +1007,10 @@ public struct MorphSpotlightCommandParser {
         var noteContent = trimmed
         for p in prefixes {
             let lowerPrefix = p.lowercased()
-            if lower.hasPrefix(lowerPrefix + " ") {
+            if norm.hasPrefix(lowerPrefix + " ") {
                 noteContent = String(trimmed.dropFirst(lowerPrefix.count + 1))
                 break
-            } else if lower.hasPrefix(lowerPrefix) && (lowerPrefix.hasSuffix(":") || lowerPrefix.hasSuffix(" ")) {
+            } else if norm.hasPrefix(lowerPrefix) && (lowerPrefix.hasSuffix(":") || lowerPrefix.hasSuffix(" ")) {
                 noteContent = String(trimmed.dropFirst(lowerPrefix.count))
                 break
             }
@@ -827,22 +1022,28 @@ public struct MorphSpotlightCommandParser {
     // MARK: 4. Focus Timer Intelligence
     public static func isTimerQuery(_ lower: String) -> Bool {
         if lower.isEmpty { return false }
+        let norm = normalizeQuery(lower)
+        
+        // Live timer controls
+        if isTimerControlQuery(norm) {
+            return true
+        }
         
         // Conversational / question queries (e.g. "how to study for finals", "what can you do") are NOT timer queries
-        if isQuestionOrConversationalQuery(lower) && !lower.contains("timer") {
+        if isQuestionOrConversationalQuery(norm) && !norm.contains("timer") {
             return false
         }
         
         // 1. Navigation / Standalone
-        if lower == "focus timer" || lower == "open timer" || lower == "show timer" || lower == "open focus" || lower == "timer" || lower == "focus" || lower == "pomodoro" {
+        if norm == "focus timer" || norm == "open timer" || norm == "show timer" || norm == "open focus" || norm == "timer" || norm == "focus" || norm == "pomodoro" {
             return true
         }
         
-        // 2. Explicit duration units (e.g. "25m", "15 mins", "1 hour")
-        if isStandaloneTimerExpression(lower) {
+        // 2. Explicit duration units (e.g. "25m", "15 mins", "1 hour", "half an hour", "an hour and a half")
+        if isStandaloneTimerExpression(norm) {
             return true
         }
-        if MorphTimerQueryParser.parse(lower) != nil {
+        if MorphTimerQueryParser.parse(norm) != nil {
             return true
         }
         
@@ -854,10 +1055,10 @@ public struct MorphSpotlightCommandParser {
             "pomodoro for", "pomodoro session", "start a sprint", "focus sprint", "study sprint", "deep work",
             "take a break", "give me a break", "break for"
         ]
-        if timerKeywords.contains(where: { lower.contains($0) }) {
+        if timerKeywords.contains(where: { norm.contains($0) }) {
             return true
         }
-        if lower.hasPrefix("timer") || lower.hasPrefix("break") {
+        if norm.hasPrefix("timer") || norm.hasPrefix("break") {
             return true
         }
         
@@ -866,11 +1067,16 @@ public struct MorphSpotlightCommandParser {
     
     public static func parseTimerCommand(_ text: String) -> MorphSpotlightCommand {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
+        let norm = normalizeQuery(trimmed)
+        
+        // Live timer controls
+        if let control = parseTimerControl(norm) {
+            return .timerControl(action: control)
+        }
         
         // General timer requests -> open larger UI to Focus Timer page so user can pick
         let generalTimerWords = ["timer", "focus", "focus timer", "open timer", "show timer", "open focus", "pomodoro", "pomo", "deep work", "start focus", "timer options"]
-        if generalTimerWords.contains(lower) {
+        if generalTimerWords.contains(norm) {
             return .navigation(tab: .timer)
         }
         
@@ -879,14 +1085,14 @@ public struct MorphSpotlightCommandParser {
             return .timer(minutes: timer.minutes, title: timer.title, autoStart: timer.autoStart)
         }
         
-        // Standalone duration notation (e.g. "25m", "15m", "1h")
-        if isStandaloneTimerExpression(lower) {
-            let mins = extractTimerMinutes(from: lower) ?? 25
+        // Standalone duration notation (e.g. "25m", "15m", "1h", "half an hour")
+        if isStandaloneTimerExpression(norm) {
+            let mins = extractTimerMinutes(from: norm) ?? 25
             return .timer(minutes: mins, title: "\(mins)m Focus", autoStart: true)
         }
         
         // Natural timer prompt with minutes extraction
-        let mins = extractTimerMinutes(from: lower) ?? 25
+        let mins = extractTimerMinutes(from: norm) ?? 25
         let title = extractTimerTitle(from: trimmed, defaultMinutes: mins)
         return .timer(minutes: mins, title: title, autoStart: true)
     }
@@ -894,11 +1100,19 @@ public struct MorphSpotlightCommandParser {
     private static func extractTimerMinutes(from text: String) -> Int? {
         let lower = text.lowercased()
         
-        // Check "half an hour" or "half hour"
+        // Check verbal hour/fraction combinations:
+        if lower.contains("an hour and a half") || lower.contains("hour and a half") || lower.contains("one and a half hours") || lower.contains("1.5 hours") {
+            return 90
+        }
         if lower.contains("half an hour") || lower.contains("half hour") {
             return 30
         }
-        // Check "an hour" or "one hour"
+        if lower.contains("quarter of an hour") || lower.contains("quarter hour") {
+            return 15
+        }
+        if lower.contains("two hours") || lower.contains("2 hours") {
+            return 120
+        }
         if lower.contains("an hour") || lower.contains("one hour") {
             return 60
         }
