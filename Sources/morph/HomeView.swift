@@ -134,14 +134,25 @@ public struct HomeView: View {
                 .background(Color.white.opacity(0.08))
                 .clipShape(Capsule())
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isHoveringGlance ? model.theme.cardBackgroundElevated : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(model.theme.liquidGlassCard)
+                    .background(.ultraThinMaterial)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isHoveringGlance ? model.theme.activeBorder : Color.clear, lineWidth: 0.5)
+                Group {
+                    if isHoveringGlance {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(model.theme.activeBorder, lineWidth: 0.8)
+                    } else {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(model.theme.liquidGlassSpecularBorder, lineWidth: 0.8)
+                    }
+                }
             )
             .contentShape(Rectangle())
         }
@@ -332,5 +343,17 @@ public struct HomeView: View {
             }
             .help("Open Scratchpad (⌘4)")
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(model.theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(model.theme.liquidGlassSpecularBorder, lineWidth: 0.8)
+        )
     }
 }

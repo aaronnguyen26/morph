@@ -244,6 +244,18 @@ public struct PomodoroView: View {
             }
             .padding(.top, 2)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.8)
+        )
     }
     
     // MARK: - Centerpiece: Zen Ring Dial
@@ -445,5 +457,17 @@ public struct PomodoroView: View {
                 .help("Skip Session / Break (⇧⌘S)")
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.8)
+        )
     }
 }

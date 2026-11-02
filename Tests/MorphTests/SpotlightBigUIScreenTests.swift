@@ -88,18 +88,17 @@ final class SpotlightBigUIScreenTests: XCTestCase {
         XCTAssertEqual(model.activeAIResponse?.category, "System Capabilities")
     }
     
-    // MARK: - Point 2 (Continued): Notes, Calendar, Music Open in Biggest UI Screen
+    // MARK: - Point 2 (Continued): General Notes, Calendar, Music Open in Biggest UI Screen
     func testNotesCommandOpensInBiggestUIScreen() {
-        model.spotlightQuery = "note sociology reading response #4"
+        model.spotlightQuery = "open notes"
         model.handleSpotlightSubmit()
         
-        XCTAssertTrue(model.isExpanded, "Note command must open in the biggest UI screen")
+        XCTAssertTrue(model.isExpanded, "General note command must open in the biggest UI screen")
         XCTAssertEqual(model.selectedTab, .notes, "Must navigate to the Notes tab")
-        XCTAssertTrue(model.scratchpad.text.contains("sociology reading response #4"), "Note must be captured in scratchpad text")
     }
     
     func testCalendarCommandOpensInBiggestUIScreen() {
-        model.spotlightQuery = "what is my plan for today"
+        model.spotlightQuery = "calendar"
         model.handleSpotlightSubmit()
         
         XCTAssertTrue(model.isExpanded, "Calendar command must open in the biggest UI screen")
@@ -107,10 +106,10 @@ final class SpotlightBigUIScreenTests: XCTestCase {
     }
     
     func testMusicCommandOpensInBiggestUIScreen() {
-        model.spotlightQuery = "play lofi beats"
+        model.spotlightQuery = "open music"
         model.handleSpotlightSubmit()
         
-        XCTAssertTrue(model.isExpanded, "Music command must open in the biggest UI screen")
+        XCTAssertTrue(model.isExpanded, "General music command must open in the biggest UI screen")
         XCTAssertEqual(model.selectedTab, .music, "Must navigate to the Music tab")
     }
     

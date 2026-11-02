@@ -145,12 +145,15 @@ public struct MorphTimerQueryParser {
         
         // 4. Clean up remaining text to form the personalized title
         var cleanedTitle = textWithoutTime
-            .replacingOccurrences(of: "(?i)^(set|start|run|create)\\s+", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "(?i)^(set a|set|start a|start|run a|run|create a|create|give me a|give me|need a|i need a|put a|put on a|put on|put)\\s+", with: "", options: .regularExpression)
             .replacingOccurrences(of: "(?i)\\b(for|in)\\b", with: "", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
         
         if ["timer", "focus", "focus timer", "pomodoro", "pomo"].contains(cleanedTitle.lowercased()) {
             cleanedTitle = ""
+        }
+        if cleanedTitle.lowercased().contains("break") || cleanedTitle.lowercased().contains("rest") {
+            cleanedTitle = "Break"
         }
         
         let finalMinutes = extractedMinutes ?? 25
@@ -630,21 +633,39 @@ public final class NotchModel: ObservableObject {
             } else {
                 self.media.play()
             }
-            openFeature(.music)
+            // Direct playback action: skip larger UI, stay in compact media HUD
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
             
         case .pause:
             self.media.pause()
-            openFeature(.music)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
             
         case .next:
             self.media.nextTrack()
-            openFeature(.music)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
             
         case .previous:
             self.media.previousTrack()
-            openFeature(.music)
+            self.selectedTab = .music
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
             
         case .open:
+            // General music request -> open larger UI to Music page so user can pick
             openFeature(.music)
         }
     }
@@ -667,15 +688,25 @@ public final class NotchModel: ObservableObject {
             if pinToNotch {
                 self.isNotePinnedToNotch = true
             }
-            openFeature(.notes)
+            // Direct note capture: skip larger UI, pin directly to compact notch HUD
+            self.selectedTab = .notes
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
             
         case .view:
+            // General notes request -> open larger UI to Notes page so user can pick & edit
             openFeature(.notes)
             
         case .clear:
             self.scratchpad.clear()
             self.isNotePinnedToNotch = false
-            openFeature(.notes)
+            self.selectedTab = .notes
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
         }
     }
     
