@@ -428,6 +428,63 @@ public final class CalendarModel: ObservableObject {
         activeAlertEvent = nil
     }
     
+    public struct CalendarBriefingInfo: Equatable {
+        public let headline: String
+        public let detail: String
+        public let meetLink: String?
+        public let event: CalendarEvent?
+        
+        public init(headline: String, detail: String, meetLink: String? = nil, event: CalendarEvent? = nil) {
+            self.headline = headline
+            self.detail = detail
+            self.meetLink = meetLink
+            self.event = event
+        }
+    }
+    
+    public func fetchTodayBriefing() -> CalendarBriefingInfo {
+        let cal = Calendar.current
+        let todayEvents = events.filter { cal.isDate($0.startTime, inSameDayAs: Date()) }
+            .sorted(by: { $0.startTime < $1.startTime })
+            
+        let now = Date()
+        let upcoming = todayEvents.filter { $0.endTime > now }
+        
+        if let next = upcoming.first {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            let timeStr = formatter.string(from: next.startTime)
+            
+            let diffMinutes = Int(next.startTime.timeIntervalSince(now) / 60)
+            let relativeText: String
+            if diffMinutes > 0 {
+                relativeText = "in \(diffMinutes)m"
+            } else if diffMinutes == 0 {
+                relativeText = "starting now"
+            } else {
+                relativeText = "in progress"
+            }
+            
+            let headline = "\(timeStr) • \(next.title)"
+            let detail = "(\(relativeText))"
+            return CalendarBriefingInfo(headline: headline, detail: detail, meetLink: next.meetLink, event: next)
+        } else if !todayEvents.isEmpty {
+            return CalendarBriefingInfo(
+                headline: "Done for today",
+                detail: "\(todayEvents.count) event\(todayEvents.count == 1 ? "" : "s") completed",
+                meetLink: nil,
+                event: nil
+            )
+        } else {
+            return CalendarBriefingInfo(
+                headline: "No events today",
+                detail: "Schedule is completely clear",
+                meetLink: nil,
+                event: nil
+            )
+        }
+    }
+    
     public var nextUpcomingEvent: CalendarEvent? {
         let now = Date()
         return events

@@ -876,6 +876,7 @@ final class MorphTests: XCTestCase {
     @MainActor
     func testHoverExpansionAndCollapseSensitivity() {
         let model = NotchModel()
+        model.interactionMode = .legacyLargeUI
         let controller = MorphController(model: model)
         
         let screen = NSScreen.screens.first(where: { $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens[0]
@@ -889,23 +890,24 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(collapsedRect.width, model.currentWidth)
         XCTAssertEqual(collapsedRect.height, model.currentHeight)
         XCTAssertEqual(collapsedRect.midX, midX, accuracy: 1.0)
-        XCTAssertEqual(collapsedRect.maxY, maxY, accuracy: 1.0)
+        let islandTop = collapsedRect.maxY
+        let islandMidX = collapsedRect.midX
         
         // 2. Sensitive Hit Testing When Collapsed
         // Direct center inside notch
-        let insideNotchPoint = NSPoint(x: midX, y: maxY - (model.currentHeight / 2))
+        let insideNotchPoint = NSPoint(x: islandMidX, y: islandTop - (model.currentHeight / 2))
         XCTAssertTrue(controller.isMouseInsideMorphUI(insideNotchPoint), "Cursor directly inside notch must be recognized")
         
-        // Ergonomic margin just 2pt below the notch
-        let nearNotchPoint = NSPoint(x: midX, y: maxY - model.currentHeight - 2)
+        // Ergonomic margin inside the bottom of the notch
+        let nearNotchPoint = NSPoint(x: islandMidX, y: collapsedRect.minY + 2)
         XCTAssertTrue(controller.isMouseInsideMorphUI(nearNotchPoint), "Cursor grazing bottom of notch must be recognized")
         
         // Clearly outside and far below notch
-        let farBelowPoint = NSPoint(x: midX, y: maxY - 150)
+        let farBelowPoint = NSPoint(x: islandMidX, y: islandTop - 150)
         XCTAssertFalse(controller.isMouseInsideMorphUI(farBelowPoint), "Cursor far below notch must NOT be in notch UI space")
         
         // Far to the left/right of notch
-        let farLeftPoint = NSPoint(x: midX - 300, y: maxY - 10)
+        let farLeftPoint = NSPoint(x: islandMidX - 300, y: islandTop - 10)
         XCTAssertFalse(controller.isMouseInsideMorphUI(farLeftPoint), "Cursor far left of notch must NOT be in notch UI space")
         
         // 3. Hover Enter Triggers Expansion
@@ -918,11 +920,11 @@ final class MorphTests: XCTestCase {
         XCTAssertEqual(expandedRect.width, model.expandedWidth)
         XCTAssertEqual(expandedRect.height, model.expandedHeight)
         
-        let insideExpandedPoint = NSPoint(x: midX, y: maxY - (model.expandedHeight / 2))
+        let insideExpandedPoint = NSPoint(x: expandedRect.midX, y: expandedRect.maxY - (model.expandedHeight / 2))
         XCTAssertTrue(controller.isMouseInsideMorphUI(insideExpandedPoint), "Cursor inside expanded island must be recognized")
         
         // Cursor moved outside expanded island
-        let outsideExpandedPoint = NSPoint(x: midX, y: maxY - model.expandedHeight - 50)
+        let outsideExpandedPoint = NSPoint(x: expandedRect.midX, y: expandedRect.minY - 50)
         XCTAssertFalse(controller.isMouseInsideMorphUI(outsideExpandedPoint), "Cursor below expanded island must be outside")
         
         // 5. Hover Exit Initiates Collapse

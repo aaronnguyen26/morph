@@ -25,7 +25,9 @@ public enum NoteAction: Equatable {
 
 public enum CalendarAction: Equatable {
     case add(title: String, hour: Int?, minute: Int, duration: Int)
-    case view
+    case todaySummary
+    case open
+    public static var view: CalendarAction { .open }
 }
 
 public struct MorphSpotlightCommandParser {
@@ -202,7 +204,7 @@ public struct MorphSpotlightCommandParser {
         return nil
     }
     
-    private static func isMathExpression(_ text: String) -> Bool {
+    public static func isMathExpression(_ text: String) -> Bool {
         let clean = text.replacingOccurrences(of: "what is ", with: "").replacingOccurrences(of: "calculate ", with: "").trimmingCharacters(in: .whitespaces)
         let mathChars = CharacterSet(charactersIn: "0123456789+-*/.() ")
         guard clean.unicodeScalars.allSatisfy({ mathChars.contains($0) }) else { return false }
@@ -449,7 +451,7 @@ public struct MorphSpotlightCommandParser {
            (lower.contains("today") || lower.contains("tomorrow") || lower.contains("upcoming") || lower.contains("next") || lower.contains("have") || lower.contains("any") || lower.contains("what") || lower.contains("check") || lower.contains("show")) {
             return true
         }
-        if lower == "calendar" || lower == "cal" || lower == "events" || lower == "today" {
+        if lower == "calendar" || lower == "my calendar" || lower == "cal" || lower == "events" || lower == "today" {
             return true
         }
         
@@ -484,16 +486,18 @@ public struct MorphSpotlightCommandParser {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
         
-        let inquiryCheck = [
-            "plan for today", "plan today", "my plan", "what my plan", "what is my plan",
-            "my schedule", "what's my schedule", "what is my schedule", "schedule today",
-            "what do i have", "on my calendar", "do i have meetings", "my meetings",
-            "upcoming meetings", "upcoming events", "agenda", "when is my next meeting",
-            "check my calendar", "show my calendar", "view calendar", "open calendar",
-            "show calendar", "calendar", "cal", "events", "today"
-        ]
-        if inquiryCheck.contains(where: { lower == $0 || lower.contains($0) }) && !containsTimeMarker(lower) && !lower.hasPrefix("schedule ") && !lower.hasPrefix("add event") && !lower.hasPrefix("meet ") {
-            return .calendar(action: .view)
+        // 1. General calendar requests to open/view the calendar UI:
+        let isExplicitViewRequest = (lower.contains("view") || lower.contains("open") || lower.contains("show") || lower.contains("browse")) && (lower.contains("calendar") || lower.contains("schedule")) && !lower.contains("today")
+        let generalPhrases = ["calendar", "cal", "events", "my calendar", "schedule", "calendar schedule", "view my calendar schedule", "open calendar schedule"]
+        if isExplicitViewRequest || generalPhrases.contains(lower) {
+            return .calendar(action: .open)
+        }
+        
+        // 2. Specific fetchable schedule inquiries for today / next meeting -> display in background lengthened pill:
+        let isTodayOrNextInquiry = lower.contains("today") || lower.contains("next meeting") || lower.contains("upcoming meeting") || lower.contains("meetings today") || lower.contains("agenda today") || lower.contains("plan for today") || lower.contains("on my calendar") || lower.contains("on their calendar") || lower.contains("do i have meetings") || lower.contains("what do i have") || lower.contains("what's on my calendar") || lower.contains("what is on my calendar") || lower.contains("what on my calendar") || lower.contains("what on their calendar")
+        
+        if isTodayOrNextInquiry && !containsTimeMarker(lower) && !lower.hasPrefix("schedule ") && !lower.hasPrefix("add event") && !lower.hasPrefix("meet ") {
+            return .calendar(action: .todaySummary)
         }
         
         return parseCalendarAddCommand(trimmed)
@@ -637,7 +641,7 @@ public struct MorphSpotlightCommandParser {
         let lower = trimmed.lowercased()
         
         // Navigation / open
-        let openPhrases = ["music", "music player", "player", "open music", "open music player", "show music", "show music player", "open player", "browse music", "ytm", "youtube music", "spotify", "songs", "view player"]
+        let openPhrases = ["music", "music player", "player", "open music", "open music player", "show music", "show music player", "open player", "browse music", "ytm", "youtube music", "spotify", "songs", "playlist", "playlists", "view player"]
         if openPhrases.contains(lower) {
             return .music(action: .open)
         }
@@ -823,6 +827,11 @@ public struct MorphSpotlightCommandParser {
     // MARK: 4. Focus Timer Intelligence
     public static func isTimerQuery(_ lower: String) -> Bool {
         if lower.isEmpty { return false }
+        
+        // Conversational / question queries (e.g. "how to study for finals", "what can you do") are NOT timer queries
+        if isQuestionOrConversationalQuery(lower) && !lower.contains("timer") {
+            return false
+        }
         
         // 1. Navigation / Standalone
         if lower == "focus timer" || lower == "open timer" || lower == "show timer" || lower == "open focus" || lower == "timer" || lower == "focus" || lower == "pomodoro" {

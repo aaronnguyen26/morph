@@ -442,6 +442,14 @@ public final class MediaControllerModel: ObservableObject {
         }
     }
     
+    public func togglePlayPause() {
+        if isPlaying {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
     public func stop() {
         isPlaying = false
         currentTime = 0

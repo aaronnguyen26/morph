@@ -134,16 +134,16 @@ final class SpotlightBarTimerTests: XCTestCase {
         model.spotlightQuery = "25m"
         model.handleSpotlightSubmit()
         
-        // 3. Verify state transition directly to 2nd screenshot (Extended Pill HUD, NOT 1st screenshot popup)
-        XCTAssertFalse(model.isSpotlightBarActive, "Spotlight bar should be dismissed")
+        // 3. Verify state transition directly to Lengthened Spotlight Background Task Pill
+        XCTAssertFalse(model.isSpotlightBarActive, "Spotlight editing should be dismissed")
         XCTAssertFalse(model.isTimerPopupActive, "Timer popup card (1st screenshot) must NOT appear")
         XCTAssertTrue(model.isCompactActive, "Compact Dynamic Island HUD must be active")
         XCTAssertEqual(model.compactHUDMode, .pomodoroOnly)
-        XCTAssertEqual(model.islandState, .extendedPill, "Must transition directly to Extended Pill HUD (2nd screenshot)")
+        XCTAssertEqual(model.islandState, .spotlightBar, "Must transition directly to lengthened spotlight background pill")
         
-        // 4. Verify slim pill dimensions
-        XCTAssertEqual(model.currentWidth, model.compactWidth)
-        XCTAssertEqual(model.currentHeight, model.idleHeight)
+        // 4. Verify lengthened background task pill dimensions (510 x 38 pt)
+        XCTAssertEqual(model.currentWidth, model.spotlightBarWidth)
+        XCTAssertEqual(model.currentHeight, model.spotlightBarHeight)
         
         // 5. Verify timer was configured and started
         XCTAssertEqual(model.pomodoro.timeRemaining, 25 * 60)
@@ -157,7 +157,7 @@ final class SpotlightBarTimerTests: XCTestCase {
         model.handleSpotlightSubmit()
         
         XCTAssertFalse(model.isTimerPopupActive, "Must not show 1st screenshot popup")
-        XCTAssertEqual(model.islandState, .extendedPill, "Must show 2nd screenshot extended pill")
+        XCTAssertEqual(model.islandState, .spotlightBar, "Must show lengthened background task pill")
         XCTAssertEqual(model.pomodoro.timeRemaining, 10 * 60)
         XCTAssertTrue(model.pomodoro.isRunning)
     }
@@ -169,7 +169,7 @@ final class SpotlightBarTimerTests: XCTestCase {
         model.handleSpotlightSubmit()
         
         XCTAssertFalse(model.isTimerPopupActive)
-        XCTAssertEqual(model.islandState, .extendedPill)
+        XCTAssertEqual(model.islandState, .spotlightBar)
         XCTAssertEqual(model.requestedTimerMinutes, 30)
         XCTAssertEqual(model.customTimerTitle, "Math Homework")
         XCTAssertEqual(model.pomodoro.timeRemaining, 30 * 60)
@@ -432,7 +432,7 @@ final class SpotlightBarTimerTests: XCTestCase {
         
         model.handleSpotlightSubmit()
         XCTAssertFalse(model.isSpotlightBarActive)
-        XCTAssertTrue(model.isExpanded)
+        XCTAssertFalse(model.isExpanded, "Specific event creation displays in lengthened pill without expanding biggest UI")
         XCTAssertEqual(model.selectedTab, .calendar)
         XCTAssertTrue(model.calendar.events.contains(where: { $0.title == "Sarah" }))
         

@@ -5605,7 +5605,7 @@ public final class ApplicationFormModel: ObservableObject {
     
     // MARK: - Active Form Detection
     public func checkActiveApplication() {
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
+        if !MorphEnvironment.isTestingEnvironment, let frontApp = NSWorkspace.shared.frontmostApplication {
             let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
             let appName = frontApp.localizedName?.lowercased() ?? ""
             if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") {

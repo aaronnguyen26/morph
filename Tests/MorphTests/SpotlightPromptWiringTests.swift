@@ -230,14 +230,14 @@ final class SpotlightPromptWiringTests: XCTestCase {
             XCTAssertEqual(detected.iconName, "calendar", "Query '\(q)' must have dynamic icon calendar")
         }
         
-        // A. Natural schedule inquiries
+        // A. General schedule inquiries
         let inquiries = [
-            "what's my schedule tomorrow",
-            "what do i have today",
-            "check my calendar"
+            "open calendar",
+            "view calendar",
+            "my calendar"
         ]
         for inquiry in inquiries {
-            XCTAssertEqual(MorphSpotlightCommandParser.parse(inquiry), .calendar(action: .view))
+            XCTAssertEqual(MorphSpotlightCommandParser.parse(inquiry), .calendar(action: .open))
             model.spotlightQuery = inquiry
             model.handleSpotlightSubmit()
             XCTAssertFalse(model.isSpotlightBarActive)

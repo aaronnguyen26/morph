@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 public struct MorphIslandView: View {
@@ -334,7 +335,9 @@ public struct MorphIslandView: View {
     // MARK: - Spotlight Horizontal Typing Bar (Horizontal expansion on hover: strictly for typing with right 'X' control)
     private var spotlightTypingBarView: some View {
         Group {
-            if model.isShowingDirectAnswer {
+            if model.activeBackgroundTaskPill != .none {
+                backgroundTaskPillView
+            } else if model.isShowingDirectAnswer {
                 directAnswerView
             } else {
                 HStack(spacing: 8) {
@@ -434,54 +437,407 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - Direct Answer Pill View
-    private var directAnswerView: some View {
+    // MARK: - Lengthened Spotlight Background Task Pill View (Direct interactive controls)
+    private var backgroundTaskPillView: some View {
         HStack(spacing: 8) {
             MorphyMascotView(model: model, style: .spotlightPill)
                 .padding(.leading, 8)
             
-            Image(systemName: model.directAnswerIcon)
+            switch model.activeBackgroundTaskPill {
+            case .calendar(let title, let timeText, let meetLink, _):
+                calendarPillContent(title: title, timeText: timeText, meetLink: meetLink)
+                
+            case .timer(let title, let minutes):
+                timerPillContent(title: title, minutes: minutes)
+                
+            case .media(let trackTitle, let artist):
+                mediaPillContent(trackTitle: trackTitle, artist: artist)
+                
+            case .note(let previewText):
+                notePillContent(previewText: previewText)
+                
+            case .directAnswer(let text, let icon):
+                directAnswerPillContent(text: text, icon: icon)
+                
+            case .none:
+                EmptyView()
+            }
+        }
+        .frame(width: model.spotlightBarWidth, height: model.spotlightBarHeight)
+        .background(
+            Color.black.opacity(0.001)
+                .contentShape(Rectangle())
+        )
+    }
+    
+    private func calendarPillContent(title: String, timeText: String, meetLink: String?) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.85))
+                .foregroundColor(Color(red: 0.20, green: 0.60, blue: 1.0))
             
-            Text(model.directAnswerText)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                if !timeText.isEmpty {
+                    Text(timeText)
+                        .font(.system(size: 10, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .lineLimit(1)
+                }
+            }
             
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            
+            if let link = meetLink, let url = URL(string: link) {
+                Button(action: {
+                    MorphHaptics.generic()
+                    NSWorkspace.shared.open(url)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Join")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color(red: 0.04, green: 0.52, blue: 1.0).opacity(0.40))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.35), lineWidth: 0.75)
+                    )
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .help("Join Video Call")
+            }
             
             Button(action: {
-                if let ctrl = MorphController.shared {
-                    ctrl.dismissToStealth()
-                } else {
-                    withAnimation(MorphUniversalAnimation.stealthRetraction) {
-                        model.isShowingDirectAnswer = false
-                        model.isSpotlightBarActive = false
-                        model.resetTransientStateOnCollapse()
-                    }
-                }
+                MorphHaptics.generic()
+                model.openFeature(.calendar)
             }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.65))
-                    .frame(width: 22, height: 22)
-                    .background(Color.white.opacity(0.14))
-                    .clipShape(Circle())
-                    .contentShape(Circle())
+                Text("View")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.12))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(Color.white.opacity(0.20), lineWidth: 0.75)
+                    )
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
+            .help("Open Full Calendar")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.dismissBackgroundTaskPill()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Close (ESC)")
             .padding(.trailing, 8)
         }
-        .frame(width: model.spotlightBarWidth, height: model.spotlightBarHeight)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(MorphUniversalAnimation.stateRetraction) {
-                model.isShowingDirectAnswer = false
-                model.isSpotlightBarActive = false
+    }
+    
+    private func timerPillContent(title: String, minutes: Int) -> some View {
+        HStack(spacing: 7) {
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.18), lineWidth: 2)
+                    .frame(width: 14, height: 14)
+                
+                Circle()
+                    .trim(from: 0, to: CGFloat(model.pomodoro.progress))
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.orange, Color.yellow],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 14, height: 14)
             }
+            
+            Text(model.pomodoro.formattedTime)
+                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+            
+            Text(model.customTimerTitle.uppercased())
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.70))
+                .lineLimit(1)
+            
+            Spacer(minLength: 4)
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.pomodoro.toggle()
+            }) {
+                Image(systemName: model.pomodoro.isRunning ? "pause.fill" : "play.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.16)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help(model.pomodoro.isRunning ? "Pause Timer" : "Resume Timer")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.addFiveMinutesToTimer()
+            }) {
+                Text("+5m")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.90))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.75))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Add 5 minutes")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.stopFocusTimerFromPill()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Stop Timer & Close")
+            .padding(.trailing, 8)
         }
+    }
+    
+    private func mediaPillContent(trackTitle: String, artist: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "music.note")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color(red: 1.0, green: 0.25, blue: 0.45))
+            
+            HStack(spacing: 4) {
+                Text(trackTitle)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                if !artist.isEmpty {
+                    Text("• \(artist)")
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .lineLimit(1)
+                }
+            }
+            
+            Spacer(minLength: 4)
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.media.previousTrack()
+            }) {
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Previous Track")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.media.togglePlayPause()
+            }) {
+                Image(systemName: model.media.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.16)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help(model.media.isPlaying ? "Pause" : "Play")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.media.nextTrack()
+            }) {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Next Track")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.dismissBackgroundTaskPill()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Close")
+            .padding(.trailing, 8)
+        }
+    }
+    
+    private func notePillContent(previewText: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "note.text")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundColor(Color(red: 1.0, green: 0.85, blue: 0.25))
+            
+            Text("Saved: \"\(previewText)\"")
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            
+            Spacer(minLength: 4)
+            
+            Button(action: {
+                MorphHaptics.generic()
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(previewText, forType: .string)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("Copy")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(Color.white.opacity(0.90))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.white.opacity(0.12)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.75))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Copy to Clipboard")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.openFeature(.notes)
+            }) {
+                Text("View")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.75))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Open Notes")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.dismissBackgroundTaskPill()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Close")
+            .padding(.trailing, 8)
+        }
+    }
+    
+    private func directAnswerPillContent(text: String, icon: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color.white.opacity(0.90))
+            
+            Text(text)
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            
+            Spacer(minLength: 4)
+            
+            Button(action: {
+                MorphHaptics.generic()
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("Copy")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(Color.white.opacity(0.90))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.white.opacity(0.12)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.75))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Copy Answer")
+            
+            Button(action: {
+                MorphHaptics.generic()
+                model.dismissBackgroundTaskPill()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Color.white.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Close")
+            .padding(.trailing, 8)
+        }
+    }
+    
+    // MARK: - Direct Answer Pill View
+    private var directAnswerView: some View {
+        directAnswerPillContent(text: model.directAnswerText, icon: model.directAnswerIcon)
     }
     
     // MARK: - Compact Shrunk Timer Popup (Horizontal width shrunk to 320 pt)

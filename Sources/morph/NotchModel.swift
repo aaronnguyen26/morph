@@ -47,6 +47,15 @@ public enum CompactHUDMode: String, Equatable {
     case formTrackerActive
 }
 
+public enum MorphBackgroundTaskPillState: Equatable {
+    case none
+    case calendar(title: String, timeText: String, meetLink: String?, fullEvent: CalendarEvent?)
+    case timer(title: String, minutes: Int)
+    case media(trackTitle: String, artist: String)
+    case note(previewText: String)
+    case directAnswer(text: String, icon: String)
+}
+
 public enum MorphInteractionMode: String, CaseIterable, Codable {
     case spotlightBar = "Spotlight Bar (Horizontal Expand + Shrunk Timer Popup)"
     case legacyLargeUI = "Packaged Large UI (640x225 Full Modal with Tabs)"
@@ -276,6 +285,7 @@ public final class NotchModel: ObservableObject {
     @Published public var directAnswerIcon: String = "sparkles"
     @Published public var isShowingDirectAnswer: Bool = false
     @Published public var activeAIResponse: MorphAIResponse? = nil
+    @Published public var activeBackgroundTaskPill: MorphBackgroundTaskPillState = .none
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
@@ -547,7 +557,7 @@ public final class NotchModel: ObservableObject {
         }
         switch interactionMode {
         case .spotlightBar:
-            if isSpotlightBarActive {
+            if isSpotlightBarActive || activeBackgroundTaskPill != .none || isShowingDirectAnswer {
                 return .spotlightBar
             } else if isCompactActive {
                 return .extendedPill
@@ -581,14 +591,28 @@ public final class NotchModel: ObservableObject {
         let query = originalQuery ?? spotlightQuery
         switch command {
         case .answer(let text, let icon):
-            self.directAnswerText = text
-            self.directAnswerIcon = icon
-            self.isShowingDirectAnswer = true
-            let aiResp = MorphSpotlightCommandParser.generateAIResponse(for: query, briefAnswer: text, icon: icon)
-            displayInBigUI(aiResponse: aiResp)
+            let isGeneralAI = isGeneralAIQuery(query)
+            if isGeneralAI {
+                self.directAnswerText = text
+                self.directAnswerIcon = icon
+                self.isShowingDirectAnswer = true
+                let aiResp = MorphSpotlightCommandParser.generateAIResponse(for: query, briefAnswer: text, icon: icon)
+                displayInBigUI(aiResponse: aiResp)
+            } else {
+                self.directAnswerText = text
+                self.directAnswerIcon = icon
+                self.isShowingDirectAnswer = true
+                self.activeBackgroundTaskPill = .directAnswer(text: text, icon: icon)
+                self.isSpotlightBarActive = false
+                self.spotlightQuery = ""
+                self.isExpanded = false
+                if let ctrl = MorphController.shared {
+                    ctrl.scheduleWindowShrink()
+                }
+            }
             
         case .timer(let minutes, let title, let autoStart):
-            startFocusTimerInPill(minutes: minutes, title: title, autoStart: autoStart)
+            startFocusTimerInPill(minutes: minutes, title: title, autoStart: autoStart, asBackgroundTaskPill: true)
             
         case .music(let action):
             executeMusicAction(action)
@@ -602,6 +626,15 @@ public final class NotchModel: ObservableObject {
         case .navigation(let tab):
             openFeature(tab)
         }
+    }
+    
+    private func isGeneralAIQuery(_ query: String) -> Bool {
+        let lower = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let directQuestions = ["time", "what time", "what time is it", "clock", "date", "what is the date", "what's the date", "today's date", "day is it", "what day is it", "hello", "hi", "hey", "good morning", "good afternoon", "good evening"]
+        if directQuestions.contains(where: { lower == $0 || lower.contains($0) }) {
+            return false
+        }
+        return true
     }
     
     public func displayInBigUI(aiResponse: MorphAIResponse) {
@@ -633,7 +666,8 @@ public final class NotchModel: ObservableObject {
             } else {
                 self.media.play()
             }
-            // Direct playback action: skip larger UI, stay in compact media HUD
+            let title = self.media.trackTitle.isEmpty ? (query ?? "Music") : self.media.trackTitle
+            self.activeBackgroundTaskPill = .media(trackTitle: title, artist: self.media.artistName)
             self.selectedTab = .music
             self.isExpanded = false
             if let ctrl = MorphController.shared {
@@ -642,6 +676,7 @@ public final class NotchModel: ObservableObject {
             
         case .pause:
             self.media.pause()
+            self.activeBackgroundTaskPill = .media(trackTitle: self.media.trackTitle.isEmpty ? "Paused" : self.media.trackTitle, artist: self.media.artistName)
             self.selectedTab = .music
             self.isExpanded = false
             if let ctrl = MorphController.shared {
@@ -650,6 +685,7 @@ public final class NotchModel: ObservableObject {
             
         case .next:
             self.media.nextTrack()
+            self.activeBackgroundTaskPill = .media(trackTitle: self.media.trackTitle.isEmpty ? "Next Track" : self.media.trackTitle, artist: self.media.artistName)
             self.selectedTab = .music
             self.isExpanded = false
             if let ctrl = MorphController.shared {
@@ -658,6 +694,7 @@ public final class NotchModel: ObservableObject {
             
         case .previous:
             self.media.previousTrack()
+            self.activeBackgroundTaskPill = .media(trackTitle: self.media.trackTitle.isEmpty ? "Previous Track" : self.media.trackTitle, artist: self.media.artistName)
             self.selectedTab = .music
             self.isExpanded = false
             if let ctrl = MorphController.shared {
@@ -688,7 +725,7 @@ public final class NotchModel: ObservableObject {
             if pinToNotch {
                 self.isNotePinnedToNotch = true
             }
-            // Direct note capture: skip larger UI, pin directly to compact notch HUD
+            self.activeBackgroundTaskPill = .note(previewText: trimmed)
             self.selectedTab = .notes
             self.isExpanded = false
             if let ctrl = MorphController.shared {
@@ -702,6 +739,7 @@ public final class NotchModel: ObservableObject {
         case .clear:
             self.scratchpad.clear()
             self.isNotePinnedToNotch = false
+            self.activeBackgroundTaskPill = .note(previewText: "Notes cleared")
             self.selectedTab = .notes
             self.isExpanded = false
             if let ctrl = MorphController.shared {
@@ -722,14 +760,39 @@ public final class NotchModel: ObservableObject {
                 startHour: hour,
                 startMinute: minute
             )
-            openFeature(.calendar)
+            self.selectedTab = .calendar
+            let briefing = self.calendar.fetchTodayBriefing()
+            self.activeBackgroundTaskPill = .calendar(
+                title: "Added: \(title)",
+                timeText: briefing.detail,
+                meetLink: nil,
+                fullEvent: nil
+            )
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
             
-        case .view:
+        case .todaySummary:
+            self.selectedTab = .calendar
+            let briefing = self.calendar.fetchTodayBriefing()
+            self.activeBackgroundTaskPill = .calendar(
+                title: briefing.headline,
+                timeText: briefing.detail,
+                meetLink: briefing.meetLink,
+                fullEvent: briefing.event
+            )
+            self.isExpanded = false
+            if let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
+            }
+            
+        case .open:
             openFeature(.calendar)
         }
     }
     
-    public func startFocusTimerInPill(minutes: Int, title: String = "Focus Session", autoStart: Bool = true) {
+    public func startFocusTimerInPill(minutes: Int, title: String = "Focus Session", autoStart: Bool = true, asBackgroundTaskPill: Bool = false) {
         self.requestedTimerMinutes = minutes
         self.customTimerTitle = title
         self.pomodoro.setCustomDuration(minutes: minutes, saveAsPreference: false)
@@ -746,16 +809,18 @@ public final class NotchModel: ObservableObject {
             self.pomodoro.start()
         }
         
+        if asBackgroundTaskPill {
+            self.activeBackgroundTaskPill = .timer(title: title, minutes: minutes)
+        } else {
+            self.activeBackgroundTaskPill = .none
+        }
+        
         withAnimation(MorphUniversalAnimation.stateExpansion) {
-            // Smoothly transitions into the extended pill HUD (2nd screenshot)
+            // Smoothly transitions into the lengthened background pill HUD
         }
         if let ctrl = MorphController.shared {
             ctrl.panel.ignoresMouseEvents = false
-            if ctrl.panel.frame.width < self.compactWidth {
-                ctrl.updatePanelGeometry(animate: false)
-            } else {
-                ctrl.scheduleWindowShrink()
-            }
+            ctrl.scheduleWindowShrink()
         }
     }
     
@@ -765,6 +830,7 @@ public final class NotchModel: ObservableObject {
         isPomodoroSessionActive = false
         isEditingTimerInPill = false
         isTimerPopupActive = false
+        activeBackgroundTaskPill = .none
         spotlightQuery = ""
         withAnimation(MorphUniversalAnimation.stateRetraction) {
             // Smoothly collapses back to resting notch
@@ -834,6 +900,7 @@ public final class NotchModel: ObservableObject {
     public func resetTransientStateOnCollapse() {
         self.spotlightQuery = ""
         self.isShowingDirectAnswer = false
+        self.activeBackgroundTaskPill = .none
         self.directAnswerText = ""
         self.directAnswerIcon = "sparkles"
         self.isEditingTimerInPill = false
@@ -845,6 +912,30 @@ public final class NotchModel: ObservableObject {
         self.isHovered = false
         if !isPomodoroSessionActive {
             self.isExpanded = false
+        }
+    }
+    
+    public func addFiveMinutesToTimer() {
+        self.pomodoro.timeRemaining += 300
+    }
+    
+    public func subtractFiveMinutesFromTimer() {
+        self.pomodoro.timeRemaining = max(60, self.pomodoro.timeRemaining - 300)
+    }
+    
+    public func stopFocusTimerFromPill() {
+        self.stopFocusTimer()
+        self.activeBackgroundTaskPill = .none
+        if let ctrl = MorphController.shared {
+            ctrl.dismissToStealth()
+        }
+    }
+    
+    public func dismissBackgroundTaskPill() {
+        self.activeBackgroundTaskPill = .none
+        self.isShowingDirectAnswer = false
+        if let ctrl = MorphController.shared {
+            ctrl.dismissToStealth()
         }
     }
     

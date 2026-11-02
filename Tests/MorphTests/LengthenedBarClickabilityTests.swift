@@ -145,26 +145,26 @@ final class LengthenedBarClickabilityTests: XCTestCase {
     
     // MARK: - 6. Extended Timer Pill Every Part is Clickable & 'X' Stops Timer
     func testExtendedTimerPillEveryPartIsClickableAndXStopsTimer() {
-        model.startFocusTimerInPill(minutes: 25, title: "Deep Work", autoStart: true)
+        model.startFocusTimerInPill(minutes: 25, title: "Deep Work", autoStart: true, asBackgroundTaskPill: true)
         controller.updatePanelGeometry(animate: false)
         
         XCTAssertEqual(model.compactHUDMode, .pomodoroOnly)
-        XCTAssertEqual(model.currentWidth, 300)
-        XCTAssertEqual(model.islandState, .extendedPill)
+        XCTAssertEqual(model.currentWidth, 510)
+        XCTAssertEqual(model.islandState, .spotlightBar)
         
         XCTAssertFalse(controller.shouldIgnoreMouseEvents)
         XCTAssertFalse(controller.panel.ignoresMouseEvents)
         
         let hostingView = controller.hostingView!
-        hostingView.frame = NSRect(x: 0, y: 0, width: 300, height: model.idleHeight)
+        hostingView.frame = NSRect(x: 0, y: 0, width: model.currentWidth, height: model.currentHeight)
         hostingView.layoutSubtreeIfNeeded()
         
-        // Test points across 300pt timer pill:
+        // Test points across timer pill:
         let timerPillPoints: [(name: String, point: NSPoint)] = [
             ("Left mascot/flame", NSPoint(x: 20, y: 16)),
             ("Timer countdown text", NSPoint(x: 100, y: 16)),
-            ("Middle pill area", NSPoint(x: 150, y: 16)),
-            ("Right side 'X' stop button", NSPoint(x: 285, y: 16))
+            ("Middle pill area", NSPoint(x: 250, y: 16)),
+            ("Right side 'X' stop button", NSPoint(x: 490, y: 16))
         ]
         
         for tp in timerPillPoints {
