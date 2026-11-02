@@ -69,7 +69,7 @@ public final class MorphController: NSObject {
         let islandView = MorphIslandView(
             model: model,
             onMouseEnter: { [weak self] in
-                self?.handleMouseEnter()
+                self?.checkMousePosition(NSEvent.mouseLocation)
             },
             onMouseExit: { [weak self] in
                 self?.handleMouseExit()
@@ -405,6 +405,7 @@ public final class MorphController: NSObject {
             if self.isMouseInsideMorphUI(mouseLoc) {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
+                    if self.isExplicitlyDismissed { return }
                     self.panel?.ignoresMouseEvents = false
                     if self.model.islandState == .resting {
                         self.handleMouseEnter()
@@ -464,6 +465,11 @@ public final class MorphController: NSObject {
         hoverIntentWorkItem = nil
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
+        shrinkWorkItem?.cancel()
+        shrinkWorkItem = nil
+        
+        // Immediately ignore mouse events so no stray events at the old 'X' coordinate are captured
+        panel?.ignoresMouseEvents = true
         
         withAnimation(MorphUniversalAnimation.stealthRetraction) {
             model.resetTransientStateOnCollapse()
@@ -526,7 +532,7 @@ public final class MorphController: NSObject {
             panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
             
             if isExplicitlyDismissed {
-                if !isInside || (now - lastDismissalTimestamp > 1.2) {
+                if now - lastDismissalTimestamp > 1.2 {
                     isExplicitlyDismissed = false
                 } else {
                     hoverIntentWorkItem?.cancel()
@@ -612,7 +618,7 @@ public final class MorphController: NSObject {
             dwellEntryLocation = nil
             dwellStartTime = 0
             
-            if now - lastDismissalTimestamp > 0.4 {
+            if now - lastDismissalTimestamp > 0.8 {
                 isExplicitlyDismissed = false
             }
             
@@ -628,6 +634,14 @@ public final class MorphController: NSObject {
     }
     
     public func handleMouseEnter() {
+        if isExplicitlyDismissed {
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastDismissalTimestamp < 0.8 {
+                return
+            }
+            isExplicitlyDismissed = false
+        }
+        
         hoverIntentWorkItem?.cancel()
         hoverIntentWorkItem = nil
         collapseWorkItem?.cancel()
@@ -729,8 +743,8 @@ public final class MorphController: NSObject {
             self.shrinkWorkItem = nil
         }
         self.shrinkWorkItem = workItem
-        // Exactly synchronized with the 300ms retraction curve + 40ms buffer
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34, execute: workItem)
+        // Exactly synchronized with the 260ms retraction curve + 20ms buffer
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: workItem)
     }
     
     private func resizePanelToRestingState() {

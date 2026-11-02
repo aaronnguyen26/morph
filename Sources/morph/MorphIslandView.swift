@@ -227,13 +227,6 @@ public struct MorphIslandView: View {
             )
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
             .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded {
-                if model.islandState == .resting {
-                    if let ctrl = MorphController.shared {
-                        ctrl.handleMouseEnter()
-                    }
-                }
-            })
             .onHover { hovering in
                 if hovering {
                     onMouseEnter()

@@ -161,13 +161,12 @@ final class SpotlightPillAndDwellRefinementsTests: XCTestCase {
         controller.handleMouseEnter()
         model.spotlightQuery = "play relaxing lo-fi beats"
         
-        // When 'X' is pressed with text: clears text
-        if !model.spotlightQuery.isEmpty {
-            model.spotlightQuery = ""
-        }
+        // When 'X' is pressed: cleanly dismisses to stealth mode
+        controller.dismissToStealth()
         
         XCTAssertEqual(model.spotlightQuery, "", "'X' button must clear the query text")
-        XCTAssertTrue(model.isSpotlightBarActive, "Spotlight pill remains open ready for fresh input")
+        XCTAssertFalse(model.isSpotlightBarActive, "Spotlight pill must be collapsed")
+        XCTAssertEqual(model.islandState, .resting, "Must return to stealth resting notch mode")
     }
     
     func testSpotlightRightXButtonCollapsesWhenEmpty() {
