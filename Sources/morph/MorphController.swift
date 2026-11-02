@@ -12,11 +12,15 @@ public final class MorphController: NSObject {
     public private(set) var collapseWorkItem: DispatchWorkItem?
     public private(set) var hoverIntentWorkItem: DispatchWorkItem?
     public var hoverDwellDelay: TimeInterval = MorphEnvironment.isTestingEnvironment ? 0.0 : 0.32
+    public private(set) var dwellEntryLocation: NSPoint?
+    public private(set) var dwellStartTime: TimeInterval = 0
     private var shrinkWorkItem: DispatchWorkItem?
     private var lastMousePoint: NSPoint?
     private var lastMouseTimestamp: TimeInterval = 0
     private var lastClickTimestamp: TimeInterval = 0
     public private(set) var lastUnderlyingInteractionTimestamp: TimeInterval = 0
+    public private(set) var isExplicitlyDismissed: Bool = false
+    public private(set) var lastDismissalTimestamp: TimeInterval = 0
     private var cancellables = Set<AnyCancellable>()
     private var globalMonitor: Any?
     private var localMonitor: Any?
@@ -37,7 +41,7 @@ public final class MorphController: NSObject {
     
     private var currentTargetScreen: NSScreen?
     
-    private func targetScreen() -> NSScreen {
+    public func targetScreen() -> NSScreen {
         // Morph UI is strictly kept anchored under the physical notch of the user's primary/laptop screen.
         // It never renders or jumps to external/bigger displays.
         return NSScreen.screens.first(where: { $0.auxiliaryTopLeftArea != nil }) ?? NSScreen.main ?? NSScreen.screens[0]
@@ -74,13 +78,17 @@ public final class MorphController: NSObject {
         
         self.hostingView = PassthroughHostingView(rootView: islandView)
         self.hostingView.onMouseEnter = { [weak self] in
-            self?.handleMouseEnter()
+            self?.checkMousePosition(NSEvent.mouseLocation)
+        }
+        self.hostingView.onMouseMove = { [weak self] point in
+            self?.checkMousePosition(point)
         }
         self.hostingView.onMouseExit = { [weak self] in
             self?.handleMouseExit()
         }
         self.hostingView.isExpanded = { [weak self] in
-            self?.model.isExpanded ?? false
+            guard let self = self else { return false }
+            return self.model.isExpanded || self.model.isSpotlightBarActive || self.model.isCompactActive || self.model.isEditingTimerInPill || self.model.isTimerPopupActive || self.model.islandState != .resting
         }
         
         self.hostingView.getActiveBounds = { [weak self] in
@@ -88,11 +96,15 @@ public final class MorphController: NSObject {
             let w = self.model.currentWidth
             let h = self.model.currentHeight
             let bounds = self.hostingView.bounds
+            let originX = max(0, (bounds.width - w) / 2)
+            let originY = max(0, bounds.height - h)
+            let width = min(bounds.width, max(w, bounds.width))
+            let height = min(bounds.height, max(h, bounds.height))
             return NSRect(
-                x: (bounds.width - w) / 2,
-                y: bounds.height - h,
-                width: w,
-                height: h
+                x: originX,
+                y: originY,
+                width: width,
+                height: height
             )
         }
         
@@ -195,7 +207,11 @@ public final class MorphController: NSObject {
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in
             guard let self = self else { return }
-            self.updatePanelGeometry()
+            if self.model.currentWidth >= self.panel.frame.width {
+                self.updatePanelGeometry(animate: false)
+            } else {
+                self.scheduleWindowShrink()
+            }
         }
         .store(in: &cancellables)
             
@@ -385,8 +401,19 @@ public final class MorphController: NSObject {
             .leftMouseDragged, .rightMouseDragged, .otherMouseDragged
         ]) { [weak self] _ in
             guard let self = self else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.registerUnderlyingAppInteraction()
+            let mouseLoc = NSEvent.mouseLocation
+            if self.isMouseInsideMorphUI(mouseLoc) {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.panel?.ignoresMouseEvents = false
+                    if self.model.islandState == .resting {
+                        self.handleMouseEnter()
+                    }
+                }
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.registerUnderlyingAppInteraction()
+                }
             }
         }
         
@@ -430,10 +457,21 @@ public final class MorphController: NSObject {
         }
     }
     
-    public func activeUIRect() -> NSRect {
-        if let panel = self.panel {
-            return panel.frame
+    public func dismissToStealth() {
+        isExplicitlyDismissed = true
+        lastDismissalTimestamp = ProcessInfo.processInfo.systemUptime
+        hoverIntentWorkItem?.cancel()
+        hoverIntentWorkItem = nil
+        collapseWorkItem?.cancel()
+        collapseWorkItem = nil
+        
+        withAnimation(MorphUniversalAnimation.stealthRetraction) {
+            model.resetTransientStateOnCollapse()
         }
+        scheduleWindowShrink()
+    }
+    
+    public func activeUIRect() -> NSRect {
         let screen = targetScreen()
         let w = model.currentWidth
         let h = model.currentHeight
@@ -447,7 +485,7 @@ public final class MorphController: NSObject {
     public func isMouseInsideMorphUI(_ mouseLoc: NSPoint) -> Bool {
         let baseRect = activeUIRect()
         let isExtended = (model.interactionMode == .spotlightBar)
-            ? (model.isSpotlightBarActive || model.isTimerPopupActive)
+            ? (model.isSpotlightBarActive || model.isTimerPopupActive || model.isExpanded)
             : model.isExpanded
         let hPadding: CGFloat = isExtended ? 16 : (model.isCompactActive ? 14 : 0)
         let bottomPadding: CGFloat = isExtended ? 16 : (model.isCompactActive ? 12 : 0)
@@ -479,12 +517,23 @@ public final class MorphController: NSObject {
         lastMouseTimestamp = now
         
         let isMorphOpen = (model.interactionMode == .spotlightBar)
-            ? (model.isSpotlightBarActive || model.isTimerPopupActive)
+            ? (model.isSpotlightBarActive || model.isTimerPopupActive || model.isExpanded)
             : model.isExpanded
         
         if isInside {
             collapseWorkItem?.cancel()
             collapseWorkItem = nil
+            panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+            
+            if isExplicitlyDismissed {
+                if !isInside || (now - lastDismissalTimestamp > 1.2) {
+                    isExplicitlyDismissed = false
+                } else {
+                    hoverIntentWorkItem?.cancel()
+                    hoverIntentWorkItem = nil
+                    return
+                }
+            }
             
             if !isMorphOpen {
                 // If user interacted recently (< 450ms ago) in ANY background application
@@ -494,15 +543,44 @@ public final class MorphController: NSObject {
                 if timeSinceInteraction < 0.45 {
                     hoverIntentWorkItem?.cancel()
                     hoverIntentWorkItem = nil
+                    dwellEntryLocation = mouseLoc
+                    dwellStartTime = now
+                    if !MorphEnvironment.isTestingEnvironment {
+                        panel?.ignoresMouseEvents = true
+                    }
                     return
                 }
                 
-                // If the user is moving their mouse swiftly across (e.g. clicking tabs, moving to toolbar, selecting text),
-                // do not expand or intercept!
-                if velocity > 140 {
+                // Point 2: Differentiate Pass-By Motion from Intentional Opening:
+                // If velocity > 35 pt/s, cursor is traveling/scrolling across the screen (pass-by)
+                if velocity > 35 {
                     hoverIntentWorkItem?.cancel()
                     hoverIntentWorkItem = nil
+                    dwellEntryLocation = mouseLoc
+                    dwellStartTime = now
+                    if !MorphEnvironment.isTestingEnvironment {
+                        panel?.ignoresMouseEvents = true
+                    }
                     return
+                }
+                
+                // Check displacement from entry point
+                if let entry = dwellEntryLocation {
+                    let displacement = hypot(mouseLoc.x - entry.x, mouseLoc.y - entry.y)
+                    if displacement > 8 {
+                        // Cursor moved across the notch area (pass-by sweep/scroll)
+                        hoverIntentWorkItem?.cancel()
+                        hoverIntentWorkItem = nil
+                        dwellEntryLocation = mouseLoc
+                        dwellStartTime = now
+                        if !MorphEnvironment.isTestingEnvironment {
+                            panel?.ignoresMouseEvents = true
+                        }
+                        return
+                    }
+                } else {
+                    dwellEntryLocation = mouseLoc
+                    dwellStartTime = now
                 }
                 
                 if hoverDwellDelay <= 0 {
@@ -510,11 +588,14 @@ public final class MorphController: NSObject {
                     return
                 }
                 
-                // Intentional Hover Dwell: require hoverDwellDelay pause/dwell over the island before expanding
+                // Intentional Hover Dwell: require hoverDwellDelay stationary pause over the island before expanding
                 if hoverIntentWorkItem == nil {
+                    let entry = mouseLoc
                     let workItem = DispatchWorkItem { [weak self] in
                         guard let self = self else { return }
-                        if self.isMouseInsideMorphUI(NSEvent.mouseLocation) {
+                        let currentLoc = MorphEnvironment.isTestingEnvironment ? (self.lastMousePoint ?? entry) : NSEvent.mouseLocation
+                        let finalDisplacement = hypot(currentLoc.x - entry.x, currentLoc.y - entry.y)
+                        if self.isMouseInsideMorphUI(currentLoc) && finalDisplacement <= 10 {
                             self.handleMouseEnter()
                         }
                         self.hoverIntentWorkItem = nil
@@ -528,6 +609,12 @@ public final class MorphController: NSObject {
         } else {
             hoverIntentWorkItem?.cancel()
             hoverIntentWorkItem = nil
+            dwellEntryLocation = nil
+            dwellStartTime = 0
+            
+            if now - lastDismissalTimestamp > 0.4 {
+                isExplicitlyDismissed = false
+            }
             
             if isMorphOpen && !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen {
                 if collapseWorkItem == nil {
@@ -535,9 +622,7 @@ public final class MorphController: NSObject {
                 }
             } else if !isMorphOpen {
                 model.isHovered = false
-                if !MorphEnvironment.isTestingEnvironment {
-                    panel?.ignoresMouseEvents = true
-                }
+                panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
             }
         }
     }
@@ -551,36 +636,42 @@ public final class MorphController: NSObject {
         shrinkWorkItem = nil
         
         model.isHovered = true
-        if !MorphEnvironment.isTestingEnvironment {
-            panel?.ignoresMouseEvents = false
-        }
+        panel?.ignoresMouseEvents = false
         
-        if model.interactionMode == .spotlightBar {
+        if model.interactionMode == .spotlightBar && !model.isCompactActive {
+            // Fresh spotlight query on intentional open (Point 3)
+            model.spotlightQuery = ""
             withAnimation(MorphUniversalAnimation.stateElongation) {
                 model.isSpotlightBarActive = true
             }
-            updatePanelGeometry()
+            expandPanel()
+            panel?.ignoresMouseEvents = false
             if !MorphEnvironment.isTestingEnvironment {
-                panel.makeKey()
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
             }
         } else {
             guard !model.isExpanded else {
                 model.isHovered = true
                 return
             }
-            model.syncExpandedFeatureWithActiveContext()
-            expandPanel()
-            withAnimation(MorphUniversalAnimation.stateExpansion) {
-                self.model.isExpanded = true
-            }
-            if !MorphEnvironment.isTestingEnvironment {
-                panel.makeKey()
+            if !model.isCompactActive {
+                model.syncExpandedFeatureWithActiveContext()
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    self.model.isExpanded = true
+                }
+                expandPanel()
+                panel?.ignoresMouseEvents = false
+                if !MorphEnvironment.isTestingEnvironment {
+                    panel.makeKey()
+                }
             }
         }
     }
     
     public func handleMouseExit() {
         guard !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen else { return }
+        if model.isTimerPopupActive || model.isEditingTimerInPill { return }
         if !MorphEnvironment.isTestingEnvironment && isMouseInsideMorphUI(NSEvent.mouseLocation) {
             model.isHovered = true
             return
@@ -590,6 +681,7 @@ public final class MorphController: NSObject {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             guard !self.model.isPinned && !self.model.isCommandBarPresented && !self.model.calendar.isAddingEvent && !self.model.dropShelf.isDraggingOut && !self.model.dropShelf.isHeldOpen else { return }
+            if self.model.isTimerPopupActive || self.model.isEditingTimerInPill { return }
             
             // Sensitive verification: Is cursor still outside Morph's UI space?
             let currentMouse = NSEvent.mouseLocation
@@ -600,15 +692,8 @@ public final class MorphController: NSObject {
             }
             
             self.model.isHovered = false
-            withAnimation(MorphUniversalAnimation.stateRetraction) {
-                if self.model.interactionMode == .spotlightBar {
-                    self.model.isSpotlightBarActive = false
-                    if !self.model.pomodoro.isRunning {
-                        self.model.isTimerPopupActive = false
-                    }
-                } else {
-                    self.model.isExpanded = false
-                }
+            withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                self.model.resetTransientStateOnCollapse()
             }
             self.scheduleWindowShrink()
             self.collapseWorkItem = nil
@@ -618,22 +703,24 @@ public final class MorphController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
     }
     
-    public func updatePanelGeometry(animate: Bool = false) {
+    public var shouldIgnoreMouseEvents: Bool {
+        let isResting = (model.islandState == .resting && model.compactHUDMode == .none && !model.isHovered && !model.isSpotlightBarActive)
+        return isResting
+    }
+    
+    public func updatePanelGeometry(animate: Bool = true) {
         let screen = targetScreen()
         let w = model.currentWidth.rounded()
         let h = model.currentHeight.rounded()
         panel.updatePosition(screen: screen, width: w, height: h, animate: animate)
-        if !MorphEnvironment.isTestingEnvironment {
-            let isResting = (model.islandState == .resting && model.compactHUDMode == .none)
-            panel.ignoresMouseEvents = isResting
-        }
+        panel.ignoresMouseEvents = shouldIgnoreMouseEvents
     }
     
-    private func expandPanel() {
+    public func expandPanel() {
         updatePanelGeometry(animate: false)
     }
     
-    private func scheduleWindowShrink() {
+    public func scheduleWindowShrink() {
         shrinkWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
@@ -647,6 +734,10 @@ public final class MorphController: NSObject {
     }
     
     private func resizePanelToRestingState() {
+        guard !model.isExpanded && !model.isSpotlightBarActive && !model.isTimerPopupActive else {
+            updatePanelGeometry(animate: false)
+            return
+        }
         let w = model.currentWidth.rounded()
         if w < panel.frame.width && !model.isExpanded {
             // Shrinking: give retraction spring buffer so shrinking wings don't get clipped
@@ -656,14 +747,12 @@ public final class MorphController: NSObject {
         }
     }
     
-    private func applyRestingPanelGeometry() {
+    public func applyRestingPanelGeometry() {
         let screen = targetScreen()
         let w = model.currentWidth.rounded()
         let h = model.currentHeight.rounded()
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
-        if !model.isExpanded && !MorphEnvironment.isTestingEnvironment {
-            panel.ignoresMouseEvents = (model.compactHUDMode == .none)
-        }
+        panel.ignoresMouseEvents = shouldIgnoreMouseEvents
     }
     
     private func handleScreenChange() {

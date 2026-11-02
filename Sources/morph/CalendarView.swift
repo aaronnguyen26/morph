@@ -185,11 +185,26 @@ public struct CalendarView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .frame(maxHeight: .infinity)
-        .background(theme.canvasSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(theme.hairlineBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(theme.liquidGlassSpecularBorder, lineWidth: 1)
+        )
+        .overlay(
+            LinearGradient(
+                colors: [Color.white.opacity(theme.isDark ? 0.14 : 0.22), Color.white.opacity(0.02), Color.clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 20)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .allowsHitTesting(false),
+            alignment: .top
         )
     }
     
@@ -462,11 +477,26 @@ public struct CalendarView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .frame(maxHeight: .infinity)
-        .background(theme.canvasSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(theme.hairlineBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(theme.liquidGlassSpecularBorder, lineWidth: 1)
+        )
+        .overlay(
+            LinearGradient(
+                colors: [Color.white.opacity(theme.isDark ? 0.14 : 0.22), Color.white.opacity(0.02), Color.clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 20)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .allowsHitTesting(false),
+            alignment: .top
         )
     }
     
@@ -1028,10 +1058,10 @@ public struct CalendarView: View {
                         }) {
                             Text("Delete")
                                 .font(.system(size: 7.5, weight: .bold))
-                                .foregroundColor(.white)
+                                .foregroundColor(theme.isDark ? .white : .black)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.red.opacity(0.85))
+                                .background(theme.isDark ? Color.white.opacity(0.25) : Color(white: 0.85))
                                 .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
@@ -1099,11 +1129,22 @@ public struct CalendarView: View {
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4.5)
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(event.isStartingSoon ? theme.activeBorder : theme.hairlineBorder, lineWidth: 0.5)
+            Group {
+                if event.isStartingSoon {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(theme.activeBorder, lineWidth: 1.0)
+                } else {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.75)
+                }
+            }
         )
     }
     
@@ -1113,7 +1154,7 @@ public struct CalendarView: View {
         let f = DateFormatter()
         if cal.isDateInToday(date) {
             f.dateFormat = "MMM d"
-            return "TODAY • \(f.string(from: date).uppercased())"
+            return "TODAY — \(f.string(from: date).uppercased())"
         } else {
             f.dateFormat = "EEE, MMM d"
             return f.string(from: date).uppercased()

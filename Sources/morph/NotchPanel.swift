@@ -4,7 +4,7 @@ public final class NotchPanel: NSPanel {
     public init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -17,7 +17,7 @@ public final class NotchPanel: NSPanel {
         self.isMovable = false
         self.isMovableByWindowBackground = false
         self.acceptsMouseMovedEvents = true
-        self.becomesKeyOnlyIfNeeded = true
+        self.becomesKeyOnlyIfNeeded = false
         self.hidesOnDeactivate = false
         self.titleVisibility = .hidden
         self.titlebarAppearsTransparent = true
@@ -46,11 +46,13 @@ public final class NotchPanel: NSPanel {
     
     public override func makeKeyAndOrderFront(_ sender: Any?) {
         guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSApp.activate(ignoringOtherApps: true)
         super.makeKeyAndOrderFront(sender)
     }
     
     public override func makeKey() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSApp.activate(ignoringOtherApps: true)
         super.makeKey()
     }
     
@@ -60,6 +62,10 @@ public final class NotchPanel: NSPanel {
     }
     
     public override var canBecomeKey: Bool {
+        return true
+    }
+    
+    public override var acceptsFirstResponder: Bool {
         return true
     }
     
@@ -84,7 +90,16 @@ public final class NotchPanel: NSPanel {
         let newFrame = NSRect(x: x, y: y, width: width.rounded(), height: height.rounded())
         
         if self.frame != newFrame {
-            self.setFrame(newFrame, display: true, animate: animate)
+            if animate && self.isVisible && !MorphEnvironment.isTestingEnvironment {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.32
+                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    context.allowsImplicitAnimation = true
+                    self.animator().setFrame(newFrame, display: false)
+                }
+            } else {
+                self.setFrame(newFrame, display: false)
+            }
             if !MorphEnvironment.isTestingEnvironment {
                 self.orderFrontRegardless()
             }

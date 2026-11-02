@@ -54,7 +54,7 @@ public struct HomeView: View {
     
     private var contextualSubtitle: String {
         if model.pomodoro.isRunning {
-            return "Focus in Progress — \(model.pomodoro.formattedTime)"
+            return "\(model.customTimerTitle) — \(model.pomodoro.formattedTime)"
         } else if model.media.isPlaying {
             return "Now Playing — \(model.media.trackTitle.isEmpty ? "YouTube Music" : model.media.trackTitle)"
         } else if model.meetingController.isInCall {
@@ -157,9 +157,9 @@ public struct HomeView: View {
     // MARK: - Center Companion & Greeting
     private var centerCompanionHero: some View {
         VStack(spacing: 4) {
-            // Living Orbital Mascot
-            MorphyMascotView(model: model)
-                .frame(height: 56)
+            // Official 3D Living Mascot Companion
+            MorphyMascotView(model: model, style: .hero)
+                .frame(height: 58)
             
             // Personalized Greeting
             Button(action: {
@@ -215,8 +215,9 @@ public struct HomeView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "flame.fill")
                             .font(.system(size: 8))
-                        Text("Focus Session")
+                        Text(model.pomodoro.isRunning ? model.customTimerTitle : "Focus Session")
                             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
                     }
                 }
                 .buttonStyle(.plain)

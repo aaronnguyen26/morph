@@ -8,6 +8,8 @@ public struct MorphIslandView: View {
     var onMouseExit: () -> Void
     @State private var isNotchDragTargeted: Bool = false
     @State private var hoveredTab: MorphTab? = nil
+    @FocusState private var isSpotlightFocused: Bool
+    @FocusState private var isPillEditFocused: Bool
     @Namespace private var navTabNamespace
     
     public init(model: NotchModel, onMouseEnter: @escaping () -> Void = {}, onMouseExit: @escaping () -> Void = {}) {
@@ -59,89 +61,137 @@ public struct MorphIslandView: View {
         max(model.idleHeight + 2, 34)
     }
     
+    private var baseNotchShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: topRadius,
+            bottomLeadingRadius: cornerRadius,
+            bottomTrailingRadius: cornerRadius,
+            topTrailingRadius: topRadius,
+            style: .continuous
+        )
+    }
+    
+    private var liquidGlassBaseFill: Color {
+        if model.islandState == .spotlightBar || model.islandState == .timerPopup {
+            return model.theme.isDark ? Color.black.opacity(0.85) : Color(white: 0.12).opacity(0.85)
+        } else if model.isExpanded {
+            return model.theme.isDark ? Color.black.opacity(0.82) : Color.white.opacity(0.88)
+        } else if model.isCompactActive {
+            return model.theme.isDark ? Color.black.opacity(0.88) : Color(white: 0.12).opacity(0.88)
+        } else if model.isHovered {
+            return Color.black
+        } else {
+            return model.theme.isDark ? Color.black.opacity(0.18) : Color.white.opacity(0.12)
+        }
+    }
+    
+    private var islandBorderGradient: LinearGradient {
+        if model.dropShelf.isDraggingOverNotch {
+            return LinearGradient(
+                colors: [model.theme.dropTargetBorder, model.theme.dropTargetBorder.opacity(0.65)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        } else if model.islandState == .resting && !model.isHovered {
+            return LinearGradient(
+                colors: [
+                    Color.white.opacity(model.theme.isDark ? 0.48 : 0.60),
+                    Color.white.opacity(model.theme.isDark ? 0.24 : 0.35),
+                    Color.white.opacity(model.theme.isDark ? 0.16 : 0.25)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        } else {
+            return LinearGradient(
+                colors: [
+                    Color.white.opacity(model.theme.isDark ? 0.42 : 0.65),
+                    Color.white.opacity(model.theme.isDark ? 0.16 : 0.35),
+                    Color.white.opacity(model.theme.isDark ? 0.05 : 0.15),
+                    Color.white.opacity(model.theme.isDark ? 0.22 : 0.45)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+    
+    private var islandBorderStyle: StrokeStyle {
+        StrokeStyle(
+            lineWidth: model.dropShelf.isDraggingOverNotch ? 1.5 : 1.0,
+            dash: model.dropShelf.isDraggingOverNotch ? [6, 3] : []
+        )
+    }
+    
+    private var islandShadowColor: Color {
+        if model.dropShelf.isDraggingOverNotch {
+            return model.theme.dropTargetGlow
+        } else if model.islandState == .spotlightBar || model.islandState == .timerPopup || model.isExpanded || model.isCompactActive || model.isHovered {
+            return Color.black.opacity(0.40)
+        } else if model.islandState == .resting && !model.isHovered {
+            return Color.black.opacity(0.28)
+        } else {
+            return Color.clear
+        }
+    }
+    
+    @ViewBuilder
+    private var islandBackgroundSurfaceView: some View {
+        baseNotchShape
+            .fill(liquidGlassBaseFill)
+            .background(
+                Group {
+                    if model.islandState != .resting || model.isHovered {
+                        baseNotchShape.fill(.ultraThinMaterial)
+                    }
+                }
+            )
+            .overlay(
+                Group {
+                    if model.islandState != .resting || model.isHovered {
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(model.theme.isDark ? 0.14 : 0.25),
+                                Color.white.opacity(0.03),
+                                Color.clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: min(currentHeight * 0.40, 28))
+                        .clipShape(baseNotchShape)
+                        .allowsHitTesting(false)
+                    }
+                }
+            )
+            .overlay(
+                backgroundImageView
+                    .clipShape(baseNotchShape)
+            )
+            .overlay(
+                baseNotchShape
+                    .stroke(islandBorderGradient, style: islandBorderStyle)
+            )
+            .shadow(
+                color: islandShadowColor,
+                radius: (model.islandState == .timerPopup || model.isExpanded) ? 24 : ((model.islandState == .resting && !model.isHovered) ? 5 : 10),
+                x: 0,
+                y: (model.islandState == .timerPopup || model.isExpanded) ? 10 : ((model.islandState == .resting && !model.isHovered) ? 2 : 4)
+            )
+    }
+    
     public var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
-                // Background Base Shape: Hardware Obsidian when collapsed (blending into physical notch), theme canvas when expanded
-                UnevenRoundedRectangle(
-                    topLeadingRadius: topRadius,
-                    bottomLeadingRadius: cornerRadius,
-                    bottomTrailingRadius: cornerRadius,
-                    topTrailingRadius: topRadius,
-                    style: .continuous
-                )
-                .fill(
-                    (model.islandState == .spotlightBar || model.islandState == .timerPopup)
-                        ? Color.black
-                        : (model.isExpanded
-                            ? model.theme.canvasBackground
-                            : (model.isCompactActive
-                                ? Color.black
-                                : (model.isHovered ? Color.black : Color.clear)))
-                )
-                .overlay(
-                    // Luxury ambient background texture
-                    backgroundImageView
-                        .clipShape(
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: topRadius,
-                                bottomLeadingRadius: cornerRadius,
-                                bottomTrailingRadius: cornerRadius,
-                                topTrailingRadius: topRadius,
-                                style: .continuous
-                            )
-                        )
-                )
-                .overlay(
-                    // Notch Border Edges: Hairline border matching physical MacBook notch contour
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: topRadius,
-                        bottomLeadingRadius: cornerRadius,
-                        bottomTrailingRadius: cornerRadius,
-                        topTrailingRadius: topRadius,
-                        style: .continuous
-                    )
-                    .stroke(
-                        model.dropShelf.isDraggingOverNotch
-                            ? LinearGradient(
-                                colors: [model.theme.dropTargetBorder, model.theme.dropTargetBorder.opacity(0.65)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                            : LinearGradient(
-                                colors: [
-                                    Color.white.opacity(model.isHovered ? 0.35 : (model.isExpanded ? 0.20 : 0.22)),
-                                    Color.white.opacity(model.isHovered ? 0.20 : (model.isExpanded ? 0.08 : 0.12))
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                        style: StrokeStyle(
-                            lineWidth: model.dropShelf.isDraggingOverNotch ? 1.5 : (model.isHovered ? 1.0 : 0.75),
-                            dash: model.dropShelf.isDraggingOverNotch ? [6, 3] : []
-                        )
-                    )
-                )
-                .shadow(
-                    color: model.dropShelf.isDraggingOverNotch
-                        ? model.theme.dropTargetGlow
-                        : (model.islandState == .spotlightBar || model.islandState == .timerPopup || model.isExpanded || model.isCompactActive || model.isHovered
-                            ? Color.black.opacity(0.40)
-                            : Color.clear),
-                    radius: (model.islandState == .timerPopup || model.isExpanded) ? 24 : 10,
-                    x: 0,
-                    y: (model.islandState == .timerPopup || model.isExpanded) ? 10 : 4
-                )
+                // Background Base Shape: Apple Liquid Glass surface
+                islandBackgroundSurfaceView
                 
                 // Content: Idle / Compact Notch vs Expanded Island
                 Group {
                     switch model.islandState {
                     case .spotlightBar:
                         spotlightTypingBarView
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.95, anchor: .top).combined(with: .opacity),
-                                removal: .scale(scale: 0.95, anchor: .top).combined(with: .opacity)
-                            ))
+                            .transition(.opacity.animation(.easeInOut(duration: 0.22).delay(0.06)))
                     case .timerPopup:
                         compactTimerPopupView
                             .transition(.asymmetric(
@@ -177,11 +227,16 @@ public struct MorphIslandView: View {
             )
             .frame(width: currentWidth, height: currentHeight, alignment: .top)
             .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded {
+                if model.islandState == .resting {
+                    if let ctrl = MorphController.shared {
+                        ctrl.handleMouseEnter()
+                    }
+                }
+            })
             .onHover { hovering in
                 if hovering {
-                    if model.isExpanded {
-                        onMouseEnter()
-                    }
+                    onMouseEnter()
                 } else {
                     onMouseExit()
                 }
@@ -192,10 +247,13 @@ public struct MorphIslandView: View {
             .onChange(of: isNotchDragTargeted) { _, targeted in
                 model.dropShelf.isDraggingOverNotch = targeted
             }
-            .animation(MorphUniversalAnimation.stateExpansion, value: model.isExpanded)
-            .animation(MorphUniversalAnimation.stateElongation, value: model.isCompactActive)
+            .animation(model.isExpanded ? MorphUniversalAnimation.stateExpansion : MorphUniversalAnimation.stateRetraction, value: model.isExpanded)
+            .animation(model.isCompactActive ? MorphUniversalAnimation.stateElongation : MorphUniversalAnimation.stealthRetraction, value: model.isCompactActive)
             .animation(MorphUniversalAnimation.tabSwitch, value: model.selectedTab)
             .animation(MorphUniversalAnimation.stateExpansion, value: model.activeContextFeature)
+            .animation(model.islandState == .resting ? MorphUniversalAnimation.stealthRetraction : MorphUniversalAnimation.stateExpansion, value: model.islandState)
+            .animation(model.isSpotlightBarActive ? MorphUniversalAnimation.stateElongation : MorphUniversalAnimation.stealthRetraction, value: model.isSpotlightBarActive)
+            .animation(MorphUniversalAnimation.stateExpansion, value: model.isTimerPopupActive)
             
             Spacer(minLength: 0)
         }
@@ -220,45 +278,202 @@ public struct MorphIslandView: View {
         return didLoadAny
     }
     
-    // MARK: - Spotlight Horizontal Typing Bar (Horizontal expansion on hover: strictly for typing, NO BUTTONS)
-    private var spotlightTypingBarView: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.40))
-                .padding(.leading, 16)
-            
-            TextField(
-                "Type a command or timer (e.g. 25m, timer, focus)...",
-                text: Binding(
-                    get: { model.spotlightQuery },
-                    set: { model.handleSpotlightQueryChanged($0) }
-                )
-            )
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .regular, design: .rounded))
-            .foregroundColor(.white)
-            .tint(.white)
-            .onSubmit {
-                model.handleSpotlightSubmit()
+    private var spotlightIconName: String {
+        switch MorphSpotlightCommandParser.detectType(from: model.spotlightQuery) {
+        case .music:
+            return "music.note"
+        case .note:
+            return "note.text"
+        case .calendar:
+            return "calendar"
+        case .timer:
+            return "timer"
+        case .answer:
+            return "sparkles"
+        case .navigation, .unknown:
+            return "magnifyingglass"
+        }
+    }
+
+    private func handleSpotlightCloseOrClear() {
+        MorphHaptics.generic()
+        model.spotlightQuery = ""
+        isSpotlightFocused = false
+        if let ctrl = MorphController.shared {
+            ctrl.dismissToStealth()
+        } else {
+            withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                model.resetTransientStateOnCollapse()
             }
-            .padding(.trailing, 16)
+        }
+    }
+
+    // MARK: - Spotlight Horizontal Typing Bar (Horizontal expansion on hover: strictly for typing with right 'X' control)
+    private var spotlightTypingBarView: some View {
+        Group {
+            if model.isShowingDirectAnswer {
+                directAnswerView
+            } else {
+                HStack(spacing: 8) {
+                    // Left interactive group: Mascot, Icon, and Search Field
+                    HStack(spacing: 8) {
+                        // Active Living 3D Morphy Mascot (To the left of glass symbol)
+                        MorphyMascotView(model: model, style: .spotlightPill)
+                            .padding(.leading, 8)
+                            .transition(.scale(scale: 0.85).combined(with: .opacity))
+                        
+                        // Glass search symbol / Dynamic Icon
+                        Image(systemName: spotlightIconName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.65))
+                            .animation(.easeInOut(duration: 0.15), value: spotlightIconName)
+                        
+                        // Text field strictly for typing
+                        TextField(
+                            "Search, focus, plan, or ask Morph...",
+                            text: $model.spotlightQuery
+                        )
+                        .focused($isSpotlightFocused)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .regular, design: .rounded))
+                        .foregroundColor(.white)
+                        .tint(.white)
+                        .onSubmit {
+                            model.handleSpotlightSubmit()
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isSpotlightFocused = true
+                        if let ctrl = MorphController.shared, !MorphEnvironment.isTestingEnvironment {
+                            NSApp.activate(ignoringOtherApps: true)
+                            ctrl.panel.makeKeyAndOrderFront(nil)
+                        }
+                    }
+                    
+                    Spacer(minLength: 0)
+                    
+                    // Interactive 'X' Button on Right of Spotlight Pill with generous tap target
+                    Button(action: {
+                        handleSpotlightCloseOrClear()
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.70))
+                            .frame(width: 24, height: 24)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.14))
+                            )
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .help("Close (ESC)")
+                    .padding(.trailing, 8)
+                }
+                .frame(width: model.spotlightBarWidth, height: model.spotlightBarHeight)
+                .background(
+                    // Invisible 100% hit-testable shield ensuring every point across the lengthened bar is clickable
+                    Color.black.opacity(0.001)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            isSpotlightFocused = true
+                            if let ctrl = MorphController.shared, !MorphEnvironment.isTestingEnvironment {
+                                NSApp.activate(ignoringOtherApps: true)
+                                ctrl.panel.makeKeyAndOrderFront(nil)
+                            }
+                        }
+                )
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                isSpotlightFocused = true
+                if let ctrl = MorphController.shared, !MorphEnvironment.isTestingEnvironment {
+                    NSApp.activate(ignoringOtherApps: true)
+                    ctrl.panel.makeKeyAndOrderFront(nil)
+                }
+            }
+        }
+        .onChange(of: model.isSpotlightBarActive) { _, active in
+            if active {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+                    isSpotlightFocused = true
+                    if let ctrl = MorphController.shared, !MorphEnvironment.isTestingEnvironment {
+                        NSApp.activate(ignoringOtherApps: true)
+                        ctrl.panel.makeKeyAndOrderFront(nil)
+                    }
+                }
+            } else {
+                isSpotlightFocused = false
+            }
+        }
+    }
+    
+    // MARK: - Direct Answer Pill View
+    private var directAnswerView: some View {
+        HStack(spacing: 8) {
+            MorphyMascotView(model: model, style: .spotlightPill)
+                .padding(.leading, 8)
+            
+            Image(systemName: model.directAnswerIcon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color.white.opacity(0.85))
+            
+            Text(model.directAnswerText)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            
+            Spacer(minLength: 0)
+            
+            Button(action: {
+                if let ctrl = MorphController.shared {
+                    ctrl.dismissToStealth()
+                } else {
+                    withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                        model.isShowingDirectAnswer = false
+                        model.isSpotlightBarActive = false
+                        model.resetTransientStateOnCollapse()
+                    }
+                }
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .frame(width: 22, height: 22)
+                    .background(Color.white.opacity(0.14))
+                    .clipShape(Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .padding(.trailing, 8)
         }
         .frame(width: model.spotlightBarWidth, height: model.spotlightBarHeight)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(MorphUniversalAnimation.stateRetraction) {
+                model.isShowingDirectAnswer = false
+                model.isSpotlightBarActive = false
+            }
+        }
     }
     
     // MARK: - Compact Shrunk Timer Popup (Horizontal width shrunk to 320 pt)
     private var compactTimerPopupView: some View {
         VStack(spacing: 8) {
-            // Header Row: Flame Icon + FOCUS TIMER + Sprint Badge
+            // Header Row: Flame Icon + Personalized Custom Title + Sprint Badge
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "flame.fill")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white)
-                    Text("FOCUS TIMER")
+                    Text(model.customTimerTitle.uppercased())
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.70))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .lineLimit(1)
                 }
                 
                 Spacer()
@@ -359,11 +574,14 @@ public struct MorphIslandView: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 if model.interactionMode == .spotlightBar {
+                    if let ctrl = MorphController.shared {
+                        ctrl.expandPanel()
+                    }
                     withAnimation(MorphUniversalAnimation.stateElongation) {
                         model.isSpotlightBarActive = true
                     }
-                    if let ctrl = MorphController.shared {
-                        ctrl.updatePanelGeometry()
+                    if let ctrl = MorphController.shared, !MorphEnvironment.isTestingEnvironment {
+                        ctrl.panel.makeKey()
                     }
                 } else {
                     model.syncExpandedFeatureWithActiveContext()
@@ -374,53 +592,192 @@ public struct MorphIslandView: View {
             }
     }
     
+    // MARK: - Inline Timer Editor in Pill (Direct editing of task & duration right in the 2nd screenshot HUD)
+    private var inlineTimerEditorView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "timer")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Color.white.opacity(0.60))
+                .padding(.leading, 12)
+            
+            TextField(
+                "Time (e.g. 25m)...",
+                text: $model.pillEditingText
+            )
+            .focused($isPillEditFocused)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, weight: .medium, design: .rounded))
+            .multilineTextAlignment(.center)
+            .foregroundColor(.white)
+            .tint(.white)
+            .onSubmit {
+                model.commitPillTimerEdit()
+            }
+            
+            // Done Button
+            Button(action: {
+                model.commitPillTimerEdit()
+            }) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.black)
+                    .frame(width: 18, height: 18)
+                    .background(Color.white)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Save timer changes (Return)")
+            
+            // Cancel Button
+            Button(action: {
+                model.cancelPillTimerEdit()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 20, height: 20)
+                    .background(Color.white.opacity(0.14))
+                    .clipShape(Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Cancel editing (ESC)")
+            .padding(.trailing, 8)
+        }
+        .frame(width: model.compactWidth, height: model.idleHeight)
+        .contentShape(Rectangle())
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                isPillEditFocused = true
+            }
+        }
+        .onChange(of: model.isEditingTimerInPill) { _, editing in
+            if editing {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    isPillEditFocused = true
+                }
+            } else {
+                isPillEditFocused = false
+            }
+        }
+    }
+
+    // MARK: - Centered Focus Timer Pill HUD (Middle-centered timer display + ✕ on right)
+    private var centeredPomodoroPillView: some View {
+        HStack(spacing: 0) {
+            // Left balanced spacer anchor matching right ✕ button visual width (38pt + 10pt = 48pt) for absolute geometric centering
+            Color.clear
+                .frame(width: 48, height: model.idleHeight)
+            
+            Spacer(minLength: 0)
+            
+            // Centered Timer Display: Progress ring + Monospaced formatted time
+            HStack(spacing: 7) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 2)
+                        .frame(width: 13.5, height: 13.5)
+                    
+                    Circle()
+                        .trim(from: 0, to: CGFloat(model.pomodoro.progress))
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white, Color.white.opacity(0.4)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 13.5, height: 13.5)
+                }
+                
+                Text(model.pomodoro.formattedTime)
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+            
+            Spacer(minLength: 0)
+            
+            // Right Side: Strictly the ✕ close / stop button
+            Button(action: {
+                model.stopFocusTimer()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 20, height: 20)
+                    .background(Color.white.opacity(0.14))
+                    .clipShape(Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .help("Close / Stop Timer (⌘R)")
+            .frame(width: 38, height: model.idleHeight, alignment: .trailing)
+            .padding(.trailing, 8)
+        }
+        .frame(width: model.compactWidth, height: model.idleHeight)
+    }
+
     // MARK: - 2. Compact Active Notch View (Independent Dynamic Island HUD)
     private var compactActiveNotchView: some View {
         VStack(spacing: 0) {
-            // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
-            HStack(spacing: 0) {
-                // Left Wing: Outside camera notch, 100% visible
-                leftCompactWing
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .leading).combined(with: .opacity),
-                            removal: .move(edge: .leading).combined(with: .opacity)
+            if model.isEditingTimerInPill {
+                inlineTimerEditorView
+            } else if model.compactHUDMode == .pomodoroOnly {
+                centeredPomodoroPillView
+            } else {
+                // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
+                HStack(spacing: 0) {
+                    // Left Wing: Outside camera notch, 100% visible
+                    leftCompactWing
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .leading).combined(with: .opacity),
+                                removal: .move(edge: .leading).combined(with: .opacity)
+                            )
                         )
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                
-                // Center: Hardware camera notch blind spot (zero elements behind camera!)
-                Color.clear
-                    .frame(width: model.idleWidth, height: model.idleHeight)
-                    .contentShape(Rectangle())
-                
-                // Right Wing: Outside camera notch, 100% visible
-                rightCompactWing
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .trailing).combined(with: .opacity),
-                            removal: .move(edge: .trailing).combined(with: .opacity)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    // Center: Hardware camera notch blind spot (zero elements behind camera!)
+                    Color.clear
+                        .frame(width: model.idleWidth, height: model.idleHeight)
+                        .contentShape(Rectangle())
+                    
+                    // Right Wing: Outside camera notch, 100% visible
+                    rightCompactWing
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)
+                            )
                         )
-                    )
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .frame(height: model.idleHeight)
-            
-            // Bottom Shelf: Only rendered when notes are explicitly pinned!
-            if model.compactHUDMode == .notesPinned {
-                compactBottomShelf
-                    .frame(maxWidth: .infinity)
-                    .frame(height: model.compactHeight - model.idleHeight)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 3)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .frame(height: model.idleHeight)
+                
+                // Bottom Shelf: Only rendered when notes are explicitly pinned!
+                if model.compactHUDMode == .notesPinned {
+                    compactBottomShelf
+                        .frame(maxWidth: .infinity)
+                        .frame(height: model.compactHeight - model.idleHeight)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 3)
+                }
             }
         }
         .frame(width: model.compactWidth, height: model.compactHeight)
         .contentShape(Rectangle())
         .onTapGesture {
-            model.syncExpandedFeatureWithActiveContext()
-            withAnimation(MorphUniversalAnimation.stateExpansion) {
-                model.isExpanded = true
+            if model.compactHUDMode == .pomodoroOnly && !model.isEditingTimerInPill {
+                model.startEditingTimerInPill()
+            } else if model.compactHUDMode != .pomodoroOnly && !model.isEditingTimerInPill {
+                model.syncExpandedFeatureWithActiveContext()
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    model.isExpanded = true
+                }
             }
         }
     }
@@ -546,8 +903,165 @@ public struct MorphIslandView: View {
         .help("Expand Island")
     }
     
-    // MARK: - 3. Expanded Island View (640 x 225 pt)
+    private var greetingGreetingText: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let name = model.supabase.currentUser.firstName.isEmpty ? "Minh" : model.supabase.currentUser.firstName
+        if hour < 12 {
+            return "Good morning, \(name)"
+        } else if hour < 17 {
+            return "Good afternoon, \(name)"
+        } else {
+            return "Good evening, \(name)"
+        }
+    }
+    
+    private var stageTelemetrySubtitle: String {
+        if model.pomodoro.isRunning {
+            return "\(model.customTimerTitle) — \(model.pomodoro.formattedTime)"
+        } else if model.media.isPlaying {
+            return "Now Playing — \(model.media.trackTitle.isEmpty ? "YouTube Music" : model.media.trackTitle)"
+        } else {
+            return "\(model.screenName) • Schedule Clear"
+        }
+    }
+
+    // MARK: - Compact Staging View (Point 1: Sleek Apple-Grade Staging Card Before 3rd Design: 380 x 125 pt)
+    private var compactStageView: some View {
+        VStack(spacing: 6) {
+            // Header Row: Living Morphy Mascot + Brand + Context Telemetry + Right 'X'
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    MorphyMascotView(model: model, style: .restingStealth)
+                        .frame(width: 20, height: 20)
+                    
+                    Text("MORPH")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundColor(Color.white.opacity(0.85))
+                }
+                
+                Spacer()
+                
+                // Ambient Context Badge
+                Text(model.pomodoro.isRunning ? "\(model.pomodoro.formattedTime) ACTIVE" : "READY FOR FOCUS")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.10))
+                    )
+                
+                // Dismiss / Collapse 'X' Button
+                Button(action: {
+                    if let ctrl = MorphController.shared {
+                        ctrl.dismissToStealth()
+                    } else {
+                        withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                            model.resetTransientStateOnCollapse()
+                        }
+                    }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .frame(width: 20, height: 20)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.12))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            
+            // Central Ambient Headline: Dynamic Greeting & Schedule
+            VStack(spacing: 2) {
+                Text(greetingGreetingText)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text(stageTelemetrySubtitle)
+                    .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.55))
+            }
+            .padding(.vertical, 2)
+            
+            // Bottom Action Row: Direct one-click transition to the 3rd design
+            HStack(spacing: 8) {
+                // Primary: Start Focus Session -> Transitions smoothly into 3rd design (extendedPill)
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.startFocusTimerInPill(minutes: model.requestedTimerMinutes, title: model.customTimerTitle.isEmpty ? "Focus Session" : model.customTimerTitle)
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Start \(model.requestedTimerMinutes)m Focus")
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.white))
+                }
+                .buttonStyle(.plain)
+                
+                // Secondary: Music Quick Play
+                Button(action: {
+                    MorphHaptics.generic()
+                    model.openFeature(.music)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 10, weight: .medium))
+                        Text("Music")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                
+                // Tertiary: Notes Scratchpad
+                Button(action: {
+                    MorphHaptics.generic()
+                    model.openFeature(.notes)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "note.text")
+                            .font(.system(size: 10, weight: .medium))
+                        Text("Notes")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 10)
+        }
+        .frame(width: model.compactStageWidth, height: model.compactStageHeight)
+    }
+
+    // MARK: - 3. Expanded Island View (Adaptive: 380 x 125 pt Compact Stage or 640 x 225 pt Full View)
     private var expandedView: some View {
+        Group {
+            if model.interactionMode == .spotlightBar && model.selectedTab == .home && model.activeAIResponse == nil && model.activeContextFeature == nil {
+                compactStageView
+            } else {
+                fullExpandedView
+            }
+        }
+    }
+
+    private var fullExpandedView: some View {
         VStack(spacing: 4) {
             // Top Notch Row: Wings on Left/Right, Empty Center Blind Spot for Hardware Notch
             topNotchRow
@@ -561,7 +1075,10 @@ public struct MorphIslandView: View {
             
             // Main Feature Body: Sits completely BELOW the notch blind spot and horizontal bar!
             ZStack {
-                if let contextFeature = model.activeContextFeature {
+                if let aiResponse = model.activeAIResponse {
+                    AIIntelligenceView(response: aiResponse, model: model)
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity))
+                } else if let contextFeature = model.activeContextFeature {
                     switch contextFeature {
                     case .meetingFlight:
                         MeetingFlightControllerView(model: model)
@@ -616,10 +1133,27 @@ public struct MorphIslandView: View {
         HStack(spacing: 6) {
             Spacer(minLength: 0)
             
+            if model.activeAIResponse != nil {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("AI Response")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(model.theme.activePillText)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(model.theme.activePillBackground)
+                )
+            }
+            
             ForEach([MorphTab.home, .timer, .music, .notes, .calendar, .profile]) { tab in
                 Button(action: {
                     MorphHaptics.levelChange()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        model.activeAIResponse = nil
                         model.selectedTab = tab
                         model.activeContextFeature = nil
                         model.isCommandBarPresented = false
@@ -627,18 +1161,18 @@ public struct MorphIslandView: View {
                 }) {
                     HStack(spacing: 5) {
                         Image(systemName: tab.iconName)
-                            .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium))
+                            .font(.system(size: 9.5, weight: (model.selectedTab == tab && model.activeAIResponse == nil) ? .bold : .medium))
                         Text(tab == .timer ? "Focus Timer" : tab.rawValue)
-                            .font(.system(size: 9.5, weight: model.selectedTab == tab ? .bold : .medium, design: .rounded))
+                            .font(.system(size: 9.5, weight: (model.selectedTab == tab && model.activeAIResponse == nil) ? .bold : .medium, design: .rounded))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                     }
-                    .foregroundColor(model.selectedTab == tab ? model.theme.activePillText : model.theme.inactivePillText)
+                    .foregroundColor((model.selectedTab == tab && model.activeAIResponse == nil) ? model.theme.activePillText : model.theme.inactivePillText)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
                     .background(
                         ZStack {
-                            if model.selectedTab == tab {
+                            if model.selectedTab == tab && model.activeAIResponse == nil {
                                 Capsule()
                                     .fill(model.theme.activePillBackground)
                                     .matchedGeometryEffect(id: "ActiveTabPill", in: navTabNamespace)
@@ -973,37 +1507,31 @@ private struct CompactPomodoroWingLeft: View {
     let model: NotchModel
     
     var body: some View {
-        Button(action: {
-            model.openFeature(.timer)
-        }) {
-            HStack(spacing: 6) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.white.opacity(0.18), lineWidth: 2)
-                        .frame(width: 15, height: 15)
-                    
-                    Circle()
-                        .trim(from: 0, to: CGFloat(pomodoro.progress))
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color.white, Color.white.opacity(0.4)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                        )
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 15, height: 15)
-                }
+        HStack(spacing: 5) {
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.18), lineWidth: 2)
+                    .frame(width: 13.5, height: 13.5)
                 
-                Text(pomodoro.formattedTime)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
+                Circle()
+                    .trim(from: 0, to: CGFloat(pomodoro.progress))
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white, Color.white.opacity(0.4)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 13.5, height: 13.5)
             }
-            .padding(.leading, 12)
+            
+            Text(pomodoro.formattedTime)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
         }
-        .buttonStyle(.plain)
-        .help("Open Focus Timer (⌘2)")
+        .padding(.leading, 10)
     }
 }
 
@@ -1012,46 +1540,19 @@ private struct CompactPomodoroWingRight: View {
     let model: NotchModel
     
     var body: some View {
-        HStack(spacing: 6) {
-            Text(pomodoro.mode == .work ? "FOCUS" : "BREAK")
-                .font(.system(size: 8.5, weight: .heavy, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.9))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2.5)
+        Button(action: {
+            model.stopFocusTimer()
+        }) {
+            Image(systemName: "xmark")
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundColor(Color.white.opacity(0.70))
+                .frame(width: 18, height: 18)
                 .background(Color.white.opacity(0.14))
-                .clipShape(Capsule())
-            
-            Button(action: {
-                pomodoro.toggle()
-            }) {
-                Image(systemName: pomodoro.isRunning ? "pause.fill" : "play.fill")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundColor(.white)
-                    .frame(width: 18, height: 18)
-                    .background(Color.white.opacity(0.16))
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
-            }
-            .buttonStyle(.plain)
-            .help(pomodoro.isRunning ? "Pause Focus Timer (⌘⏎)" : "Start Focus Timer (⌘⏎)")
-            
-            Button(action: {
-                model.syncExpandedFeatureWithActiveContext()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
-                    model.isExpanded = true
-                }
-            }) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.45))
-                    .frame(width: 16, height: 16)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Expand Island (⌘⌥M)")
+                .clipShape(Circle())
         }
-        .padding(.trailing, 12)
+        .buttonStyle(.plain)
+        .help("Close / Stop Timer (⌘R)")
+        .padding(.trailing, 10)
     }
 }
 
@@ -1910,6 +2411,227 @@ public struct MorphCommandBarView: View {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             model.isCommandBarPresented = false
         }
+    }
+}
+
+// MARK: - AI Intelligence Big UI Screen View
+public struct AIIntelligenceView: View {
+    public let response: MorphAIResponse
+    @ObservedObject public var model: NotchModel
+    @ObservedObject public var theme: MorphTheme = .shared
+    @State private var isCopied: Bool = false
+    
+    public init(response: MorphAIResponse, model: NotchModel) {
+        self.response = response
+        self.model = model
+    }
+    
+    public var body: some View {
+        VStack(spacing: 8) {
+            // Header Row: Morphy Mascot + Category Badge + Query Capsule + Dismiss Button
+            HStack(spacing: 8) {
+                MorphyMascotView(model: model, style: .restingStealth)
+                    .frame(width: 22, height: 22)
+                
+                // Category Tag
+                Text(response.category.uppercased())
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(theme.textTertiary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(theme.isDark ? 0.08 : 0.06))
+                    .clipShape(Capsule())
+                
+                // Prompt Query Capsule
+                HStack(spacing: 4) {
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(theme.textTertiary)
+                    Text(response.query)
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .foregroundColor(theme.textPrimary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3.5)
+                .background(Color.white.opacity(theme.isDark ? 0.06 : 0.04))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                
+                Spacer(minLength: 0)
+                
+                // Dismiss Button
+                Button(action: {
+                    withAnimation(MorphUniversalAnimation.stateExpansion) {
+                        model.activeAIResponse = nil
+                    }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(theme.textSecondary)
+                        .frame(width: 20, height: 20)
+                        .background(Color.white.opacity(theme.isDark ? 0.10 : 0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss AI Response (Esc)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 2)
+            
+            // Content Deck: Apple Liquid Glass Card
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Title
+                    Text(response.title)
+                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.textPrimary)
+                    
+                    // Summary Deck
+                    Text(response.summary)
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(theme.textSecondary)
+                        .lineSpacing(2)
+                    
+                    // Detailed Content
+                    Text(response.detailedContent)
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundColor(theme.textSecondary.opacity(0.95))
+                        .lineSpacing(2.5)
+                        .padding(.vertical, 2)
+                    
+                    // Key Points List
+                    if !response.keyPoints.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("KEY INSIGHTS")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(theme.textTertiary)
+                            
+                            ForEach(response.keyPoints, id: \.self) { point in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text("—")
+                                        .font(.system(size: 9.5, weight: .bold))
+                                        .foregroundColor(theme.textTertiary)
+                                    Text(point)
+                                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                                        .foregroundColor(theme.textPrimary)
+                                }
+                            }
+                        }
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.white.opacity(theme.isDark ? 0.04 : 0.03))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                        )
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.liquidGlassCard)
+                    .background(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(theme.isDark ? 0.22 : 0.40), Color.white.opacity(theme.isDark ? 0.08 : 0.15)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.5
+                    )
+            )
+            
+            // Bottom Action Bar: Save to Notes, Start Focus Timer, Copy
+            HStack(spacing: 8) {
+                // Save to Notes
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    let noteEntry = "[\(response.title)]\n\(response.detailedContent)"
+                    if model.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        model.scratchpad.text = noteEntry
+                    } else {
+                        model.scratchpad.text += "\n\n" + noteEntry
+                    }
+                    model.activeAIResponse = nil
+                    model.openFeature(.notes)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "note.text.badge.plus")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Save to Notes")
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(theme.textPrimary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4.5)
+                    .background(Color.white.opacity(theme.isDark ? 0.12 : 0.10))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Save explanation directly into Scratchpad Notes")
+                
+                // Start Focus Sprint
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.startFocusTimerInPill(minutes: 25, title: response.title, autoStart: true)
+                    model.activeAIResponse = nil
+                    model.openFeature(.timer)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 8.5, weight: .semibold))
+                        Text("Focus on Topic")
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(theme.isDark ? .black : .white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4.5)
+                    .background(theme.isDark ? Color.white : Color.black)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Launch a 25-minute Pomodoro focus sprint for this topic")
+                
+                Spacer(minLength: 0)
+                
+                // Copy to Clipboard
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString("\(response.title)\n\n\(response.summary)\n\n\(response.detailedContent)", forType: .string)
+                    isCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        isCopied = false
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 8.5, weight: .semibold))
+                        Text(isCopied ? "Copied" : "Copy")
+                            .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(theme.textSecondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4.5)
+                    .background(Color.white.opacity(theme.isDark ? 0.08 : 0.06))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Copy AI answer to macOS clipboard")
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

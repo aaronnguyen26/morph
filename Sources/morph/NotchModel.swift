@@ -64,53 +64,104 @@ public struct MorphTimerQueryParser {
     public struct ParsedTimer: Equatable {
         public let minutes: Int
         public let autoStart: Bool
+        public let title: String
         
-        public init(minutes: Int, autoStart: Bool = false) {
+        public init(minutes: Int, autoStart: Bool = true, title: String = "Focus Session") {
             self.minutes = minutes
             self.autoStart = autoStart
+            self.title = title
         }
     }
     
     public static func parse(_ text: String) -> ParsedTimer? {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !cleaned.isEmpty else { return nil }
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        let lower = raw.lowercased()
         
-        // 1. Direct number check: "25", "15", "5", "45", "60"
-        if let directNumber = Int(cleaned), directNumber > 0 && directNumber <= 180 {
-            return ParsedTimer(minutes: directNumber, autoStart: true)
+        // Break keywords check
+        if lower == "break" || lower == "short break" {
+            return ParsedTimer(minutes: 5, autoStart: true, title: "Short Break")
+        } else if lower == "long break" {
+            return ParsedTimer(minutes: 15, autoStart: true, title: "Long Break")
         }
         
-        // 2. Pattern matching: e.g. "25m", "25min", "25mins", "25 minutes"
-        if let regex = try? NSRegularExpression(pattern: #"^(\d+)\s*(m|min|mins|minutes)?$"#, options: .caseInsensitive) {
-            let ns = cleaned as NSString
-            if let match = regex.firstMatch(in: cleaned, range: NSRange(location: 0, length: ns.length)) {
-                let numStr = ns.substring(with: match.range(at: 1))
-                if let mins = Int(numStr), mins > 0 && mins <= 180 {
-                    return ParsedTimer(minutes: mins, autoStart: true)
+        var extractedMinutes: Int? = nil
+        var textWithoutTime = raw
+        
+        // 1. Check for hour patterns: e.g. "1h 30m", "1.5h", "2h", "1 hr", "1 hour"
+        if let hourRegex = try? NSRegularExpression(pattern: #"(?i)(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)(?:\s*(\d+)\s*(?:m|mins?|minutes?))?"#) {
+            let ns = raw as NSString
+            if let match = hourRegex.firstMatch(in: raw, range: NSRange(location: 0, length: ns.length)) {
+                let hourStr = ns.substring(with: match.range(at: 1))
+                let hours = Double(hourStr) ?? 1.0
+                var mins = Int(hours * 60)
+                if match.numberOfRanges > 2 && match.range(at: 2).location != NSNotFound {
+                    let extraMinsStr = ns.substring(with: match.range(at: 2))
+                    mins += Int(extraMinsStr) ?? 0
+                }
+                extractedMinutes = min(180, max(1, mins))
+                textWithoutTime = hourRegex.stringByReplacingMatches(in: textWithoutTime, range: NSRange(location: 0, length: (textWithoutTime as NSString).length), withTemplate: "")
+            }
+        }
+        
+        // 2. Check for minute patterns: e.g. "45m", "25min", "50 mins", "30 minutes"
+        if extractedMinutes == nil {
+            if let minRegex = try? NSRegularExpression(pattern: #"(?i)(\d+)\s*(?:m|mins?|minutes?)\b"#) {
+                let ns = textWithoutTime as NSString
+                if let match = minRegex.firstMatch(in: textWithoutTime, range: NSRange(location: 0, length: ns.length)) {
+                    let numStr = ns.substring(with: match.range(at: 1))
+                    if let mins = Int(numStr), mins > 0 {
+                        extractedMinutes = min(180, mins)
+                        textWithoutTime = minRegex.stringByReplacingMatches(in: textWithoutTime, range: NSRange(location: 0, length: ns.length), withTemplate: "")
+                    }
                 }
             }
         }
         
-        // 3. Break keywords
-        if cleaned == "break" || cleaned == "short break" {
-            return ParsedTimer(minutes: 5, autoStart: false)
-        } else if cleaned == "long break" {
-            return ParsedTimer(minutes: 15, autoStart: false)
-        }
+        // 3. Check for standalone numbers e.g. "Focus 45" or "15"
+        // Standalone numbers without "m/min" units are ONLY treated as timer duration
+        // if the query contains an explicit timer keyword OR consists purely of digits
+        let timerKeywords = ["timer", "focus", "pomo", "pomodoro", "sprint", "break", "deep work", "countdown"]
+        let hasIntentKeyword = timerKeywords.contains { lower.contains($0) }
+        let isPureDigits = Int(raw.trimmingCharacters(in: .whitespaces)) != nil
         
-        // 4. Command phrases like "timer 15m", "set timer 30", "focus 45m"
-        let timerKeywords = ["timer", "focus", "pomo", "pomodoro", "work", "sprint"]
-        for kw in timerKeywords {
-            if cleaned.contains(kw) {
-                let digits = cleaned.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
-                if let mins = Int(digits), mins > 0 && mins <= 180 {
-                    return ParsedTimer(minutes: mins, autoStart: true)
+        if extractedMinutes == nil && (hasIntentKeyword || isPureDigits) {
+            if let digitRegex = try? NSRegularExpression(pattern: #"\b(\d+)\b"#) {
+                let ns = textWithoutTime as NSString
+                if let match = digitRegex.firstMatch(in: textWithoutTime, range: NSRange(location: 0, length: ns.length)) {
+                    let numStr = ns.substring(with: match.range(at: 1))
+                    if let mins = Int(numStr), mins > 0 && mins <= 180 {
+                        extractedMinutes = mins
+                        textWithoutTime = digitRegex.stringByReplacingMatches(in: textWithoutTime, range: NSRange(location: 0, length: ns.length), withTemplate: "")
+                    }
                 }
-                return ParsedTimer(minutes: 25, autoStart: false)
             }
         }
         
-        return nil
+        // If neither valid timer numbers nor intent keywords found, return nil (e.g. "reading response #4", "play music")
+        if extractedMinutes == nil && !hasIntentKeyword {
+            return nil
+        }
+        
+        // 4. Clean up remaining text to form the personalized title
+        var cleanedTitle = textWithoutTime
+            .replacingOccurrences(of: "(?i)^(set|start|run|create)\\s+", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "(?i)\\b(for|in)\\b", with: "", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
+        
+        if ["timer", "focus", "focus timer", "pomodoro", "pomo"].contains(cleanedTitle.lowercased()) {
+            cleanedTitle = ""
+        }
+        
+        let finalMinutes = extractedMinutes ?? 25
+        
+        if cleanedTitle.isEmpty {
+            cleanedTitle = (finalMinutes == 25) ? "Focus Session" : "\(finalMinutes)m Focus"
+        } else {
+            cleanedTitle = cleanedTitle.capitalized
+        }
+        
+        return ParsedTimer(minutes: finalMinutes, autoStart: true, title: cleanedTitle)
     }
     
     public static func parseMinutes(from text: String) -> Int? {
@@ -120,19 +171,22 @@ public struct MorphTimerQueryParser {
 
 public struct MorphUniversalAnimation {
     /// State 1 <-> State 2: Asymmetric fluid elongation & contraction
-    public static let stateElongation = Animation.spring(response: 0.35, dampingFraction: 0.78)
+    public static let stateElongation = Animation.spring(response: 0.32, dampingFraction: 0.96)
     
     /// State 2 <-> State 3 or State 1 <-> State 3: Fluid 4-sided squircle modal expansion
-    public static let stateExpansion = Animation.spring(response: 0.38, dampingFraction: 0.82)
+    public static let stateExpansion = Animation.spring(response: 0.34, dampingFraction: 0.96)
     
-    /// State 3 -> State 2 or State 3 -> State 1: Crisp controlled modal retraction
-    public static let stateRetraction = Animation.spring(response: 0.30, dampingFraction: 0.86)
+    /// State 3 -> State 2 or State 3 -> State 1: Crisp controlled modal retraction (critically damped: zero bounce)
+    public static let stateRetraction = Animation.spring(response: 0.28, dampingFraction: 1.0)
+    
+    /// Stealth mode retraction: crisp, smooth, 100% non-bouncing critically damped spring
+    public static let stealthRetraction = Animation.spring(response: 0.26, dampingFraction: 1.0)
     
     /// Universal tab switching animation inside State 3
-    public static let tabSwitch = Animation.spring(response: 0.28, dampingFraction: 0.82)
+    public static let tabSwitch = Animation.spring(response: 0.28, dampingFraction: 0.90)
     
     /// Universal wing entrance / exit for live activity pills
-    public static let wingTransition = Animation.spring(response: 0.32, dampingFraction: 0.80)
+    public static let wingTransition = Animation.spring(response: 0.30, dampingFraction: 0.90)
 }
 
 public enum ContextualFeature: String, Identifiable, Equatable {
@@ -143,29 +197,82 @@ public enum ContextualFeature: String, Identifiable, Equatable {
     public var id: String { rawValue }
 }
 
+public struct MorphAIResponse: Equatable, Identifiable {
+    public let id: UUID
+    public let query: String
+    public let title: String
+    public let category: String
+    public let icon: String
+    public let summary: String
+    public let detailedContent: String
+    public let keyPoints: [String]
+    public let suggestedActions: [String]
+    public let timestamp: Date
+    
+    public init(
+        id: UUID = UUID(),
+        query: String,
+        title: String,
+        category: String = "AI Intelligence",
+        icon: String = "sparkles",
+        summary: String,
+        detailedContent: String,
+        keyPoints: [String] = [],
+        suggestedActions: [String] = [],
+        timestamp: Date = Date()
+    ) {
+        self.id = id
+        self.query = query
+        self.title = title
+        self.category = category
+        self.icon = icon
+        self.summary = summary
+        self.detailedContent = detailedContent
+        self.keyPoints = keyPoints
+        self.suggestedActions = suggestedActions
+        self.timestamp = timestamp
+    }
+}
+
 @MainActor
 public final class NotchModel: ObservableObject {
     // Apple Dynamic Island & Physical Notch Resting Baseline
     public var idleWidth: CGFloat = 179
     public var idleHeight: CGFloat = 32
+    public static let standaloneTopClearance: CGFloat = 66.0
+    public var standaloneTopClearance: CGFloat { Self.standaloneTopClearance }
     
     // Expanded Island Dimensions (640 width, 225 shortened length)
     public let expandedWidth: CGFloat = 640
     public let expandedHeight: CGFloat = 225
     
-    // Spotlight Typing Bar Dimensions (Horizontal Expansion on Hover)
-    public let spotlightBarWidth: CGFloat = 520
+    // Compact Staging Stage Dimensions (Sleek staging view before 3rd design: 380 width, 125 height)
+    public let compactStageWidth: CGFloat = 380
+    public let compactStageHeight: CGFloat = 125
+    
+    // Spotlight Typing Bar Dimensions (Horizontal Expansion on Hover: widened to 510 pt, perfectly balanced, not too fat)
+    public let spotlightBarWidth: CGFloat = 510
     public let spotlightBarHeight: CGFloat = 38
     
-    // Shrunk Timer Popup Dimensions (Shrunk horizontally, less than typing bar)
-    public let timerPopupWidth: CGFloat = 320
+    // Shrunk Timer Popup Dimensions (The 3rd Option: 340 pt, strictly less than 460 pt)
+    public let timerPopupWidth: CGFloat = 340
     public let timerPopupHeight: CGFloat = 135
     
     @Published public var interactionMode: MorphInteractionMode = .spotlightBar
     @Published public var spotlightQuery: String = ""
     @Published public var isSpotlightBarActive: Bool = false
     @Published public var isTimerPopupActive: Bool = false
+    @Published public var isPomodoroSessionActive: Bool = false
+    @Published public var isEditingTimerInPill: Bool = false
+    @Published public var pillEditingText: String = ""
     @Published public var requestedTimerMinutes: Int = 25
+    @Published public var customTimerTitle: String = "Focus Session"
+    
+    // Direct conversational answers & AI Intelligence in Dynamic Island
+    @Published public var directAnswerText: String = ""
+    @Published public var directAnswerIcon: String = "sparkles"
+    @Published public var isShowingDirectAnswer: Bool = false
+    @Published public var activeAIResponse: MorphAIResponse? = nil
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
@@ -330,7 +437,7 @@ public final class NotchModel: ObservableObject {
             return .notesPinned
         }
         
-        let timerRunning = pomodoro.isRunning
+        let timerRunning = pomodoro.isRunning || (isPomodoroSessionActive && pomodoro.timeRemaining > 0 && !pomodoro.isCompleted)
         let musicPlaying = media.isPlaying
         let calendarAlert = calendar.showNotchAlert
         
@@ -362,7 +469,7 @@ public final class NotchModel: ObservableObject {
         case .none:
             return idleWidth
         case .pomodoroOnly:
-            return max(idleWidth + 240, 440)
+            return 300
         case .mediaOnly:
             return max(idleWidth + 260, 460)
         case .dualActive, .calendarAndMedia:
@@ -398,6 +505,9 @@ public final class NotchModel: ObservableObject {
         case .timerPopup:
             return timerPopupWidth
         case .fullExpanded:
+            if interactionMode == .spotlightBar && selectedTab == .home && activeAIResponse == nil && activeContextFeature == nil {
+                return compactStageWidth
+            }
             return expandedWidth
         case .extendedPill:
             return compactWidth
@@ -413,6 +523,9 @@ public final class NotchModel: ObservableObject {
         case .timerPopup:
             return timerPopupHeight
         case .fullExpanded:
+            if interactionMode == .spotlightBar && selectedTab == .home && activeAIResponse == nil && activeContextFeature == nil {
+                return compactStageHeight
+            }
             return expandedHeight
         case .extendedPill:
             return compactHeight
@@ -431,10 +544,12 @@ public final class NotchModel: ObservableObject {
         }
         switch interactionMode {
         case .spotlightBar:
-            if isHovered || isSpotlightBarActive {
+            if isSpotlightBarActive {
                 return .spotlightBar
             } else if isCompactActive {
                 return .extendedPill
+            } else if isHovered {
+                return .spotlightBar
             } else {
                 return .resting
             }
@@ -449,29 +564,228 @@ public final class NotchModel: ObservableObject {
     
     public func handleSpotlightQueryChanged(_ query: String) {
         self.spotlightQuery = query
-        if let parsed = MorphTimerQueryParser.parse(query) {
-            triggerTimerPopup(minutes: parsed.minutes, autoStart: parsed.autoStart)
-        }
     }
     
     public func handleSpotlightSubmit() {
-        if let parsed = MorphTimerQueryParser.parse(spotlightQuery) {
-            triggerTimerPopup(minutes: parsed.minutes, autoStart: true)
-        } else {
-            triggerTimerPopup(minutes: 25, autoStart: true)
+        let trimmed = spotlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        let command = MorphSpotlightCommandParser.parse(trimmed)
+        executeSpotlightCommand(command, originalQuery: trimmed)
+    }
+    
+    public func executeSpotlightCommand(_ command: MorphSpotlightCommand, originalQuery: String? = nil) {
+        let query = originalQuery ?? spotlightQuery
+        switch command {
+        case .answer(let text, let icon):
+            self.directAnswerText = text
+            self.directAnswerIcon = icon
+            self.isShowingDirectAnswer = true
+            let aiResp = MorphSpotlightCommandParser.generateAIResponse(for: query, briefAnswer: text, icon: icon)
+            displayInBigUI(aiResponse: aiResp)
+            
+        case .timer(let minutes, let title, let autoStart):
+            startFocusTimerInPill(minutes: minutes, title: title, autoStart: autoStart)
+            
+        case .music(let action):
+            executeMusicAction(action)
+            
+        case .note(let action):
+            executeNoteAction(action)
+            
+        case .calendar(let action):
+            executeCalendarAction(action)
+            
+        case .navigation(let tab):
+            openFeature(tab)
         }
     }
     
-    public func triggerTimerPopup(minutes: Int, autoStart: Bool = false) {
+    public func displayInBigUI(aiResponse: MorphAIResponse) {
+        self.activeAIResponse = aiResponse
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        self.isShowingDirectAnswer = true
+        self.activeContextFeature = nil
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+            if !MorphEnvironment.isTestingEnvironment {
+                NSApp.activate(ignoringOtherApps: true)
+                ctrl.panel.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+    
+    public func executeMusicAction(_ action: MusicAction) {
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        
+        switch action {
+        case .play(let query):
+            if let q = query, !q.isEmpty {
+                self.media.playSearch(q)
+            } else {
+                self.media.play()
+            }
+            openFeature(.music)
+            
+        case .pause:
+            self.media.pause()
+            openFeature(.music)
+            
+        case .next:
+            self.media.nextTrack()
+            openFeature(.music)
+            
+        case .previous:
+            self.media.previousTrack()
+            openFeature(.music)
+            
+        case .open:
+            openFeature(.music)
+        }
+    }
+    
+    public func executeNoteAction(_ action: NoteAction) {
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        
+        switch action {
+        case .add(let text, let pinToNotch):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            
+            if self.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.scratchpad.text = trimmed
+            } else {
+                self.scratchpad.text += "\n" + trimmed
+            }
+            
+            if pinToNotch {
+                self.isNotePinnedToNotch = true
+            }
+            openFeature(.notes)
+            
+        case .view:
+            openFeature(.notes)
+            
+        case .clear:
+            self.scratchpad.clear()
+            self.isNotePinnedToNotch = false
+            openFeature(.notes)
+        }
+    }
+    
+    public func executeCalendarAction(_ action: CalendarAction) {
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        
+        switch action {
+        case .add(let title, let hour, let minute, let duration):
+            self.calendar.addQuickEvent(
+                title: title,
+                durationMinutes: duration,
+                startHour: hour,
+                startMinute: minute
+            )
+            openFeature(.calendar)
+            
+        case .view:
+            openFeature(.calendar)
+        }
+    }
+    
+    public func startFocusTimerInPill(minutes: Int, title: String = "Focus Session", autoStart: Bool = true) {
         self.requestedTimerMinutes = minutes
+        self.customTimerTitle = title
         self.pomodoro.setCustomDuration(minutes: minutes, saveAsPreference: false)
+        self.isPomodoroSessionActive = true
+        self.isTimerPopupActive = false
+        self.isSpotlightBarActive = false
+        self.isEditingTimerInPill = false
+        self.isHovered = false
+        self.isExpanded = false
+        self.activeContextFeature = nil
+        self.spotlightQuery = ""
+        
         if autoStart {
             self.pomodoro.start()
         }
+        
         withAnimation(MorphUniversalAnimation.stateExpansion) {
-            self.isTimerPopupActive = true
-            self.isSpotlightBarActive = false
+            // Smoothly transitions into the extended pill HUD (2nd screenshot)
         }
+        if let ctrl = MorphController.shared {
+            ctrl.panel.ignoresMouseEvents = false
+            if ctrl.panel.frame.width < self.compactWidth {
+                ctrl.updatePanelGeometry(animate: false)
+            } else {
+                ctrl.scheduleWindowShrink()
+            }
+        }
+    }
+    
+    public func stopFocusTimer() {
+        pomodoro.pause()
+        pomodoro.reset()
+        isPomodoroSessionActive = false
+        isEditingTimerInPill = false
+        isTimerPopupActive = false
+        spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateRetraction) {
+            // Smoothly collapses back to resting notch
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.scheduleWindowShrink()
+        }
+    }
+    
+    public func startEditingTimerInPill() {
+        if !customTimerTitle.isEmpty {
+            self.pillEditingText = "\(customTimerTitle) \(pomodoro.remainingMinutes)m"
+        } else {
+            self.pillEditingText = "\(pomodoro.remainingMinutes)m"
+        }
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isEditingTimerInPill = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.panel.ignoresMouseEvents = false
+            ctrl.panel.makeKeyAndOrderFront(nil)
+        }
+    }
+    
+    public func commitPillTimerEdit() {
+        let trimmed = pillEditingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let command = MorphSpotlightCommandParser.parse(trimmed)
+            switch command {
+            case .timer(let minutes, let title, _):
+                self.customTimerTitle = title
+                self.requestedTimerMinutes = minutes
+                self.pomodoro.setCustomDuration(minutes: minutes, saveAsPreference: false)
+                self.isPomodoroSessionActive = true
+                self.pomodoro.start()
+            default:
+                executeSpotlightCommand(command)
+            }
+        }
+        withAnimation(MorphUniversalAnimation.stateRetraction) {
+            self.isEditingTimerInPill = false
+        }
+    }
+    
+    public func cancelPillTimerEdit() {
+        withAnimation(MorphUniversalAnimation.stateRetraction) {
+            self.isEditingTimerInPill = false
+        }
+    }
+    
+    public func triggerTimerPopup(minutes: Int, title: String = "Focus Session", autoStart: Bool = true) {
+        startFocusTimerInPill(minutes: minutes, title: title, autoStart: autoStart)
     }
     
     public func dismissTimerPopup() {
@@ -484,12 +798,32 @@ public final class NotchModel: ObservableObject {
         }
     }
     
+    /// Completely resets all transient state when Morph collapses so that upon re-opening,
+    /// Morph starts 100% fresh and never remembers past typed queries or lingering dialogs.
+    public func resetTransientStateOnCollapse() {
+        self.spotlightQuery = ""
+        self.isShowingDirectAnswer = false
+        self.directAnswerText = ""
+        self.directAnswerIcon = "sparkles"
+        self.isEditingTimerInPill = false
+        self.pillEditingText = ""
+        self.isTimerPopupActive = false
+        self.activeAIResponse = nil
+        self.isCommandBarPresented = false
+        self.isSpotlightBarActive = false
+        self.isHovered = false
+        if !isPomodoroSessionActive {
+            self.isExpanded = false
+        }
+    }
+    
     public func resetSpotlightBar() {
-        withAnimation(MorphUniversalAnimation.stateRetraction) {
-            self.spotlightQuery = ""
-            self.isTimerPopupActive = false
-            self.isSpotlightBarActive = false
-            self.isHovered = false
+        if let ctrl = MorphController.shared {
+            ctrl.dismissToStealth()
+        } else {
+            withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                self.resetTransientStateOnCollapse()
+            }
         }
     }
     
@@ -741,6 +1075,9 @@ public final class NotchModel: ObservableObject {
     
     public func openFeature(_ tab: MorphTab) {
         MorphHaptics.levelChange()
+        activeAIResponse = nil
+        isSpotlightBarActive = false
+        spotlightQuery = ""
         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
             selectedTab = tab
             if tab != .home {
@@ -749,6 +1086,13 @@ public final class NotchModel: ObservableObject {
             activeContextFeature = nil
             isCommandBarPresented = false
             isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+            if !MorphEnvironment.isTestingEnvironment {
+                NSApp.activate(ignoringOtherApps: true)
+                ctrl.panel.makeKeyAndOrderFront(nil)
+            }
         }
     }
     

@@ -126,7 +126,7 @@ public struct ProfileView: View {
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundColor(model.theme.textPrimary)
                     
-                    Text("\(supabase.currentUser.targetRole) • \(supabase.currentUser.email)")
+                    Text("\(supabase.currentUser.targetRole) — \(supabase.currentUser.email)")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(model.theme.textSecondary)
                         .lineLimit(1)
@@ -239,11 +239,15 @@ public struct ProfileView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(model.theme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(model.theme.liquidGlassCard)
+                        .background(.ultraThinMaterial)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(model.theme.liquidGlassSpecularBorder, lineWidth: 0.8)
                 )
                 
                 // Streak Card
@@ -258,11 +262,15 @@ public struct ProfileView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(model.theme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(model.theme.liquidGlassCard)
+                        .background(.ultraThinMaterial)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(model.theme.liquidGlassSpecularBorder, lineWidth: 0.8)
                 )
                 
                 // Google Calendar SSO Card (Zero status dots, strictly monochromatic)
@@ -278,11 +286,15 @@ public struct ProfileView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(model.theme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(model.theme.liquidGlassCard)
+                        .background(.ultraThinMaterial)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(model.calendar.isSignedIn ? model.theme.activeBorder : model.theme.hairlineBorder, lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(model.theme.liquidGlassSpecularBorder, lineWidth: 0.8)
                 )
                 
                 // Cloud Database Card
@@ -297,11 +309,15 @@ public struct ProfileView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
-                .background(model.theme.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(model.theme.liquidGlassCard)
+                        .background(.ultraThinMaterial)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(model.theme.hairlineBorder, lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(model.theme.liquidGlassSpecularBorder, lineWidth: 0.8)
                 )
             }
             

@@ -43,14 +43,22 @@ public struct ScratchpadView: View {
                     .padding(.vertical, 6)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(theme.canvasSecondary)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.liquidGlassCard)
+                    .background(.ultraThinMaterial)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(
-                        isEditorFocused ? theme.focusRingBorder : theme.hairlineBorder,
-                        lineWidth: isEditorFocused ? 1.0 : 0.5
-                    )
+                Group {
+                    if isEditorFocused {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(theme.focusRingBorder, lineWidth: 1.0)
+                    } else {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.8)
+                    }
+                }
             )
             
             // Relocated Bottom Action & Telemetry Toolbar
@@ -65,17 +73,17 @@ public struct ScratchpadView: View {
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.textTertiary)
                     
-                    Text("•")
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.textTertiary.opacity(0.5))
+                    Text("/")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(theme.textTertiary.opacity(0.4))
                     
                     Text("\(scratchpad.wordCount) \(scratchpad.wordCount == 1 ? "word" : "words")")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.textSecondary)
                     
-                    Text("•")
-                        .font(.system(size: 9))
-                        .foregroundColor(theme.textTertiary.opacity(0.5))
+                    Text("/")
+                        .font(.system(size: 8.5))
+                        .foregroundColor(theme.textTertiary.opacity(0.4))
                     
                     Text("\(scratchpad.charCount) chars")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))

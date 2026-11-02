@@ -427,9 +427,9 @@ public struct PomodoroView: View {
                 .buttonStyle(.plain)
                 .help("Reset Session (⇧⌘R)")
                 
-                Text("•")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.textTertiary.opacity(0.4))
+                Text("/")
+                    .font(.system(size: 7.5))
+                    .foregroundColor(theme.textTertiary.opacity(0.35))
                 
                 Button(action: {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {

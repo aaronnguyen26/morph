@@ -8,8 +8,17 @@ DerivedData/
 .netrc
 
 # Testing & internal docs
-/Tests/
 DESIGN.md
 GEMINI.md
 Morph.app/Contents/_CodeSignature/
+__pycache__/
+*.pyc
+chrome_notes.png
+orbital_rings_overlay.png
+rings_back.png
+rings_front.png
+soundwave_elements.png
+stage_pedestal.png
+test_metal_render.jpg
+test_render.jpg
 

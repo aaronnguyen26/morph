@@ -3,6 +3,7 @@ import SwiftUI
 
 public final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
     public var onMouseEnter: (() -> Void)?
+    public var onMouseMove: ((NSPoint) -> Void)?
     public var onMouseExit: (() -> Void)?
     public var getActiveBounds: (() -> NSRect)?
     public var isExpanded: (() -> Bool)?
@@ -14,6 +15,10 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     
     private var trackingArea: NSTrackingArea?
     private var isMouseInside: Bool = false
+    
+    public override var acceptsFirstResponder: Bool {
+        return true
+    }
     
     @MainActor required public init(rootView: Content) {
         super.init(rootView: rootView)
@@ -44,21 +49,27 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     public override func mouseEntered(with event: NSEvent) {
         if !isMouseInside {
             isMouseInside = true
-            if isExpanded?() ?? true {
-                onMouseEnter?()
-            }
+            let screenLoc = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+            onMouseMove?(screenLoc)
+            onMouseEnter?()
         }
         super.mouseEntered(with: event)
     }
     
     public override func mouseMoved(with event: NSEvent) {
+        let screenLoc = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+        onMouseMove?(screenLoc)
         if !isMouseInside {
             isMouseInside = true
-            if isExpanded?() ?? true {
-                onMouseEnter?()
-            }
+            onMouseEnter?()
         }
         super.mouseMoved(with: event)
+    }
+    
+    public override func mouseDown(with event: NSEvent) {
+        NSApp.activate(ignoringOtherApps: true)
+        self.window?.makeKeyAndOrderFront(nil)
+        super.mouseDown(with: event)
     }
     
     public override func mouseExited(with event: NSEvent) {
@@ -79,7 +90,9 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
                 return nil
             }
         }
-        return super.hitTest(point)
+        // When active, ensure every point inside activeBounds is captured by Morph
+        // so clicks never pass through to the desktop wallpaper (preventing Mission Control/Stage Manager reveals)
+        return super.hitTest(point) ?? self
     }
     
     // MARK: - NSDraggingDestination

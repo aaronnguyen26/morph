@@ -138,6 +138,32 @@ public final class MorphTheme: ObservableObject {
                : Color.black.opacity(0.05)
     }
     
+    /// Apple Liquid Glass material background
+    public var liquidGlassBackground: Color {
+        isDark ? Color.black.opacity(0.72)
+               : Color.white.opacity(0.68)
+    }
+    
+    /// Apple Liquid Glass card surface
+    public var liquidGlassCard: Color {
+        isDark ? Color.white.opacity(0.08)
+               : Color.white.opacity(0.65)
+    }
+    
+    /// Apple Liquid Glass hairline specular dual-stop gradient
+    public var liquidGlassSpecularBorder: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(isDark ? 0.38 : 0.65),
+                Color.white.opacity(isDark ? 0.12 : 0.25),
+                Color.white.opacity(isDark ? 0.04 : 0.10),
+                Color.white.opacity(isDark ? 0.20 : 0.40)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+    
     /// Subtle card surface for secondary controls
     public var cardBackgroundSubtle: Color {
         isDark ? Color.white.opacity(0.05)

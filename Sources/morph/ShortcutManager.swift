@@ -324,14 +324,14 @@ public final class ShortcutManager: NSObject, ObservableObject {
             return false
         }
         
-        // Timer Popup Direct Controls (Space to play/pause, Cmd+R to reset)
-        if model.isTimerPopupActive {
+        // Timer Direct Controls in Pill HUD & Popup (Space to play/pause, Cmd+R to reset/stop)
+        if model.isTimerPopupActive || (model.isCompactActive && model.compactHUDMode == .pomodoroOnly) {
             if event.keyCode == 49 { // Space
                 toggleTimer()
                 return true
             }
             if isCmd && (event.charactersIgnoringModifiers?.lowercased() == "r") {
-                resetTimer()
+                model.stopFocusTimer()
                 return true
             }
         }

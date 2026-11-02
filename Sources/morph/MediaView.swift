@@ -74,11 +74,15 @@ public struct MediaView: View {
         }
         .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.canvasSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(theme.hairlineBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(theme.liquidGlassSpecularBorder, lineWidth: 1)
         )
     }
     
@@ -145,7 +149,7 @@ public struct MediaView: View {
                 .font(.system(size: 7.5, weight: .semibold))
                 .foregroundColor(theme.textSecondary)
             
-            Text("\(formatter.string(from: event.startTime)) • \(event.title)")
+            Text("\(formatter.string(from: event.startTime)) — \(event.title)")
                 .font(.system(size: 7.5, weight: .medium, design: .rounded))
                 .foregroundColor(theme.textSecondary)
                 .lineLimit(1)
@@ -699,11 +703,15 @@ public struct MediaView: View {
         }
         .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.canvasSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(theme.hairlineBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(theme.liquidGlassSpecularBorder, lineWidth: 1)
         )
     }
     
@@ -835,7 +843,7 @@ public struct MediaView: View {
                         .lineLimit(1)
                 }
                 
-                Text(media.isSignedIn ? "• Personalized" : "• Recommended")
+                Text(media.isSignedIn ? "Personalized" : "Recommended")
                     .font(.system(size: 7, weight: .regular))
                     .foregroundColor(theme.textTertiary)
                     .lineLimit(1)
