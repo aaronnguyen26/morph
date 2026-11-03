@@ -88,7 +88,7 @@ public final class MorphController: NSObject {
         }
         self.hostingView.isExpanded = { [weak self] in
             guard let self = self else { return false }
-            return self.model.isExpanded || self.model.isSpotlightBarActive || self.model.isCompactActive || self.model.isEditingTimerInPill || self.model.isTimerPopupActive || self.model.islandState != .resting
+            return self.model.isExpanded || self.model.isSpotlightBarActive || self.model.isCompactActive || self.model.isEditingTimerInPill || self.model.isTimerPopupActive || self.model.islandState != .resting || (self.model.isGlassIslandEnabled && self.model.glassIslandState != .idle)
         }
         
         self.hostingView.getActiveBounds = { [weak self] in
@@ -490,9 +490,10 @@ public final class MorphController: NSObject {
     
     public func isMouseInsideMorphUI(_ mouseLoc: NSPoint) -> Bool {
         let baseRect = activeUIRect()
-        let isExtended = (model.interactionMode == .spotlightBar)
+        let isExtended = (model.isGlassIslandEnabled && model.glassIslandState != .idle) ||
+            ((model.interactionMode == .spotlightBar)
             ? (model.isSpotlightBarActive || model.isTimerPopupActive || model.isExpanded)
-            : model.isExpanded
+            : model.isExpanded)
         let hPadding: CGFloat = isExtended ? 16 : (model.isCompactActive ? 14 : 0)
         let bottomPadding: CGFloat = isExtended ? 16 : (model.isCompactActive ? 12 : 0)
         let topPadding: CGFloat = isExtended ? 10 : 0
@@ -522,9 +523,10 @@ public final class MorphController: NSObject {
         lastMousePoint = mouseLoc
         lastMouseTimestamp = now
         
-        let isMorphOpen = (model.interactionMode == .spotlightBar)
+        let isMorphOpen = (model.isGlassIslandEnabled && model.glassIslandState != .idle) ||
+            ((model.interactionMode == .spotlightBar)
             ? (model.isSpotlightBarActive || model.isTimerPopupActive || model.isExpanded)
-            : model.isExpanded
+            : model.isExpanded)
         
         if isInside {
             collapseWorkItem?.cancel()
@@ -652,6 +654,22 @@ public final class MorphController: NSObject {
         model.isHovered = true
         panel?.ignoresMouseEvents = false
         
+        if model.isGlassIslandEnabled {
+            if model.glassIslandState == .idle {
+                model.glassPromptText = ""
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    model.setGlassIslandState(.prompt)
+                }
+                expandPanel()
+                panel?.ignoresMouseEvents = false
+                if !MorphEnvironment.isTestingEnvironment {
+                    NSApp.activate(ignoringOtherApps: true)
+                    panel.makeKeyAndOrderFront(nil)
+                }
+            }
+            return
+        }
+        
         if model.interactionMode == .spotlightBar && !model.isCompactActive {
             // Fresh spotlight query on intentional open (Point 3)
             model.spotlightQuery = ""
@@ -684,6 +702,9 @@ public final class MorphController: NSObject {
     }
     
     public func handleMouseExit() {
+        if model.isGlassIslandEnabled && (model.isGlassIslandPinned || !model.glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+            return
+        }
         guard !model.isPinned && !model.isCommandBarPresented && !model.calendar.isAddingEvent && !model.dropShelf.isDraggingOut && !model.dropShelf.isHeldOpen else { return }
         if model.isTimerPopupActive || model.isEditingTimerInPill { return }
         if !MorphEnvironment.isTestingEnvironment && isMouseInsideMorphUI(NSEvent.mouseLocation) {
@@ -694,6 +715,10 @@ public final class MorphController: NSObject {
         collapseWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
+            if self.model.isGlassIslandEnabled && (self.model.isGlassIslandPinned || !self.model.glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                self.collapseWorkItem = nil
+                return
+            }
             guard !self.model.isPinned && !self.model.isCommandBarPresented && !self.model.calendar.isAddingEvent && !self.model.dropShelf.isDraggingOut && !self.model.dropShelf.isHeldOpen else { return }
             if self.model.isTimerPopupActive || self.model.isEditingTimerInPill { return }
             
@@ -713,11 +738,14 @@ public final class MorphController: NSObject {
             self.collapseWorkItem = nil
         }
         self.collapseWorkItem = workItem
-        // 250ms intention buffer prevents jittery accidental dismissals while keeping UI immediate
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+        let delay: Double = model.isGlassIslandEnabled ? 0.52 : 0.25
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
     
     public var shouldIgnoreMouseEvents: Bool {
+        if model.isGlassIslandEnabled && model.glassIslandState != .idle {
+            return false
+        }
         let isResting = (model.islandState == .resting && model.compactHUDMode == .none && !model.isHovered && !model.isSpotlightBarActive)
         return isResting
     }
@@ -738,7 +766,7 @@ public final class MorphController: NSObject {
         shrinkWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            guard !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive else { return }
+            guard !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive && (!self.model.isGlassIslandEnabled || self.model.glassIslandState == .idle) else { return }
             self.applyRestingPanelGeometry()
             self.shrinkWorkItem = nil
         }

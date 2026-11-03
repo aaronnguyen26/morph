@@ -10,6 +10,7 @@ final class SpotlightPromptUnderstandingTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         model = NotchModel()
+        model.interactionMode = .spotlightBar
     }
     
     override func tearDown() async throws {

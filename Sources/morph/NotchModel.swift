@@ -57,6 +57,7 @@ public enum MorphBackgroundTaskPillState: Equatable {
 }
 
 public enum MorphInteractionMode: String, CaseIterable, Codable {
+    case glassIsland = "Glass Island (Liquid Glass Dynamic Island)"
     case spotlightBar = "Spotlight Bar (Horizontal Expand + Shrunk Timer Popup)"
     case legacyLargeUI = "Packaged Large UI (640x225 Full Modal with Tabs)"
 }
@@ -271,6 +272,108 @@ public struct MorphAIResponse: Equatable, Identifiable {
     }
 }
 
+// MARK: - Color Hex Initializer
+extension Color {
+    public init(hex: String) {
+        let clean = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: clean).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch clean.count {
+        case 3:
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6:
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8:
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 255, 255, 255)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255.0,
+            green: Double(g) / 255.0,
+            blue: Double(b) / 255.0,
+            opacity: Double(a) / 255.0
+        )
+    }
+}
+
+// MARK: - Glass Island HTML Specification Models
+public enum GlassIslandState: String, CaseIterable, Equatable {
+    case idle
+    case prompt
+    case timer
+    case calendar
+    case music
+    case notes
+    case reply
+}
+
+public enum GlassTimerStatus: String, CaseIterable, Equatable {
+    case ready
+    case running
+    case paused
+    case done
+}
+
+public struct GlassTrack: Equatable, Identifiable {
+    public let id: UUID
+    public var title: String
+    public var artist: String
+    public var duration: Int
+    public var gradientHexes: [String]
+    
+    public init(id: UUID = UUID(), title: String, artist: String, duration: Int, gradientHexes: [String]) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.duration = duration
+        self.gradientHexes = gradientHexes
+    }
+}
+
+public struct GlassCalendarEvent: Equatable, Identifiable {
+    public let id: UUID
+    public var startMinute: Int
+    public var title: String
+    public var location: String
+    public var colorHex: String
+    
+    public init(id: UUID = UUID(), startMinute: Int, title: String, location: String, colorHex: String) {
+        self.id = id
+        self.startMinute = startMinute
+        self.title = title
+        self.location = location
+        self.colorHex = colorHex
+    }
+    
+    public var formattedTime: String {
+        let h = startMinute / 60
+        let ap = h >= 12 ? "PM" : "AM"
+        let h12 = (h % 12 == 0) ? 12 : (h % 12)
+        let m = startMinute % 60
+        return String(format: "%d:%02d %@", h12, m, ap)
+    }
+}
+
+public struct GlassNote: Equatable, Identifiable {
+    public var id: UUID
+    public var title: String
+    public var body: String
+    
+    public init(id: UUID = UUID(), title: String, body: String) {
+        self.id = id
+        self.title = title
+        self.body = body
+    }
+}
+
+public enum GlassNotesMode: String, CaseIterable, Equatable {
+    case list
+    case edit
+}
+
 public enum MorphIntermediaryStageState: Equatable {
     case home(greeting: String, subtitle: String)
     case timer(minutes: Int, title: String)
@@ -304,7 +407,7 @@ public final class NotchModel: ObservableObject {
     public let timerPopupWidth: CGFloat = 340
     public let timerPopupHeight: CGFloat = 135
     
-    @Published public var interactionMode: MorphInteractionMode = .spotlightBar
+    @Published public var interactionMode: MorphInteractionMode = .glassIsland
     @Published public var spotlightQuery: String = ""
     @Published public var isSpotlightBarActive: Bool = false
     @Published public var isTimerPopupActive: Bool = false
@@ -321,6 +424,98 @@ public final class NotchModel: ObservableObject {
     @Published public var activeAIResponse: MorphAIResponse? = nil
     @Published public var activeBackgroundTaskPill: MorphBackgroundTaskPillState = .none
     @Published public var activeIntermediaryStage: MorphIntermediaryStageState? = nil
+    
+    // MARK: - Glass Island HTML Design State
+    @Published public var glassIslandState: GlassIslandState = .idle
+    public var isGlassIslandEnabled: Bool {
+        get { interactionMode == .glassIsland }
+        set {
+            if newValue {
+                interactionMode = .glassIsland
+            } else if interactionMode == .glassIsland {
+                interactionMode = .spotlightBar
+            }
+        }
+    }
+    
+    // Focus Timer State
+    @Published public var glassTimerMins: Int = 25
+    @Published public var glassTimerLeft: Int = 1500
+    @Published public var glassTimerDur: Int = 1500
+    @Published public var glassTimerStatus: GlassTimerStatus = .ready
+    @Published public var glassTimerDoneCount: Int = 1
+    private var glassTimerTimer: Timer? = nil
+    private var glassTimerEndTime: Date? = nil
+    
+    // Music Player State
+    @Published public var glassTracks: [GlassTrack] = [
+        GlassTrack(title: "Glass Hours", artist: "Marlowe Vale", duration: 188, gradientHexes: ["#16d9c5", "#6a5cff", "#ff5fa8"]),
+        GlassTrack(title: "Low Tide Signals", artist: "Kesi", duration: 214, gradientHexes: ["#ffc15a", "#ff6a88", "#7a4dff"]),
+        GlassTrack(title: "Soft Machinery", artist: "Ona Reyes", duration: 172, gradientHexes: ["#4dd4ff", "#4d6bff", "#b8fff0"])
+    ]
+    @Published public var glassTrackIndex: Int = 0
+    @Published public var glassTrackCurrentSeconds: Int = 42
+    @Published public var isGlassMusicPlaying: Bool = false
+    private var glassMusicTimer: Timer? = nil
+    
+    // Calendar State
+    @Published public var glassSelectedDayIndex: Int = 0
+    @Published public var glassCalendarEvents: [Int: [GlassCalendarEvent]] = [
+        0: [
+            GlassCalendarEvent(startMinute: 570, title: "Lecture", location: "Hall A", colorHex: "#6ab7ff"),
+            GlassCalendarEvent(startMinute: 780, title: "Study group", location: "Library, 2nd floor", colorHex: "#b79cff"),
+            GlassCalendarEvent(startMinute: 1140, title: "Debate practice", location: "Room 214", colorHex: "#ff9a7a")
+        ],
+        1: [
+            GlassCalendarEvent(startMinute: 600, title: "Seminar", location: "Room 110", colorHex: "#6ab7ff"),
+            GlassCalendarEvent(startMinute: 930, title: "Office hours", location: "Faculty building", colorHex: "#7be0b0"),
+            GlassCalendarEvent(startMinute: 1080, title: "Gym", location: "Rec center", colorHex: "#ffd36a")
+        ],
+        2: [
+            GlassCalendarEvent(startMinute: 570, title: "Lecture", location: "Hall A", colorHex: "#6ab7ff"),
+            GlassCalendarEvent(startMinute: 720, title: "Lunch", location: "Dining hall", colorHex: "#ffd36a"),
+            GlassCalendarEvent(startMinute: 960, title: "Project sync", location: "Video call", colorHex: "#b79cff")
+        ],
+        3: [
+            GlassCalendarEvent(startMinute: 660, title: "Lab", location: "Science wing", colorHex: "#7be0b0"),
+            GlassCalendarEvent(startMinute: 840, title: "Problem set due", location: "Online", colorHex: "#ff9a7a"),
+            GlassCalendarEvent(startMinute: 1170, title: "Club meeting", location: "Student union", colorHex: "#6ab7ff")
+        ],
+        4: [
+            GlassCalendarEvent(startMinute: 570, title: "Lecture", location: "Hall A", colorHex: "#6ab7ff"),
+            GlassCalendarEvent(startMinute: 810, title: "Coffee chat", location: "Cafe on 28th", colorHex: "#ffd36a"),
+            GlassCalendarEvent(startMinute: 1020, title: "Weekly review", location: "Desk", colorHex: "#b79cff")
+        ],
+        5: [
+            GlassCalendarEvent(startMinute: 600, title: "Scrimmage", location: "Room 214", colorHex: "#ff9a7a"),
+            GlassCalendarEvent(startMinute: 900, title: "Groceries", location: "Market", colorHex: "#7be0b0")
+        ],
+        6: [
+            GlassCalendarEvent(startMinute: 660, title: "Brunch", location: "Cafe on 28th", colorHex: "#ffd36a"),
+            GlassCalendarEvent(startMinute: 960, title: "Plan the week", location: "Desk", colorHex: "#b79cff"),
+            GlassCalendarEvent(startMinute: 1200, title: "Laundry", location: "Basement", colorHex: "#7be0b0")
+        ]
+    ]
+    
+    // Notes State
+    @Published public var glassNotesMode: GlassNotesMode = .list
+    @Published public var glassNotes: [GlassNote] = [
+        GlassNote(title: "Midterm review", body: "Elasticity, consumer surplus, and the two problem sets I skipped. Start with chapter 4."),
+        GlassNote(title: "Debate prep", body: "Three clash points for the motion on remote work. Draft the first rebuttal."),
+        GlassNote(title: "Grocery run", body: "Oat milk, rice, limes, coffee filters.")
+    ]
+    @Published public var glassActiveNoteId: UUID? = nil
+    @Published public var glassEditTitle: String = ""
+    @Published public var glassEditBody: String = ""
+    
+    // Reply State
+    @Published public var glassReplyQuery: String = ""
+    @Published public var glassReplyAnswer: String = "Prompts that mention the timer, calendar, music or notes are routed there. Connect a model to answer anything else."
+    @Published public var isGlassReplyLoading: Bool = false
+    
+    // Prompt Input
+    @Published public var glassPromptText: String = ""
+    @Published public var isGlassIslandPinned: Bool = false
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
@@ -555,7 +750,103 @@ public final class NotchModel: ObservableObject {
         return false
     }
     
+    // MARK: - Glass Island HTML Specification Metrics
+    public var isGlassTimerActive: Bool {
+        return glassTimerStatus == .running || glassTimerStatus == .paused
+    }
+    
+    public var glassIslandWidth: CGFloat {
+        switch glassIslandState {
+        case .idle:
+            if isGlassTimerActive && isGlassMusicPlaying {
+                return 268
+            } else if isGlassTimerActive {
+                return 208
+            } else if isGlassMusicPlaying {
+                return 196
+            } else {
+                return 176
+            }
+        case .prompt, .timer, .calendar, .music, .notes, .reply:
+            return 460
+        }
+    }
+    
+    public var glassIslandHeight: CGFloat {
+        switch glassIslandState {
+        case .idle:
+            return 38
+        case .prompt:
+            return 56
+        case .timer:
+            return 258
+        case .calendar:
+            return 308
+        case .music:
+            return 236
+        case .notes:
+            return 284
+        case .reply:
+            return 152
+        }
+    }
+    
+    public var glassIslandRadius: CGFloat {
+        switch glassIslandState {
+        case .idle:
+            return 19
+        case .prompt:
+            return 28
+        case .timer, .calendar, .music, .notes, .reply:
+            return 34
+        }
+    }
+    
+    public var glassIslandTintHex: String {
+        switch glassIslandState {
+        case .idle, .prompt:
+            return "#cfd8ff"
+        case .timer:
+            return "#ff9a7a"
+        case .calendar:
+            return "#6ab7ff"
+        case .music:
+            return "#ff7ab8"
+        case .notes:
+            return "#ffd36a"
+        case .reply:
+            return "#b79cff"
+        }
+    }
+    
+    public var formattedGlassTimerTime: String {
+        let mins = glassTimerLeft / 60
+        let secs = glassTimerLeft % 60
+        return String(format: "%02d:%02d", mins, secs)
+    }
+    
+    public var formattedGlassTrackCurrentTime: String {
+        let mins = glassTrackCurrentSeconds / 60
+        let secs = glassTrackCurrentSeconds % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+    
+    public var formattedGlassTrackDuration: String {
+        let dur = glassTracks[glassTrackIndex].duration
+        let mins = dur / 60
+        let secs = dur % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+    
+    public var glassTimerProgress: CGFloat {
+        if glassTimerStatus == .done { return 1.0 }
+        return CGFloat(max(0, glassTimerDur - glassTimerLeft)) / CGFloat(max(1, glassTimerDur))
+    }
+    
     public var currentWidth: CGFloat {
+        if isGlassIslandEnabled {
+            return glassIslandWidth
+        }
         switch islandState {
         case .spotlightBar:
             return spotlightBarWidth
@@ -574,6 +865,9 @@ public final class NotchModel: ObservableObject {
     }
     
     public var currentHeight: CGFloat {
+        if isGlassIslandEnabled {
+            return glassIslandHeight
+        }
         switch islandState {
         case .spotlightBar:
             return spotlightBarHeight
@@ -600,6 +894,12 @@ public final class NotchModel: ObservableObject {
             return .fullExpanded
         }
         switch interactionMode {
+        case .glassIsland:
+            if isCompactActive {
+                return .extendedPill
+            } else {
+                return .resting
+            }
         case .spotlightBar:
             if isSpotlightBarActive || activeBackgroundTaskPill != .none || isShowingDirectAnswer {
                 return .spotlightBar
@@ -1087,6 +1387,13 @@ public final class NotchModel: ObservableObject {
         self.isHovered = false
         if !isPomodoroSessionActive {
             self.isExpanded = false
+        }
+        if isGlassIslandEnabled && !isGlassIslandPinned {
+            self.glassIslandState = .idle
+            self.glassPromptText = ""
+            if self.glassNotesMode == .edit {
+                self.closeGlassNote()
+            }
         }
     }
     
@@ -1648,6 +1955,254 @@ public final class NotchModel: ObservableObject {
                 selectedTab = .home
             }
             latestTabBeforeContextualFeature = nil
+        }
+    }
+    
+    // MARK: - Glass Island State Actions
+    public func setGlassIslandState(_ state: GlassIslandState) {
+        self.glassIslandState = state
+        if state == .idle {
+            self.isGlassIslandPinned = false
+            self.glassPromptText = ""
+            if self.glassNotesMode == .edit {
+                self.closeGlassNote()
+            }
+        }
+        if state != .idle {
+            if let ctrl = MorphController.shared {
+                ctrl.expandPanel()
+                ctrl.panel?.ignoresMouseEvents = false
+            }
+        }
+    }
+    
+    public func toggleGlassIslandTab(_ tabState: GlassIslandState) {
+        if glassIslandState == tabState {
+            setGlassIslandState(.prompt)
+        } else {
+            setGlassIslandState(tabState)
+        }
+    }
+    
+    public func dismissGlassIslandToIdle() {
+        setGlassIslandState(.idle)
+    }
+    
+    // MARK: - Glass Island Timer Methods
+    public func startGlassTimer() {
+        if glassTimerStatus == .done {
+            glassTimerLeft = glassTimerDur
+        }
+        glassTimerStatus = .running
+        glassTimerEndTime = Date().addingTimeInterval(TimeInterval(glassTimerLeft))
+        glassTimerTimer?.invalidate()
+        glassTimerTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if let end = self.glassTimerEndTime {
+                    self.glassTimerLeft = max(0, Int(ceil(end.timeIntervalSinceNow)))
+                    if self.glassTimerLeft == 0 {
+                        self.glassTimerTimer?.invalidate()
+                        self.glassTimerTimer = nil
+                        self.glassTimerStatus = .done
+                        self.glassTimerDoneCount = min(4, self.glassTimerDoneCount + 1)
+                    }
+                }
+            }
+        }
+    }
+    
+    public func pauseGlassTimer() {
+        glassTimerTimer?.invalidate()
+        glassTimerTimer = nil
+        glassTimerStatus = .paused
+    }
+    
+    public func toggleGlassTimer() {
+        if glassTimerStatus == .running {
+            pauseGlassTimer()
+        } else {
+            startGlassTimer()
+        }
+    }
+    
+    public func resetGlassTimer() {
+        glassTimerTimer?.invalidate()
+        glassTimerTimer = nil
+        glassTimerLeft = glassTimerDur
+        glassTimerStatus = .ready
+    }
+    
+    public func setGlassTimerMinutes(_ mins: Int) {
+        glassTimerMins = mins
+        glassTimerDur = mins * 60
+        resetGlassTimer()
+    }
+    
+    public func previewGlassTimer(status: GlassTimerStatus) {
+        glassTimerTimer?.invalidate()
+        glassTimerTimer = nil
+        glassTimerMins = 25
+        glassTimerDur = 1500
+        switch status {
+        case .ready:
+            glassTimerLeft = 1500
+            glassTimerStatus = .ready
+        case .running:
+            glassTimerLeft = 1122
+            glassTimerStatus = .running
+            glassTimerEndTime = Date().addingTimeInterval(TimeInterval(glassTimerLeft))
+            startGlassTimer()
+        case .paused:
+            glassTimerLeft = 727
+            glassTimerStatus = .paused
+        case .done:
+            glassTimerLeft = 0
+            glassTimerStatus = .done
+        }
+    }
+    
+    // MARK: - Glass Island Music Methods
+    public func toggleGlassMusicPlay() {
+        isGlassMusicPlaying.toggle()
+        glassMusicTimer?.invalidate()
+        glassMusicTimer = nil
+        if isGlassMusicPlaying {
+            glassMusicTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self = self, self.isGlassMusicPlaying else { return }
+                    self.glassTrackCurrentSeconds += 1
+                    let curDur = self.glassTracks[self.glassTrackIndex].duration
+                    if self.glassTrackCurrentSeconds >= curDur {
+                        self.skipGlassMusic(1)
+                    }
+                }
+            }
+        }
+    }
+    
+    public func skipGlassMusic(_ delta: Int) {
+        glassTrackIndex = (glassTrackIndex + delta + glassTracks.count) % glassTracks.count
+        glassTrackCurrentSeconds = 0
+    }
+    
+    public func prevGlassMusic() {
+        if glassTrackCurrentSeconds > 3 {
+            glassTrackCurrentSeconds = 0
+        } else {
+            skipGlassMusic(-1)
+        }
+    }
+    
+    public func seekGlassMusic(to seconds: Int) {
+        let curDur = glassTracks[glassTrackIndex].duration
+        glassTrackCurrentSeconds = max(0, min(seconds, curDur))
+    }
+    
+    // MARK: - Glass Island Notes Methods
+    public func openGlassNote(id: UUID) {
+        guard let note = glassNotes.first(where: { $0.id == id }) else { return }
+        glassActiveNoteId = id
+        glassEditTitle = note.title
+        glassEditBody = note.body
+        glassNotesMode = .edit
+    }
+    
+    public func closeGlassNote() {
+        if let id = glassActiveNoteId, let idx = glassNotes.firstIndex(where: { $0.id == id }) {
+            let t = glassEditTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let b = glassEditBody.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.isEmpty && b.isEmpty {
+                glassNotes.remove(at: idx)
+            } else {
+                glassNotes[idx].title = glassEditTitle
+                glassNotes[idx].body = glassEditBody
+            }
+        }
+        glassActiveNoteId = nil
+        glassNotesMode = .list
+    }
+    
+    public func addGlassNote(title: String = "", body: String = "") {
+        let note = GlassNote(title: title, body: body)
+        glassNotes.insert(note, at: 0)
+        openGlassNote(id: note.id)
+    }
+    
+    // MARK: - Glass Island Prompt Submission & Routing
+    public func submitGlassIslandPrompt(_ rawQuery: String) {
+        let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        
+        let lower = q.lowercased()
+        
+        // 1. Note matching: "note: ...", "remember ...", "jot ..."
+        let notePattern = #"^(?:note|remember|jot)\s*[:\-]?\s*(.+)$"#
+        if let regex = try? NSRegularExpression(pattern: notePattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: q, options: [], range: NSRange(location: 0, length: q.utf16.count)) {
+            if let range = Range(match.range(at: 1), in: q) {
+                let noteText = String(q[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let noteTitle = noteText.count > 26 ? String(noteText.prefix(26)).trimmingCharacters(in: .whitespacesAndNewlines) + "…" : noteText
+                let n = GlassNote(title: noteTitle, body: noteText)
+                glassNotes.insert(n, at: 0)
+                glassNotesMode = .list
+                glassPromptText = ""
+                setGlassIslandState(.notes)
+                return
+            }
+        }
+        
+        // 2. Focus / Timer matching: "focus 25", "timer 15", "pomodoro 50"
+        let timerPattern = #"\b(?:focus|timer|pomodoro)\b(?:\D*(\d{1,3}))?"#
+        if let regex = try? NSRegularExpression(pattern: timerPattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) {
+            var mins = 25
+            if match.numberOfRanges > 1 && match.range(at: 1).location != NSNotFound {
+                if let r = Range(match.range(at: 1), in: lower), let parsed = Int(lower[r]) {
+                    mins = max(1, min(180, parsed))
+                }
+            }
+            setGlassTimerMinutes(mins)
+            startGlassTimer()
+            glassPromptText = ""
+            setGlassIslandState(.timer)
+            return
+        }
+        
+        // 3. Calendar matching: "calendar", "schedule", "agenda", "meeting", "meetings", "today", "next up"
+        let calPattern = #"\b(calendar|schedule|agenda|meeting|meetings|today|next up)\b"#
+        if let regex = try? NSRegularExpression(pattern: calPattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            glassSelectedDayIndex = 0
+            glassPromptText = ""
+            setGlassIslandState(.calendar)
+            return
+        }
+        
+        // 4. Music matching: "play", "pause", "music", "song", "track", "skip", "next"
+        let musicPattern = #"\b(play|pause|music|song|track|skip|next)\b"#
+        if let regex = try? NSRegularExpression(pattern: musicPattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            if lower.contains("pause") {
+                if isGlassMusicPlaying { toggleGlassMusicPlay() }
+            } else if lower.contains("skip") || lower.contains("next") {
+                skipGlassMusic(1)
+                if !isGlassMusicPlaying { toggleGlassMusicPlay() }
+            } else {
+                if !isGlassMusicPlaying { toggleGlassMusicPlay() }
+            }
+            glassPromptText = ""
+            setGlassIslandState(.music)
+            return
+        }
+        
+        // 5. Default Reply routing
+        glassReplyQuery = q
+        isGlassReplyLoading = true
+        glassPromptText = ""
+        setGlassIslandState(.reply)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            self?.isGlassReplyLoading = false
         }
     }
 }
