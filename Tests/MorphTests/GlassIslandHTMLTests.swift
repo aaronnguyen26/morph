@@ -14,6 +14,11 @@ final class GlassIslandHTMLTests: XCTestCase {
     }
     
     override func tearDown() async throws {
+        model.media.engine.trackData = YTMTrackData()
+        model.media.engine.isSignedIn = false
+        model.media.isDirectEngineConnected = false
+        model.media.isPlaying = false
+        model.media.isBrowserConnected = false
         model.resetTransientStateOnCollapse()
         model = nil
         try await super.tearDown()
@@ -70,7 +75,7 @@ final class GlassIslandHTMLTests: XCTestCase {
         // Music Panel
         model.setGlassIslandState(.music)
         XCTAssertEqual(model.currentWidth, 460.0, "Music panel width must be 460 pt")
-        XCTAssertEqual(model.currentHeight, 236.0, "Music panel height must be 236 pt")
+        XCTAssertEqual(model.currentHeight, 384.0, "Music panel height must be 384 pt")
         XCTAssertEqual(model.glassIslandRadius, 34.0, "Music panel radius must be 34 pt")
         XCTAssertEqual(model.glassIslandTintHex, "#ff7ab8")
         
@@ -463,5 +468,105 @@ final class GlassIslandHTMLTests: XCTestCase {
         media.engine.trackData = YTMTrackData(title: "Starboy", artist: "The Weeknd", isPlaying: true, duration: 230)
         media.isDirectEngineConnected = media.engine.isSignedIn || (!media.engine.trackData.title.isEmpty && media.engine.trackData.title != "YouTube Music" && media.engine.trackData.duration > 0) || media.engine.trackData.isPlaying
         XCTAssertTrue(media.isDirectEngineConnected)
+    }
+    
+    // MARK: - 12. Glass Music Subtabs (Playing, Library, Queue) & Background Hover Routing
+    func testGlassMusicThreeSubtabsAndLibraryQueueNavigation() {
+        model.setGlassIslandState(.music)
+        XCTAssertEqual(model.glassIslandHeight, 384.0)
+        
+        // 1. Default subtab is Playing (now)
+        XCTAssertEqual(model.glassMusicSubtab, .playing)
+        
+        // 2. Switch to Library (lib)
+        model.setGlassMusicSubtab(.library)
+        XCTAssertEqual(model.glassMusicSubtab, .library)
+        
+        // Populate real user playlists & library tracks
+        let track1 = YTMPlaylistItem(id: "t1", title: "Starboy", artist: "The Weeknd", duration: "3:50", isPlaying: true)
+        let track2 = YTMPlaylistItem(id: "t2", title: "Save Your Tears", artist: "The Weeknd", duration: "3:35", isPlaying: false)
+        let track3 = YTMPlaylistItem(id: "t3", title: "Levitating", artist: "Dua Lipa", duration: "3:23", isPlaying: false)
+        
+        let playlist = YTMPlaylist(
+            id: "pl_favorites",
+            title: "Night Drive Vibes",
+            subtitle: "3 songs",
+            thumbnailURL: nil,
+            trackCount: 3,
+            tracks: [track1, track2, track3]
+        )
+        model.media.playlists = [playlist]
+        model.media.playlist = [track1, track2, track3]
+        
+        // Check library search
+        model.glassMusicSearchText = "Dua"
+        let filtered = model.glassFilteredLibraryTracks
+        XCTAssertFalse(filtered.isEmpty)
+        XCTAssertTrue(filtered.contains(where: { $0.title == "Levitating" }))
+        XCTAssertFalse(filtered.contains(where: { $0.title == "Starboy" }))
+        
+        // Clear search
+        model.glassMusicSearchText = ""
+        
+        // Select playlist opens detail view
+        XCTAssertNil(model.glassSelectedPlaylist)
+        model.selectGlassPlaylist(playlist)
+        XCTAssertEqual(model.glassSelectedPlaylist?.id, "pl_favorites")
+        XCTAssertEqual(model.glassSelectedPlaylist?.tracks.count, 3)
+        
+        // Play song in selected playlist
+        model.playGlassLibraryTrack(track2)
+        XCTAssertEqual(model.media.trackTitle, "Save Your Tears")
+        XCTAssertTrue(model.isGlassMusicPlaying)
+        
+        // Play entire selected playlist
+        model.playGlassSelectedPlaylistAll(shuffle: false)
+        XCTAssertTrue(model.isGlassMusicPlaying)
+        
+        // Clear playlist selection returns to playlist grid
+        model.selectGlassPlaylist(nil)
+        XCTAssertNil(model.glassSelectedPlaylist)
+        
+        // 3. Switch to Queue
+        model.setGlassMusicSubtab(.queue)
+        XCTAssertEqual(model.glassMusicSubtab, .queue)
+        XCTAssertEqual(model.media.playlist.count, 3)
+        
+        // 4. View renders cleanly without errors in all 3 modes
+        let view = MorphIslandView(model: model)
+        XCTAssertNotNil(view.body)
+    }
+    
+    func testHoverAutoOpensMusicWhenBackgroundMusicActive() {
+        let controller = MorphController(model: model)
+        
+        // 1. Idle with music playing -> hover opens .music
+        model.setGlassIslandState(.idle)
+        model.isGlassMusicPlaying = true
+        XCTAssertTrue(model.isBackgroundMusicActive)
+        
+        controller.handleMouseEnter()
+        XCTAssertEqual(model.glassIslandState, .music, "Hovering while music is active must open .music")
+        
+        // 2. Idle with timer running -> hover opens .timer
+        model.setGlassIslandState(.idle)
+        model.isGlassMusicPlaying = false
+        model.media.isPlaying = false
+        model.startGlassTimer()
+        XCTAssertTrue(model.isBackgroundTimerActive)
+        
+        controller.handleMouseEnter()
+        XCTAssertEqual(model.glassIslandState, .timer, "Hovering while timer is running must open .timer")
+        
+        // 3. Idle with nothing active -> hover opens .prompt
+        model.setGlassIslandState(.idle)
+        model.resetGlassTimer()
+        model.isGlassMusicPlaying = false
+        model.media.isPlaying = false
+        XCTAssertFalse(model.isBackgroundMusicActive)
+        XCTAssertFalse(model.isBackgroundTimerActive)
+        
+        controller.handleMouseEnter()
+        XCTAssertEqual(model.glassIslandState, .prompt, "Hovering with no background action must open .prompt")
     }
 }

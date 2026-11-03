@@ -662,9 +662,17 @@ public final class MorphController: NSObject {
         
         if model.isGlassIslandEnabled {
             if model.glassIslandState == .idle {
+                let targetState: GlassIslandState
+                if model.isBackgroundMusicActive {
+                    targetState = .music
+                } else if model.isBackgroundTimerActive {
+                    targetState = .timer
+                } else {
+                    targetState = .prompt
+                }
                 model.glassPromptText = ""
                 withAnimation(MorphUniversalAnimation.stateExpansion) {
-                    model.setGlassIslandState(.prompt)
+                    model.setGlassIslandState(targetState)
                 }
                 expandPanel()
                 panel?.ignoresMouseEvents = false
