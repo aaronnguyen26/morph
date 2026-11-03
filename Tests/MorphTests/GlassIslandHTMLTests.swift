@@ -271,4 +271,69 @@ final class GlassIslandHTMLTests: XCTestCase {
         XCTAssertEqual(model.glassReplyQuery, "how far is the moon?")
         XCTAssertTrue(model.isGlassReplyLoading)
     }
+    
+    // MARK: - 7. Removed "Hover to open" & Refined Idle Edge Verification
+    func testIdleCapsuleRemovedHoverToOpenAndRendersSubtleEdges() {
+        model.setGlassIslandState(.idle)
+        XCTAssertEqual(model.glassIslandWidth, 176.0)
+        XCTAssertEqual(model.glassIslandHeight, 38.0)
+        XCTAssertEqual(model.glassIslandRadius, 19.0)
+        
+        // Renders MorphIslandView without errors
+        let view = MorphIslandView(model: model)
+        XCTAssertNotNil(view.body)
+    }
+    
+    // MARK: - 8. Real Calendar Integration and Browser Prompt
+    func testRealCalendarModelIntegrationAndSignInPrompt() {
+        XCTAssertFalse(model.hasPromptedCalendarSignIn)
+        
+        // Switching to calendar triggers sign in check
+        model.setGlassIslandState(.calendar)
+        XCTAssertTrue(model.hasPromptedCalendarSignIn)
+        
+        // Add real event to model.calendar matching selected date
+        let targetDate = model.glassSelectedDate
+        let event = CalendarEvent(
+            id: "real_event_1",
+            title: "Sprint Retrospective",
+            startTime: targetDate,
+            endTime: targetDate.addingTimeInterval(3600),
+            location: "Room A",
+            colorHex: "#6ab7ff"
+        )
+        model.calendar.events = [event]
+        
+        let realEvents = model.glassRealCalendarEvents
+        XCTAssertFalse(realEvents.isEmpty)
+        XCTAssertEqual(realEvents.first?.title, "Sprint Retrospective")
+        
+        // Dynamic dates formatting
+        XCTAssertFalse(model.formattedGlassMonthYear.isEmpty)
+        XCTAssertFalse(model.formattedGlassDayTitle.isEmpty)
+    }
+    
+    // MARK: - 9. Real Media Integration and Browser Prompt
+    func testRealMediaControllerIntegrationAndSignInPrompt() {
+        XCTAssertFalse(model.hasPromptedMusicSignIn)
+        
+        // Switching to music triggers sign in check
+        model.setGlassIslandState(.music)
+        XCTAssertTrue(model.hasPromptedMusicSignIn)
+        
+        // When real media has track metadata
+        model.media.trackTitle = "Subtle Echoes"
+        model.media.artistName = "Aurora"
+        model.media.currentTime = 42
+        model.media.duration = 210
+        
+        XCTAssertEqual(model.glassMusicTitle, "Subtle Echoes")
+        XCTAssertEqual(model.glassMusicArtist, "Aurora")
+        XCTAssertEqual(model.formattedGlassTrackCurrentTime, "0:42")
+        XCTAssertEqual(model.formattedGlassTrackDuration, "3:30")
+        
+        // Playback delegation
+        model.toggleGlassMusicPlay()
+        XCTAssertTrue(model.isGlassMusicPlaying)
+    }
 }

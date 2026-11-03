@@ -156,57 +156,11 @@ public struct MorphIslandView: View {
     @ViewBuilder
     private var islandBackgroundSurfaceView: some View {
         if model.isGlassIslandEnabled {
-            baseNotchShape
-                .fill(
-                    model.glassIslandState == .idle
-                        ? Color(red: 30/255, green: 26/255, blue: 64/255).opacity(0.12)
-                        : Color(red: 26/255, green: 22/255, blue: 58/255).opacity(0.34)
-                )
-                .background(
-                    baseNotchShape.fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color.white.opacity(0.22), location: 0.0),
-                            .init(color: Color.white.opacity(0.05), location: 0.45),
-                            .init(color: Color.white.opacity(0.12), location: 1.0)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .clipShape(baseNotchShape)
-                    .allowsHitTesting(false)
-                )
-                .overlay(
-                    baseNotchShape
-                        .stroke(
-                            LinearGradient(
-                                stops: [
-                                    .init(color: Color.white.opacity(0.95), location: 0.0),
-                                    .init(color: Color.white.opacity(0.18), location: 0.28),
-                                    .init(color: Color.white.opacity(0.06), location: 0.55),
-                                    .init(color: Color.white.opacity(0.35), location: 0.80),
-                                    .init(color: Color.white.opacity(0.80), location: 1.0)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.2
-                        )
-                )
-                .shadow(
-                    color: Color(hex: model.glassIslandTintHex).opacity(model.glassIslandState == .idle ? 0.0 : 0.35),
-                    radius: 18,
-                    x: 0,
-                    y: 8
-                )
-                .shadow(
-                    color: Color.black.opacity(0.40),
-                    radius: 12,
-                    x: 0,
-                    y: 4
-                )
+            if model.glassIslandState == .idle {
+                glassIdleBackgroundSurface
+            } else {
+                glassExpandedBackgroundSurface
+            }
         } else {
             baseNotchShape
                 .fill(liquidGlassBaseFill)
@@ -269,6 +223,81 @@ public struct MorphIslandView: View {
                     y: 2
                 )
         }
+    }
+
+    private var glassIdleBackgroundSurface: some View {
+        baseNotchShape
+            .fill(Color(red: 18/255, green: 18/255, blue: 28/255).opacity(0.04))
+            .background(baseNotchShape.fill(.ultraThinMaterial.opacity(0.35)))
+            .overlay(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.white.opacity(0.06), location: 0.0),
+                        .init(color: Color.white.opacity(0.01), location: 0.45),
+                        .init(color: Color.white.opacity(0.04), location: 1.0)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .clipShape(baseNotchShape)
+                .allowsHitTesting(false)
+            )
+            .overlay(
+                baseNotchShape
+                    .stroke(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.white.opacity(0.26), location: 0.0),
+                                .init(color: Color.white.opacity(0.10), location: 0.28),
+                                .init(color: Color.white.opacity(0.03), location: 0.55),
+                                .init(color: Color.white.opacity(0.12), location: 0.80),
+                                .init(color: Color.white.opacity(0.20), location: 1.0)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.9
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.16), radius: 6, x: 0, y: 2)
+    }
+    
+    private var glassExpandedBackgroundSurface: some View {
+        baseNotchShape
+            .fill(Color(red: 26/255, green: 22/255, blue: 58/255).opacity(0.34))
+            .background(baseNotchShape.fill(.ultraThinMaterial))
+            .overlay(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.white.opacity(0.22), location: 0.0),
+                        .init(color: Color.white.opacity(0.05), location: 0.45),
+                        .init(color: Color.white.opacity(0.12), location: 1.0)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .clipShape(baseNotchShape)
+                .allowsHitTesting(false)
+            )
+            .overlay(
+                baseNotchShape
+                    .stroke(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.white.opacity(0.95), location: 0.0),
+                                .init(color: Color.white.opacity(0.18), location: 0.28),
+                                .init(color: Color.white.opacity(0.06), location: 0.55),
+                                .init(color: Color.white.opacity(0.35), location: 0.80),
+                                .init(color: Color.white.opacity(0.80), location: 1.0)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.2
+                    )
+            )
+            .shadow(color: Color(hex: model.glassIslandTintHex).opacity(0.35), radius: 18, x: 0, y: 8)
+            .shadow(color: Color.black.opacity(0.40), radius: 12, x: 0, y: 4)
     }
     
     public var body: some View {
@@ -1423,14 +1452,10 @@ public struct MorphIslandView: View {
             } else if model.isGlassMusicPlaying {
                 miniMusicView
             } else {
-                HStack(spacing: 7) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Color(hex: "#cfd8ff"))
-                    Text("Hover to open")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.85))
-                }
+                Image(systemName: "sparkles")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(hex: "#cfd8ff").opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1458,21 +1483,44 @@ public struct MorphIslandView: View {
     
     private var miniMusicView: some View {
         HStack(spacing: 7) {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: model.glassTracks[model.glassTrackIndex].gradientHexes.map { Color(hex: $0) },
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 18, height: 18)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .stroke(Color.white.opacity(0.35), lineWidth: 1)
-                )
+            ZStack {
+                if let artUrl = model.media.albumArtURL, let url = URL(string: artUrl) {
+                    AsyncImage(url: url) { phase in
+                        if let img = phase.image {
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        } else {
+                            miniFallbackMusicTile
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                } else {
+                    miniFallbackMusicTile
+                }
+            }
+            .frame(width: 18, height: 18)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+            )
             GlassIslandEqualizerView(isPlaying: model.isGlassMusicPlaying, height: 13, barColor: Color(hex: "#ff9fcb"))
         }
+    }
+    
+    private var miniFallbackMusicTile: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [Color(hex: "#ff5fa8"), Color(hex: "#6a5cff")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                Image(systemName: "music.note")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.white.opacity(0.9))
+            )
     }
     
     // MARK: - Prompt Bar View (40 pt height, small glass pill)
@@ -1761,28 +1809,39 @@ public struct MorphIslandView: View {
     
     // MARK: - Calendar Panel View (460 x 308 pt)
     private var currentWeekDayDates: [Date] {
-        let cal = Calendar.current
-        let today = Date()
-        let weekday = cal.component(.weekday, from: today)
-        let monOffset = (weekday == 1) ? -6 : (2 - weekday)
-        guard let monday = cal.date(byAdding: .day, value: monOffset, to: today) else { return (0..<7).map { _ in today } }
-        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+        return model.glassCurrentWeekDates
     }
     
     private var calendarSelectedDayTitle: String {
-        let dates = currentWeekDayDates
-        let selDate = (model.glassSelectedDayIndex >= 0 && model.glassSelectedDayIndex < dates.count) ? dates[model.glassSelectedDayIndex] : Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE d"
-        return formatter.string(from: selDate)
+        return model.formattedGlassDayTitle
+    }
+    
+    private var currentWeekTodayIndex: Int {
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: Date())
+        return (weekday == 1) ? 6 : (weekday - 2)
+    }
+    
+    private var calendarSubtitleText: String {
+        if let email = model.calendar.configuredUserEmail, !email.isEmpty {
+            return email.uppercased()
+        }
+        return model.calendar.isSignedIn ? "CALENDAR" : "CONNECT CALENDAR"
     }
     
     private var calendarNextChipText: String {
-        let events = model.glassCalendarEvents[model.glassSelectedDayIndex] ?? []
-        if model.glassSelectedDayIndex == 0 {
-            return "Next up · 30 min"
+        let events = model.glassRealCalendarEvents
+        let todayIdx = currentWeekTodayIndex
+        if model.glassSelectedDayIndex == todayIdx {
+            if let next = model.calendar.nextUpcomingEvent {
+                return next.isNow ? "Next up · Now" : "Next up · in \(next.minutesUntilStart)m"
+            } else if !events.isEmpty {
+                return "\(events.count) event\(events.count == 1 ? "" : "s")"
+            } else {
+                return "Schedule clear"
+            }
         } else {
-            return "\(events.count) events"
+            return events.isEmpty ? "No events" : "\(events.count) event\(events.count == 1 ? "" : "s")"
         }
     }
     
@@ -1791,7 +1850,7 @@ public struct MorphIslandView: View {
             // Header
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("November 2026")
+                    Text(model.formattedGlassMonthYear)
                         .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .tracking(1.2)
                         .foregroundColor(Color.white.opacity(0.62))
@@ -1804,7 +1863,7 @@ public struct MorphIslandView: View {
                 Spacer()
                 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("SAMPLE EVENTS")
+                    Text(calendarSubtitleText)
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         .tracking(1.0)
                         .foregroundColor(Color.white.opacity(0.50))
@@ -1833,10 +1892,14 @@ public struct MorphIslandView: View {
             
             // Events list
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 6) {
-                    let events = model.glassCalendarEvents[model.glassSelectedDayIndex] ?? []
-                    ForEach(Array(events.enumerated()), id: \.element.id) { (idx, e) in
-                        eventRowView(event: e, isNext: idx == 0)
+                let realEvents = model.glassRealCalendarEvents
+                if realEvents.isEmpty {
+                    calendarEmptyOrSignInCard
+                } else {
+                    VStack(spacing: 6) {
+                        ForEach(Array(realEvents.enumerated()), id: \.element.id) { (idx, e) in
+                            realCalendarEventRowView(event: e, isNext: idx == 0 && (model.glassSelectedDayIndex == currentWeekTodayIndex))
+                        }
                     }
                 }
             }
@@ -1850,7 +1913,7 @@ public struct MorphIslandView: View {
         let dates = currentWeekDayDates
         let dayNum = (index < dates.count) ? Calendar.current.component(.day, from: dates[index]) : (index + 1)
         let isSelected = model.glassSelectedDayIndex == index
-        let isToday = index == ((Calendar.current.component(.weekday, from: Date()) + 5) % 7)
+        let isToday = index == currentWeekTodayIndex
         
         return Button(action: {
             MorphHaptics.levelChange()
@@ -1889,20 +1952,30 @@ public struct MorphIslandView: View {
         .buttonStyle(.plain)
     }
     
-    private func eventRowView(event: GlassCalendarEvent, isNext: Bool) -> some View {
-        HStack(spacing: 10) {
+    private func realCalendarEventRowView(event: CalendarEvent, isNext: Bool) -> some View {
+        let colorHex = event.colorHex ?? "#6ab7ff"
+        let location = (event.location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? event.location!
+            : (event.hasMeetLink ? "Google Meet" : "Calendar Event")
+        let timeStr = event.isAllDay ? "All Day" : {
+            let f = DateFormatter()
+            f.dateFormat = "h:mm a"
+            return "\(f.string(from: event.startTime))"
+        }()
+        
+        return HStack(spacing: 10) {
             Circle()
-                .fill(Color(hex: event.colorHex))
+                .fill(Color(hex: colorHex))
                 .frame(width: 8, height: 8)
-                .shadow(color: Color(hex: event.colorHex).opacity(0.6), radius: 3)
+                .shadow(color: Color(hex: colorHex).opacity(0.6), radius: 3)
             
             VStack(alignment: .leading, spacing: 1) {
-                Text(event.title)
+                Text(event.title.isEmpty ? "Untitled Event" : event.title)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
                 
-                Text(event.location)
+                Text(location)
                     .font(.system(size: 11, weight: .regular, design: .rounded))
                     .foregroundColor(Color.white.opacity(0.62))
                     .lineLimit(1)
@@ -1910,7 +1983,7 @@ public struct MorphIslandView: View {
             
             Spacer()
             
-            Text(event.formattedTime)
+            Text(timeStr)
                 .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                 .foregroundColor(Color.white.opacity(0.80))
         }
@@ -1929,141 +2002,259 @@ public struct MorphIslandView: View {
         )
     }
     
+    private var calendarEmptyOrSignInCard: some View {
+        VStack(spacing: 10) {
+            Image(systemName: model.calendar.isSignedIn ? "checkmark.circle" : "calendar.badge.plus")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(Color(hex: "#6ab7ff"))
+            
+            VStack(spacing: 4) {
+                Text(model.calendar.isSignedIn ? "Schedule Clear" : "Connect Your Calendar")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text(model.calendar.isSignedIn
+                     ? "No events scheduled for this day."
+                     : "Sign in with Google in your browser or sync Mac Calendar to view events.")
+                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            }
+            
+            if !model.calendar.isSignedIn {
+                HStack(spacing: 10) {
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        model.calendar.signInWithGoogle()
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "safari")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Sign in with Google")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.white))
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        model.calendar.syncWithSystemCalendar(requestPermissionIfNeeded: true)
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "applelogo")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Sync Mac Calendar")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.16))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 14)
+    }
+    
     // MARK: - Music Panel View (460 x 236 pt)
     private var glassMusicView: some View {
-        let curTrack = model.glassTracks[model.glassTrackIndex]
-        return HStack(spacing: 16) {
-            // Album Art 112x112
-            ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: curTrack.gradientHexes.map { Color(hex: $0) },
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .fill(
-                                RadialGradient(
-                                    colors: [Color.white.opacity(0.55), Color.clear],
-                                    center: .topLeading,
-                                    startRadius: 5,
-                                    endRadius: 70
-                                )
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(Color.white.opacity(0.40), lineWidth: 1)
-                    )
-                    .shadow(
-                        color: Color(hex: "#ff7ab8").opacity(model.isGlassMusicPlaying ? 0.60 : 0.20),
-                        radius: model.isGlassMusicPlaying ? 16 : 6,
-                        y: 4
-                    )
-            }
-            .frame(width: 112, height: 112)
-            
-            // Track Info & Controls
-            VStack(alignment: .leading, spacing: 8) {
-                // Title, Artist, Equalizer
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(curTrack.title)
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
+        VStack(spacing: 10) {
+            HStack(spacing: 16) {
+                // Album Art 112x112
+                ZStack {
+                    if let artUrl = model.media.albumArtURL, let url = URL(string: artUrl) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            default:
+                                musicFallbackArtView
+                            }
+                        }
+                        .frame(width: 112, height: 112)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    } else {
+                        musicFallbackArtView
+                    }
+                }
+                .frame(width: 112, height: 112)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color.white.opacity(0.40), lineWidth: 1)
+                )
+                .shadow(
+                    color: Color(hex: "#ff7ab8").opacity(model.isGlassMusicPlaying ? 0.60 : 0.20),
+                    radius: model.isGlassMusicPlaying ? 16 : 6,
+                    y: 4
+                )
+                
+                // Track Info & Controls
+                VStack(alignment: .leading, spacing: 8) {
+                    // Title, Artist, Equalizer
+                    HStack(alignment: .center) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.glassMusicTitle)
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            
+                            Text(model.glassMusicArtist)
+                                .font(.system(size: 12.5, weight: .regular, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.66))
+                                .lineLimit(1)
+                        }
                         
-                        Text(curTrack.artist)
-                            .font(.system(size: 12.5, weight: .regular, design: .rounded))
-                            .foregroundColor(Color.white.opacity(0.66))
-                            .lineLimit(1)
+                        Spacer()
+                        
+                        GlassIslandEqualizerView(isPlaying: model.isGlassMusicPlaying, height: 16, barColor: Color(hex: "#ff7ab8"))
                     }
                     
-                    Spacer()
-                    
-                    GlassIslandEqualizerView(isPlaying: model.isGlassMusicPlaying, height: 16, barColor: Color(hex: "#ff7ab8"))
-                }
-                
-                // Scrubber row
-                HStack(spacing: 8) {
-                    Text(model.formattedGlassTrackCurrentTime)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.65))
-                    
-                    Slider(
-                        value: Binding(
-                            get: { Double(model.glassTrackCurrentSeconds) },
-                            set: { model.seekGlassMusic(to: Int($0)) }
-                        ),
-                        in: 0...Double(max(1, curTrack.duration))
-                    )
-                    .accentColor(.white)
-                    
-                    Text(model.formattedGlassTrackDuration)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundColor(Color.white.opacity(0.65))
-                }
-                
-                // Controls: Prev, Play/Pause circle, Next
-                HStack(spacing: 12) {
-                    Spacer()
-                    
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        model.prevGlassMusic()
-                    }) {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
+                    // Scrubber row
+                    HStack(spacing: 8) {
+                        Text(model.formattedGlassTrackCurrentTime)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.65))
+                        
+                        let currentSec = model.media.currentTime > 0 ? model.media.currentTime : Double(model.glassTrackCurrentSeconds)
+                        let totalDur = max(1, model.media.duration > 0 ? model.media.duration : Double(model.glassTracks.isEmpty ? 180 : model.glassTracks[model.glassTrackIndex].duration))
+                        Slider(
+                            value: Binding(
+                                get: { currentSec },
+                                set: { model.seekGlassMusic(to: Int($0)) }
+                            ),
+                            in: 0...totalDur
+                        )
+                        .accentColor(.white)
+                        
+                        Text(model.formattedGlassTrackDuration)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(Color.white.opacity(0.65))
                     }
-                    .buttonStyle(.plain)
                     
-                    Button(action: {
-                        MorphHaptics.generic()
-                        model.toggleGlassMusicPlay()
-                    }) {
-                        Image(systemName: model.isGlassMusicPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 48, height: 48)
-                            .background(
-                                Circle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color.white.opacity(0.50), Color.white.opacity(0.24)],
-                                            startPoint: .top,
-                                            endPoint: .bottom
+                    // Controls: Prev, Play/Pause circle, Next
+                    HStack(spacing: 12) {
+                        Spacer()
+                        
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            model.prevGlassMusic()
+                        }) {
+                            Image(systemName: "backward.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            MorphHaptics.generic()
+                            model.toggleGlassMusicPlay()
+                        }) {
+                            Image(systemName: model.isGlassMusicPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 48, height: 48)
+                                .background(
+                                    Circle()
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [Color.white.opacity(0.50), Color.white.opacity(0.24)],
+                                                startPoint: .top,
+                                                endPoint: .bottom
+                                            )
                                         )
-                                    )
-                                    .overlay(Circle().stroke(Color.white.opacity(0.65), lineWidth: 1))
-                                    .shadow(color: Color(hex: "#ff7ab8").opacity(0.5), radius: 8, y: 3)
-                            )
-                            .contentShape(Circle())
+                                        .overlay(Circle().stroke(Color.white.opacity(0.65), lineWidth: 1))
+                                        .shadow(color: Color(hex: "#ff7ab8").opacity(0.5), radius: 8, y: 3)
+                                )
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            model.skipGlassMusic(1)
+                        }) {
+                            Image(systemName: "forward.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 40, height: 40)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Spacer()
                     }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        model.skipGlassMusic(1)
-                    }) {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Spacer()
                 }
+            }
+            
+            // Browser Sign-in Button (if not connected or playing)
+            if !model.media.isSignedIn && !model.media.isDirectEngineConnected && model.media.trackTitle.isEmpty {
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.media.openSignInInBrowser()
+                }) {
+                    HStack(spacing: 5.5) {
+                        Image(systemName: "safari")
+                            .font(.system(size: 10.5, weight: .bold))
+                        Text("Sign in to YouTube Music in Browser")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(Color.white.opacity(0.95))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.14))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.9))
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 8)
+    }
+    
+    private var musicFallbackArtView: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(hex: "#ff5fa8"), Color(hex: "#6a5cff"), Color(hex: "#16d9c5")],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            
+            Image(systemName: "music.note")
+                .font(.system(size: 32, weight: .bold))
+                .foregroundColor(.white.opacity(0.85))
+            
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    RadialGradient(
+                        colors: [Color.white.opacity(0.55), Color.clear],
+                        center: .topLeading,
+                        startRadius: 5,
+                        endRadius: 70
+                    )
+                )
+        }
+        .frame(width: 112, height: 112)
     }
     
     // MARK: - Notes Panel View (460 x 284 pt)

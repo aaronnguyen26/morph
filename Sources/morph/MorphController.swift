@@ -31,7 +31,13 @@ public final class MorphController: NSObject {
     private var mousePollTimer: Timer?
     
     public init(model: NotchModel? = nil) {
-        self.model = model ?? NotchModel()
+        if let model = model {
+            self.model = model
+        } else {
+            let m = NotchModel()
+            m.interactionMode = .glassIsland
+            self.model = m
+        }
         super.init()
         Self.shared = self
         setupPanel()

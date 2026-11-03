@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         let model = NotchModel()
+        model.interactionMode = .glassIsland
         let controller = MorphController(model: model)
         self.controller = controller
         self.menuBarManager = MenuBarManager(model: model, controller: controller)

@@ -407,7 +407,7 @@ public final class NotchModel: ObservableObject {
     public let timerPopupWidth: CGFloat = 340
     public let timerPopupHeight: CGFloat = 135
     
-    @Published public var interactionMode: MorphInteractionMode = .glassIsland
+    @Published public var interactionMode: MorphInteractionMode = .spotlightBar
     @Published public var spotlightQuery: String = ""
     @Published public var isSpotlightBarActive: Bool = false
     @Published public var isTimerPopupActive: Bool = false
@@ -454,48 +454,27 @@ public final class NotchModel: ObservableObject {
         GlassTrack(title: "Soft Machinery", artist: "Ona Reyes", duration: 172, gradientHexes: ["#4dd4ff", "#4d6bff", "#b8fff0"])
     ]
     @Published public var glassTrackIndex: Int = 0
-    @Published public var glassTrackCurrentSeconds: Int = 42
-    @Published public var isGlassMusicPlaying: Bool = false
+    @Published public var glassTrackCurrentSeconds: Int = 0
+    @Published public var _simulatedGlassMusicPlaying: Bool = false
+    public var isGlassMusicPlaying: Bool {
+        get { media.isPlaying || _simulatedGlassMusicPlaying }
+        set {
+            if newValue {
+                media.play()
+                _simulatedGlassMusicPlaying = true
+            } else {
+                media.pause()
+                _simulatedGlassMusicPlaying = false
+            }
+        }
+    }
     private var glassMusicTimer: Timer? = nil
+    @Published public var hasPromptedMusicSignIn: Bool = false
     
     // Calendar State
     @Published public var glassSelectedDayIndex: Int = 0
-    @Published public var glassCalendarEvents: [Int: [GlassCalendarEvent]] = [
-        0: [
-            GlassCalendarEvent(startMinute: 570, title: "Lecture", location: "Hall A", colorHex: "#6ab7ff"),
-            GlassCalendarEvent(startMinute: 780, title: "Study group", location: "Library, 2nd floor", colorHex: "#b79cff"),
-            GlassCalendarEvent(startMinute: 1140, title: "Debate practice", location: "Room 214", colorHex: "#ff9a7a")
-        ],
-        1: [
-            GlassCalendarEvent(startMinute: 600, title: "Seminar", location: "Room 110", colorHex: "#6ab7ff"),
-            GlassCalendarEvent(startMinute: 930, title: "Office hours", location: "Faculty building", colorHex: "#7be0b0"),
-            GlassCalendarEvent(startMinute: 1080, title: "Gym", location: "Rec center", colorHex: "#ffd36a")
-        ],
-        2: [
-            GlassCalendarEvent(startMinute: 570, title: "Lecture", location: "Hall A", colorHex: "#6ab7ff"),
-            GlassCalendarEvent(startMinute: 720, title: "Lunch", location: "Dining hall", colorHex: "#ffd36a"),
-            GlassCalendarEvent(startMinute: 960, title: "Project sync", location: "Video call", colorHex: "#b79cff")
-        ],
-        3: [
-            GlassCalendarEvent(startMinute: 660, title: "Lab", location: "Science wing", colorHex: "#7be0b0"),
-            GlassCalendarEvent(startMinute: 840, title: "Problem set due", location: "Online", colorHex: "#ff9a7a"),
-            GlassCalendarEvent(startMinute: 1170, title: "Club meeting", location: "Student union", colorHex: "#6ab7ff")
-        ],
-        4: [
-            GlassCalendarEvent(startMinute: 570, title: "Lecture", location: "Hall A", colorHex: "#6ab7ff"),
-            GlassCalendarEvent(startMinute: 810, title: "Coffee chat", location: "Cafe on 28th", colorHex: "#ffd36a"),
-            GlassCalendarEvent(startMinute: 1020, title: "Weekly review", location: "Desk", colorHex: "#b79cff")
-        ],
-        5: [
-            GlassCalendarEvent(startMinute: 600, title: "Scrimmage", location: "Room 214", colorHex: "#ff9a7a"),
-            GlassCalendarEvent(startMinute: 900, title: "Groceries", location: "Market", colorHex: "#7be0b0")
-        ],
-        6: [
-            GlassCalendarEvent(startMinute: 660, title: "Brunch", location: "Cafe on 28th", colorHex: "#ffd36a"),
-            GlassCalendarEvent(startMinute: 960, title: "Plan the week", location: "Desk", colorHex: "#b79cff"),
-            GlassCalendarEvent(startMinute: 1200, title: "Laundry", location: "Basement", colorHex: "#7be0b0")
-        ]
-    ]
+    @Published public var hasPromptedCalendarSignIn: Bool = false
+    @Published public var glassCalendarEvents: [Int: [GlassCalendarEvent]] = [:]
     
     // Notes State
     @Published public var glassNotesMode: GlassNotesMode = .list
@@ -825,14 +804,38 @@ public final class NotchModel: ObservableObject {
         return String(format: "%02d:%02d", mins, secs)
     }
     
+    public var glassMusicTitle: String {
+        if !media.trackTitle.isEmpty {
+            return media.trackTitle
+        }
+        if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
+            return glassTracks[glassTrackIndex].title
+        }
+        return "No Track Playing"
+    }
+    
+    public var glassMusicArtist: String {
+        if !media.artistName.isEmpty {
+            return media.artistName
+        }
+        if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
+            return glassTracks[glassTrackIndex].artist
+        }
+        return media.isSignedIn ? "YouTube Music" : "Sign in to YouTube Music"
+    }
+    
     public var formattedGlassTrackCurrentTime: String {
-        let mins = glassTrackCurrentSeconds / 60
-        let secs = glassTrackCurrentSeconds % 60
+        let sec = Int(media.currentTime > 0 ? media.currentTime : TimeInterval(glassTrackCurrentSeconds))
+        let mins = sec / 60
+        let secs = sec % 60
         return String(format: "%d:%02d", mins, secs)
     }
     
     public var formattedGlassTrackDuration: String {
-        let dur = glassTracks[glassTrackIndex].duration
+        let dur = Int(media.duration > 0 ? media.duration : TimeInterval(glassTracks.isEmpty ? 0 : glassTracks[glassTrackIndex].duration))
+        if dur <= 0 {
+            return "--:--"
+        }
         let mins = dur / 60
         let secs = dur % 60
         return String(format: "%d:%02d", mins, secs)
@@ -1974,6 +1977,63 @@ public final class NotchModel: ObservableObject {
                 ctrl.panel?.ignoresMouseEvents = false
             }
         }
+        
+        // Automatic browser sign-in prompt on first user access
+        if state == .calendar {
+            promptCalendarSignInIfNeeded()
+        } else if state == .music {
+            promptMusicSignInIfNeeded()
+        }
+    }
+    
+    public func promptCalendarSignInIfNeeded() {
+        guard !hasPromptedCalendarSignIn else { return }
+        hasPromptedCalendarSignIn = true
+        if !calendar.isSignedIn && !MorphEnvironment.isTestingEnvironment {
+            calendar.signInWithGoogle()
+        }
+    }
+    
+    public func promptMusicSignInIfNeeded() {
+        guard !hasPromptedMusicSignIn else { return }
+        hasPromptedMusicSignIn = true
+        if !media.isSignedIn && !media.isDirectEngineConnected && !MorphEnvironment.isTestingEnvironment {
+            media.openSignInInBrowser()
+        }
+    }
+    
+    // MARK: - Glass Island Real Calendar Helpers
+    public var glassCurrentWeekDates: [Date] {
+        let cal = Calendar.current
+        let today = Date()
+        let weekday = cal.component(.weekday, from: today)
+        let monOffset = (weekday == 1) ? -6 : (2 - weekday)
+        guard let monday = cal.date(byAdding: .day, value: monOffset, to: today) else { return (0..<7).map { _ in today } }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+    }
+    
+    public var glassSelectedDate: Date {
+        let dates = glassCurrentWeekDates
+        if glassSelectedDayIndex >= 0 && glassSelectedDayIndex < dates.count {
+            return dates[glassSelectedDayIndex]
+        }
+        return Date()
+    }
+    
+    public var glassRealCalendarEvents: [CalendarEvent] {
+        return calendar.eventsForDate(glassSelectedDate)
+    }
+    
+    public var formattedGlassMonthYear: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        return formatter.string(from: glassSelectedDate)
+    }
+    
+    public var formattedGlassDayTitle: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE d"
+        return formatter.string(from: glassSelectedDate)
     }
     
     public func toggleGlassIslandTab(_ tabState: GlassIslandState) {
@@ -2064,7 +2124,13 @@ public final class NotchModel: ObservableObject {
     
     // MARK: - Glass Island Music Methods
     public func toggleGlassMusicPlay() {
-        isGlassMusicPlaying.toggle()
+        if isGlassMusicPlaying {
+            media.pause()
+            _simulatedGlassMusicPlaying = false
+        } else {
+            media.play()
+            _simulatedGlassMusicPlaying = true
+        }
         glassMusicTimer?.invalidate()
         glassMusicTimer = nil
         if isGlassMusicPlaying {
@@ -2072,7 +2138,7 @@ public final class NotchModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self = self, self.isGlassMusicPlaying else { return }
                     self.glassTrackCurrentSeconds += 1
-                    let curDur = self.glassTracks[self.glassTrackIndex].duration
+                    let curDur = !self.glassTracks.isEmpty ? self.glassTracks[self.glassTrackIndex].duration : 180
                     if self.glassTrackCurrentSeconds >= curDur {
                         self.skipGlassMusic(1)
                     }
@@ -2081,13 +2147,21 @@ public final class NotchModel: ObservableObject {
         }
     }
     
-    public func skipGlassMusic(_ delta: Int) {
-        glassTrackIndex = (glassTrackIndex + delta + glassTracks.count) % glassTracks.count
+    public func skipGlassMusic(_ delta: Int = 1) {
+        if delta > 0 {
+            media.nextTrack()
+        } else {
+            media.previousTrack()
+        }
+        if !glassTracks.isEmpty {
+            glassTrackIndex = (glassTrackIndex + delta + glassTracks.count) % glassTracks.count
+        }
         glassTrackCurrentSeconds = 0
     }
     
     public func prevGlassMusic() {
-        if glassTrackCurrentSeconds > 3 {
+        if media.currentTime > 3 || glassTrackCurrentSeconds > 3 {
+            media.seek(to: 0)
             glassTrackCurrentSeconds = 0
         } else {
             skipGlassMusic(-1)
@@ -2095,7 +2169,8 @@ public final class NotchModel: ObservableObject {
     }
     
     public func seekGlassMusic(to seconds: Int) {
-        let curDur = glassTracks[glassTrackIndex].duration
+        media.seek(to: TimeInterval(seconds))
+        let curDur = !glassTracks.isEmpty ? glassTracks[glassTrackIndex].duration : 180
         glassTrackCurrentSeconds = max(0, min(seconds, curDur))
     }
     
