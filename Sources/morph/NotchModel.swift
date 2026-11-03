@@ -460,11 +460,7 @@ public final class NotchModel: ObservableObject {
     private var glassTimerEndTime: Date? = nil
     
     // Music Player State
-    @Published public var glassTracks: [GlassTrack] = [
-        GlassTrack(title: "Glass Hours", artist: "Marlowe Vale", duration: 188, gradientHexes: ["#16d9c5", "#6a5cff", "#ff5fa8"]),
-        GlassTrack(title: "Low Tide Signals", artist: "Kesi", duration: 214, gradientHexes: ["#ffc15a", "#ff6a88", "#7a4dff"]),
-        GlassTrack(title: "Soft Machinery", artist: "Ona Reyes", duration: 172, gradientHexes: ["#4dd4ff", "#4d6bff", "#b8fff0"])
-    ]
+    @Published public var glassTracks: [GlassTrack] = []
     @Published public var glassTrackIndex: Int = 0
     @Published public var glassTrackCurrentSeconds: Int = 0
     @Published public var _simulatedGlassMusicPlaying: Bool = false
@@ -490,11 +486,7 @@ public final class NotchModel: ObservableObject {
     
     // Notes State
     @Published public var glassNotesMode: GlassNotesMode = .list
-    @Published public var glassNotes: [GlassNote] = [
-        GlassNote(title: "Midterm review", body: "Elasticity, consumer surplus, and the two problem sets I skipped. Start with chapter 4."),
-        GlassNote(title: "Debate prep", body: "Three clash points for the motion on remote work. Draft the first rebuttal."),
-        GlassNote(title: "Grocery run", body: "Oat milk, rice, limes, coffee filters.")
-    ]
+    @Published public var glassNotes: [GlassNote] = []
     @Published public var glassActiveNoteId: UUID? = nil
     @Published public var glassEditTitle: String = ""
     @Published public var glassEditBody: String = ""
@@ -554,7 +546,25 @@ public final class NotchModel: ObservableObject {
         
         detectScreenNotch()
         observeSubmodels()
+        initGlassState()
         checkInitialLaunchStep()
+    }
+    
+    private func initGlassState() {
+        if !media.quickPicks.isEmpty {
+            syncGlassTracks(from: media.quickPicks)
+        } else if !media.playlist.isEmpty {
+            syncGlassTracks(from: media.playlist)
+        } else {
+            syncGlassTracks(from: YTMParser.defaultQuickPicks)
+        }
+        
+        let trimmedScratch = scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedScratch.isEmpty {
+            glassNotes = [GlassNote(title: "Scratchpad", body: trimmedScratch)]
+        } else {
+            glassNotes = [GlassNote(title: "Quick Note", body: "Write your thoughts, ideas, or to-dos here. Changes save automatically.")]
+        }
     }
     
     private var isTesting: Bool {
@@ -820,6 +830,9 @@ public final class NotchModel: ObservableObject {
         if !media.trackTitle.isEmpty {
             return media.trackTitle
         }
+        if media.isBrowserConnected {
+            return "YouTube Music Connected"
+        }
         if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
             return glassTracks[glassTrackIndex].title
         }
@@ -829,6 +842,9 @@ public final class NotchModel: ObservableObject {
     public var glassMusicArtist: String {
         if !media.artistName.isEmpty {
             return media.artistName
+        }
+        if media.isBrowserConnected {
+            return media.sourceName
         }
         if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
             return glassTracks[glassTrackIndex].artist
@@ -2046,7 +2062,7 @@ public final class NotchModel: ObservableObject {
     public func promptMusicSignInIfNeeded() {
         guard !hasPromptedMusicSignIn else { return }
         hasPromptedMusicSignIn = true
-        if !media.isSignedIn && !media.isDirectEngineConnected && !MorphEnvironment.isTestingEnvironment {
+        if !media.isSignedIn && !media.isBrowserConnected && !MorphEnvironment.isTestingEnvironment {
             media.openSignIn()
         }
     }
@@ -2238,18 +2254,19 @@ public final class NotchModel: ObservableObject {
     }
     
     public func prevGlassMusic() {
-        if media.currentTime > 3 || glassTrackCurrentSeconds > 3 {
-            media.seek(to: 0)
-            glassTrackCurrentSeconds = 0
+        if glassTrackCurrentSeconds > 3 || media.currentTime > 3 {
+            seekGlassMusic(to: 0)
         } else {
             skipGlassMusic(-1)
         }
     }
     
     public func seekGlassMusic(to seconds: Int) {
-        media.seek(to: TimeInterval(seconds))
-        let curDur = !glassTracks.isEmpty ? glassTracks[glassTrackIndex].duration : 180
-        glassTrackCurrentSeconds = max(0, min(seconds, curDur))
+        let curDur = Double(!glassTracks.isEmpty ? glassTracks[glassTrackIndex].duration : 180)
+        let fraction = curDur > 0 ? Double(seconds) / curDur : 0
+        media.seek(to: fraction)
+        media.currentTime = Double(seconds)
+        glassTrackCurrentSeconds = max(0, min(seconds, Int(curDur)))
     }
     
     // MARK: - Glass Island Notes Methods

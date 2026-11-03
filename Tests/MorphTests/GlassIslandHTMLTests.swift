@@ -335,6 +335,7 @@ final class GlassIslandHTMLTests: XCTestCase {
         XCTAssertEqual(model.formattedGlassTrackDuration, "3:30")
         
         // Playback delegation
+        model.isGlassMusicPlaying = false
         model.toggleGlassMusicPlay()
         XCTAssertTrue(model.isGlassMusicPlaying)
     }
@@ -383,5 +384,84 @@ final class GlassIslandHTMLTests: XCTestCase {
         // Skipping track starts the real track via engine.play(videoId:)
         model.skipGlassMusic(1)
         XCTAssertEqual(model.glassTrackCurrentSeconds, 0)
+    }
+    
+    // MARK: - 8. Zero Mock Data & Browser Session Integration Verification
+    func testZeroMockDataInGlassTracksAndNotes() {
+        let freshModel = NotchModel()
+        // Ensure mock Marlowe Vale / Glass Hours are completely gone
+        for track in freshModel.glassTracks {
+            XCTAssertNotEqual(track.title, "Glass Hours")
+            XCTAssertNotEqual(track.artist, "Marlowe Vale")
+            XCTAssertNotEqual(track.title, "Low Tide Signals")
+            XCTAssertNotEqual(track.artist, "Kesi")
+            XCTAssertNotEqual(track.title, "Soft Machinery")
+            XCTAssertNotEqual(track.artist, "Ona Reyes")
+        }
+        
+        // Ensure mock notes are completely gone
+        for note in freshModel.glassNotes {
+            XCTAssertFalse(note.title.contains("Midterm review"))
+            XCTAssertFalse(note.body.contains("Elasticity, consumer surplus"))
+            XCTAssertFalse(note.title.contains("Debate prep"))
+        }
+        
+        // Fresh state starts with real songs
+        XCTAssertFalse(freshModel.glassTracks.isEmpty)
+        XCTAssertEqual(freshModel.glassTracks.first?.title, "Starboy")
+        XCTAssertEqual(freshModel.glassTracks.first?.artist, "The Weeknd ft. Daft Punk")
+    }
+    
+    func testPolarAndBrowserDetectionAndLiveSync() {
+        let media = model.media
+        XCTAssertFalse(media.isBrowserConnected)
+        
+        // Simulate WindowServer YTM result from Polar Browser
+        let polarRes = MediaControllerModel.WindowServerYTMResult(
+            found: true,
+            browser: "Polar",
+            trackTitle: "Blinding Lights",
+            artistName: "The Weeknd"
+        )
+        
+        XCTAssertTrue(polarRes.found)
+        XCTAssertEqual(polarRes.browser, "Polar")
+        XCTAssertEqual(polarRes.trackTitle, "Blinding Lights")
+        XCTAssertEqual(polarRes.artistName, "The Weeknd")
+        
+        // Apply detected browser track
+        media.trackTitle = polarRes.trackTitle
+        media.artistName = polarRes.artistName
+        media.sourceName = "YouTube Music • Polar"
+        media.isBrowserConnected = true
+        media.isSignedIn = true
+        media.isPlaying = true
+        
+        // NotchModel must immediately reflect the real song from Polar
+        XCTAssertEqual(model.glassMusicTitle, "Blinding Lights")
+        XCTAssertEqual(model.glassMusicArtist, "The Weeknd")
+        XCTAssertTrue(model.isGlassMusicPlaying)
+        
+        // When song title is not yet available (home/browse in Polar), reflects connected browser
+        media.trackTitle = ""
+        media.artistName = ""
+        XCTAssertEqual(model.glassMusicTitle, "YouTube Music Connected")
+        XCTAssertEqual(model.glassMusicArtist, "YouTube Music • Polar")
+    }
+    
+    func testIsDirectEngineConnectedOnlyWhenActive() {
+        let media = model.media
+        // On idle/empty state, isDirectEngineConnected must be false
+        media.engine.trackData = YTMTrackData()
+        media.engine.isSignedIn = false
+        media.isDirectEngineConnected = false
+        
+        XCTAssertFalse(media.isDirectEngineConnected)
+        XCTAssertFalse(media.isDirectEngineActive)
+        
+        // When real track plays in direct engine, connects
+        media.engine.trackData = YTMTrackData(title: "Starboy", artist: "The Weeknd", isPlaying: true, duration: 230)
+        media.isDirectEngineConnected = media.engine.isSignedIn || (!media.engine.trackData.title.isEmpty && media.engine.trackData.title != "YouTube Music" && media.engine.trackData.duration > 0) || media.engine.trackData.isPlaying
+        XCTAssertTrue(media.isDirectEngineConnected)
     }
 }

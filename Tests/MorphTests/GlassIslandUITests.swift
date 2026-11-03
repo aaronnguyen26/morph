@@ -83,8 +83,8 @@ final class GlassIslandUITests: XCTestCase {
     
     // MARK: - 4. Music Player Stage ("Glass Hours" / "Marlowe Vale") & Live Activity
     func testMusicPlayerStageAndCommitToLiveActivity() {
-        let expectedArtist = model.glassTracks.first?.artist ?? "The Weeknd ft. Daft Punk"
-        let expectedTrack = model.glassTracks.first?.title ?? "Starboy"
+        let expectedArtist = model.media.artistName.isEmpty ? (model.glassTracks.first?.artist ?? "The Weeknd ft. Daft Punk") : model.media.artistName
+        let expectedTrack = model.media.trackTitle.isEmpty ? (model.glassTracks.first?.title ?? "Starboy") : model.media.trackTitle
         model.presentIntermediaryMusic(action: .play(query: "Glass Hours"))
         XCTAssertTrue(model.isIntermediaryStageActive)
         XCTAssertEqual(model.currentWidth, 440.0)

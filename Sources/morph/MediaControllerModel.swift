@@ -1,5 +1,7 @@
 import SwiftUI
 import Combine
+import Cocoa
+import CoreGraphics
 
 public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     case home = "Home"
@@ -288,7 +290,7 @@ public final class MediaControllerModel: ObservableObject {
                         YTMUserOfflineStore.shared.recordTracks(self.playlist)
                     }
                     self.sourceName = "YouTube Music Direct"
-                    self.isDirectEngineConnected = true
+                    self.isDirectEngineConnected = self.engine.isSignedIn || (!data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0) || data.isPlaying
                     
                     let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
                     let trackChanged = (currentSignature != self.lastProcessedTrackSignature)
@@ -1461,14 +1463,18 @@ public final class MediaControllerModel: ObservableObject {
         browserAuthStatusMessage = "Syncing session from browser tab..."
         engine.syncSessionFromBrowser()
         engine.checkAuthCookies()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
-            if self?.engine.isSignedIn == true {
-                self?.browserAuthStatusMessage = "Connected! You can now close your browser tab."
-                self?.isWaitingForBrowserSignIn = false
-                self?.refreshPlaylists()
-                self?.refreshQuickPicks()
-            } else {
-                self?.browserAuthStatusMessage = "No active session detected. Please sign in via the Morph window or browser tab first."
+        Task {
+            await pollBrowserState()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self = self else { return }
+                if self.isBrowserConnected || self.engine.isSignedIn || self.isSignedIn {
+                    self.browserAuthStatusMessage = "Connected to \(self.sourceName)! Music synced."
+                    self.isWaitingForBrowserSignIn = false
+                    self.refreshPlaylists()
+                    self.refreshQuickPicks()
+                } else {
+                    self.browserAuthStatusMessage = "No active session detected. Please sign in via the Morph window or open YouTube Music in your browser."
+                }
             }
         }
     }
@@ -1497,127 +1503,209 @@ public final class MediaControllerModel: ObservableObject {
     
     // MARK: - Fallback Browser AppleScript Bridge (When external browser is used)
     private func startBrowserPolling() {
-        browserPollTimer = Timer.publish(every: 8.0, on: .main, in: .common)
+        browserPollTimer = Timer.publish(every: 2.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                Task {
-                    // Only poll external browser if direct engine is idle and not connected
-                    if let self = self, !self.isTestingEnvironment, !self.engine.trackData.isPlaying, !self.isDirectEngineConnected {
+                Task { @MainActor [weak self] in
+                    guard let self = self, !self.isTestingEnvironment else { return }
+                    if !self.engine.trackData.isPlaying {
                         await self.pollBrowserState()
                     }
                 }
             }
     }
     
-    private func pollBrowserState() async {
+    public struct WindowServerYTMResult {
+        public let found: Bool
+        public let browser: String
+        public let trackTitle: String
+        public let artistName: String
+        
+        public init(found: Bool, browser: String, trackTitle: String, artistName: String) {
+            self.found = found
+            self.browser = browser
+            self.trackTitle = trackTitle
+            self.artistName = artistName
+        }
+    }
+    
+    public func detectYouTubeMusicInWindowServer() -> WindowServerYTMResult {
+        guard !isTestingEnvironment else {
+            return WindowServerYTMResult(found: false, browser: "", trackTitle: "", artistName: "")
+        }
+        let options = CGWindowListOption.excludeDesktopElements
+        guard let winList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return WindowServerYTMResult(found: false, browser: "", trackTitle: "", artistName: "")
+        }
+        
+        let recognizedBrowsers = [
+            "Polar": "Polar",
+            "Polar Host": "Polar",
+            "Google Chrome": "Chrome",
+            "Safari": "Safari",
+            "Brave Browser": "Brave",
+            "Arc": "Arc",
+            "Microsoft Edge": "Edge",
+            "Firefox": "Firefox",
+            "Vivaldi": "Vivaldi",
+            "Opera": "Opera"
+        ]
+        
+        for win in winList {
+            let owner = win[kCGWindowOwnerName as String] as? String ?? ""
+            let rawTitle = win[kCGWindowName as String] as? String ?? ""
+            let layer = win[kCGWindowLayer as String] as? Int ?? -1
+            guard layer == 0 || layer == 1 else { continue }
+            
+            var matchedBrowserName: String? = nil
+            for (ownerKey, browserDisplayName) in recognizedBrowsers {
+                if owner.caseInsensitiveCompare(ownerKey) == .orderedSame || owner.lowercased().contains(ownerKey.lowercased()) {
+                    matchedBrowserName = browserDisplayName
+                    break
+                }
+            }
+            guard let browserName = matchedBrowserName else { continue }
+            
+            let trimmedTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedTitle.contains("YouTube Music") || trimmedTitle.contains("music.youtube.com") {
+                let clean = trimmedTitle
+                    .replacingOccurrences(of: " - YouTube Music", with: "")
+                    .replacingOccurrences(of: "YouTube Music", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                var track = ""
+                var artist = ""
+                if clean.contains(" • ") {
+                    let parts = clean.components(separatedBy: " • ")
+                    if parts.count >= 2 {
+                        track = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        artist = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else {
+                        track = clean
+                    }
+                } else if clean.contains(" - ") {
+                    let parts = clean.components(separatedBy: " - ")
+                    if parts.count >= 2 {
+                        track = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        artist = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    } else {
+                        track = clean
+                    }
+                } else if !clean.isEmpty {
+                    track = clean
+                }
+                
+                return WindowServerYTMResult(
+                    found: true,
+                    browser: browserName,
+                    trackTitle: track,
+                    artistName: artist
+                )
+            }
+        }
+        return WindowServerYTMResult(found: false, browser: "", trackTitle: "", artistName: "")
+    }
+    
+    public func pollBrowserState() async {
         guard !isTestingEnvironment else { return }
         
-        // Fast, non-blocking check using Cocoa NSRunningApplication
+        // 1. Instant WindowServer Scan (sub-millisecond, covers Polar, Chrome, Safari, etc.)
+        let wsDetection = detectYouTubeMusicInWindowServer()
+        if wsDetection.found {
+            await MainActor.run {
+                guard !self.engine.trackData.isPlaying else { return }
+                self.isBrowserConnected = true
+                self.isSignedIn = true
+                self.sourceName = "YouTube Music • \(wsDetection.browser)"
+                
+                if !wsDetection.trackTitle.isEmpty {
+                    self.trackTitle = wsDetection.trackTitle
+                    self.artistName = wsDetection.artistName.isEmpty ? "YouTube Music" : wsDetection.artistName
+                    self.isPlaying = true
+                    self.syncPlayingTrackWithPlaylists()
+                } else if self.trackTitle.isEmpty {
+                    self.trackTitle = "YouTube Music Connected"
+                    self.artistName = "Ready in \(wsDetection.browser)"
+                }
+            }
+            return
+        }
+        
+        // 2. Multi-browser AppleScript Tab Inspection (for scriptable browsers with tabs)
+        let scriptResult = await scanScriptableBrowserTabs()
+        guard !isTestingEnvironment, !engine.trackData.isPlaying else { return }
+        
+        if scriptResult.found {
+            await MainActor.run {
+                self.isBrowserConnected = true
+                self.isSignedIn = true
+                self.sourceName = "YouTube Music • \(scriptResult.browser)"
+                self.parseTabTitle(scriptResult.tabTitle, source: "YouTube Music • \(scriptResult.browser)")
+            }
+        }
+    }
+    
+    private func scanScriptableBrowserTabs() async -> (found: Bool, browser: String, tabTitle: String) {
+        guard !isTestingEnvironment else { return (false, "", "") }
+        
         let chromeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty
-        let safariRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty
         let braveRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.brave.Browser").isEmpty
         let edgeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.microsoft.edgemac").isEmpty
         let arcRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "company.thebrowser.Browser").isEmpty
-        guard chromeRunning || safariRunning || braveRunning || edgeRunning || arcRunning else { return }
+        let safariRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty
         
-        // Run off-main asynchronously so the main thread and UI runloop are never blocked
-        let result: String = await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                var script = ""
-                if chromeRunning {
-                    script = """
-                    tell application "Google Chrome"
-                        repeat with w in windows
-                            repeat with t in tabs of w
-                                if (URL of t) contains "music.youtube.com" then
-                                    return "CHROME_YTM:" & (title of t)
-                                end if
-                            end repeat
-                        end repeat
-                    end tell
-                    return "NONE"
-                    """
-                } else if braveRunning {
-                    script = """
-                    tell application "Brave Browser"
-                        repeat with w in windows
-                            repeat with t in tabs of w
-                                if (URL of t) contains "music.youtube.com" then
-                                    return "BRAVE_YTM:" & (title of t)
-                                end if
-                            end repeat
-                        end repeat
-                    end tell
-                    return "NONE"
-                    """
-                } else if edgeRunning {
-                    script = """
-                    tell application "Microsoft Edge"
-                        repeat with w in windows
-                            repeat with t in tabs of w
-                                if (URL of t) contains "music.youtube.com" then
-                                    return "EDGE_YTM:" & (title of t)
-                                end if
-                            end repeat
-                        end repeat
-                    end tell
-                    return "NONE"
-                    """
-                } else if arcRunning {
-                    script = """
-                    tell application "Arc"
-                        repeat with w in windows
-                            repeat with t in tabs of w
-                                if (URL of t) contains "music.youtube.com" then
-                                    return "ARC_YTM:" & (title of t)
-                                end if
-                            end repeat
-                        end repeat
-                    end tell
-                    return "NONE"
-                    """
-                } else if safariRunning {
-                    script = """
-                    tell application "Safari"
-                        repeat with w in windows
-                            repeat with t in tabs of w
-                                if (URL of t) contains "music.youtube.com" then
-                                    return "SAFARI_YTM:" & (name of t)
-                                end if
-                            end repeat
-                        end repeat
-                    end tell
-                    return "NONE"
-                    """
-                }
-                
-                guard let appleScript = NSAppleScript(source: script) else {
-                    continuation.resume(returning: "NONE")
-                    return
-                }
-                var error: NSDictionary?
-                let res = appleScript.executeAndReturnError(&error).stringValue ?? "NONE"
-                continuation.resume(returning: res)
-            }
+        guard chromeRunning || braveRunning || edgeRunning || arcRunning || safariRunning else {
+            return (false, "", "")
         }
         
-        guard !engine.trackData.isPlaying else { return }
-        
-        if result.starts(with: "CHROME_YTM:") {
-            let rawTitle = result.replacingOccurrences(of: "CHROME_YTM:", with: "")
-            parseTabTitle(rawTitle, source: "YouTube Music • Chrome")
-        } else if result.starts(with: "BRAVE_YTM:") {
-            let rawTitle = result.replacingOccurrences(of: "BRAVE_YTM:", with: "")
-            parseTabTitle(rawTitle, source: "YouTube Music • Brave")
-        } else if result.starts(with: "EDGE_YTM:") {
-            let rawTitle = result.replacingOccurrences(of: "EDGE_YTM:", with: "")
-            parseTabTitle(rawTitle, source: "YouTube Music • Edge")
-        } else if result.starts(with: "ARC_YTM:") {
-            let rawTitle = result.replacingOccurrences(of: "ARC_YTM:", with: "")
-            parseTabTitle(rawTitle, source: "YouTube Music • Arc")
-        } else if result.starts(with: "SAFARI_YTM:") {
-            let rawTitle = result.replacingOccurrences(of: "SAFARI_YTM:", with: "")
-            parseTabTitle(rawTitle, source: "YouTube Music • Safari")
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                func runCheck(appName: String) -> String? {
+                    let script = """
+                    tell application "\(appName)"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    return (title of t)
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return ""
+                    """
+                    var error: NSDictionary?
+                    if let appleScript = NSAppleScript(source: script) {
+                        let res = appleScript.executeAndReturnError(&error).stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        if !res.isEmpty {
+                            return res
+                        }
+                    }
+                    return nil
+                }
+                
+                if chromeRunning, let title = runCheck(appName: "Google Chrome") {
+                    continuation.resume(returning: (true, "Chrome", title))
+                    return
+                }
+                if braveRunning, let title = runCheck(appName: "Brave Browser") {
+                    continuation.resume(returning: (true, "Brave", title))
+                    return
+                }
+                if edgeRunning, let title = runCheck(appName: "Microsoft Edge") {
+                    continuation.resume(returning: (true, "Edge", title))
+                    return
+                }
+                if arcRunning, let title = runCheck(appName: "Arc") {
+                    continuation.resume(returning: (true, "Arc", title))
+                    return
+                }
+                if safariRunning, let title = runCheck(appName: "Safari") {
+                    continuation.resume(returning: (true, "Safari", title))
+                    return
+                }
+                
+                continuation.resume(returning: (false, "", ""))
+            }
         }
     }
     
@@ -1625,11 +1713,18 @@ public final class MediaControllerModel: ObservableObject {
         guard !engine.trackData.isPlaying else { return }
         self.sourceName = source
         self.isBrowserConnected = true
+        self.isSignedIn = true
         
         var clean = rawTitle.replacingOccurrences(of: " - YouTube Music", with: "")
         clean = clean.replacingOccurrences(of: "YouTube Music", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if clean.isEmpty { return }
+        if clean.isEmpty {
+            if self.trackTitle.isEmpty {
+                self.trackTitle = "YouTube Music Connected"
+                self.artistName = source
+            }
+            return
+        }
         
         if clean.contains(" - ") {
             let parts = clean.components(separatedBy: " - ")
@@ -1646,11 +1741,13 @@ public final class MediaControllerModel: ObservableObject {
         } else {
             self.trackTitle = clean
         }
+        self.isPlaying = true
         self.syncPlayingTrackWithPlaylists()
     }
     
     private func executeBrowserPlayPause() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1669,6 +1766,7 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserPlay() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1687,6 +1785,7 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserPause() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1705,6 +1804,7 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserStop() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1723,6 +1823,7 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserNextTrack() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        Self.postSystemMediaKey(key: 19)
         let jsCommand = """
         (function() {
             var confirmButtons = document.querySelectorAll('ytmusic-you-there-renderer #confirm-button, tp-yt-paper-dialog #confirm-button');
@@ -1750,6 +1851,7 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserPreviousTrack() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        Self.postSystemMediaKey(key: 20)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows

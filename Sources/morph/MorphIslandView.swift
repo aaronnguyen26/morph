@@ -2215,29 +2215,50 @@ public struct MorphIslandView: View {
             }
             
             // Sign-in or Quick Play Button
-            if !model.media.isSignedIn && !model.media.isDirectEngineConnected && model.media.trackTitle.isEmpty {
-                Button(action: {
-                    MorphHaptics.levelChange()
-                    model.media.openSignIn()
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("Sign In to YouTube Music")
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+            if !model.media.isSignedIn && !model.media.isBrowserConnected && model.media.trackTitle.isEmpty {
+                HStack(spacing: 8) {
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        model.media.openSignIn()
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Sign In")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(Color.white.opacity(0.95))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.16))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.38), lineWidth: 0.9))
+                        )
                     }
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill(Color.white.opacity(0.16))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.38), lineWidth: 0.9))
-                    )
+                    .buttonStyle(.plain)
+                    .help("Opens Morph's secure YouTube Music sign-in window")
+                    
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        model.media.syncSessionFromBrowser()
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Sync Browser")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sync YouTube Music from Polar, Chrome, or Safari")
                 }
-                .buttonStyle(.plain)
-                .help("Opens Morph's secure YouTube Music sign-in window")
-            } else if model.media.isSignedIn && model.media.trackTitle.isEmpty && !model.isGlassMusicPlaying {
+            } else if (model.media.isSignedIn || model.media.isBrowserConnected) && model.media.trackTitle.isEmpty && !model.isGlassMusicPlaying {
                 Button(action: {
                     MorphHaptics.levelChange()
                     model.toggleGlassMusicPlay()
@@ -2245,7 +2266,7 @@ public struct MorphIslandView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "play.fill")
                             .font(.system(size: 10, weight: .bold))
-                        Text("Play Your Library")
+                        Text(model.media.isBrowserConnected ? "Play YouTube Music" : "Play Your Library")
                             .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(.black)
