@@ -528,7 +528,7 @@ final class YTMInnerTubeTests: XCTestCase {
         media.openSignIn()
         XCTAssertTrue(media.isWaitingForBrowserSignIn)
         XCTAssertNotNil(media.browserAuthStatusMessage)
-        XCTAssertTrue(media.browserAuthStatusMessage?.contains("browser") == true)
+        XCTAssertTrue(media.browserAuthStatusMessage?.contains("Morph YouTube Music window") == true)
         
         // User triggers session sync
         media.syncSessionFromBrowser()
