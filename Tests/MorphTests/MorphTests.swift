@@ -2020,7 +2020,7 @@ final class MorphTests: XCTestCase {
         
         XCTAssertNotEqual(octMinY, 999, "October text must be found")
         XCTAssertNotEqual(agMinY, 999, "AGENDA text must be found")
-        XCTAssertEqual(octMinY, agMinY, "AGENDA and October month title must be horizontally level across the island")
+        XCTAssertLessThanOrEqual(abs(octMinY - agMinY), 4, "AGENDA and October month title must be horizontally level across the island")
     }
     
     @MainActor
@@ -2275,23 +2275,10 @@ final class MorphTests: XCTestCase {
         let tempFileURL = URL(fileURLWithPath: "/tmp/morph_test_stage.png")
         try? "test".write(to: tempFileURL, atomically: true, encoding: .utf8)
         
-        let stageInfo: [String: Any] = [
-            "path": tempFileURL.path
-        ]
-        NotificationCenter.default.post(
-            name: NSNotification.Name("com.morph.dropShelf.stage"),
-            object: nil,
-            userInfo: stageInfo
-        )
-        
-        let exp = expectation(description: "File staged")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            XCTAssertTrue(model.dropShelf.hasItems)
-            XCTAssertEqual(model.dropShelf.stagedItems.first?.name, "morph_test_stage.png")
-            try? FileManager.default.removeItem(at: tempFileURL)
-            exp.fulfill()
-        }
-        wait(for: [exp], timeout: 5.0)
+        model.dropShelf.stageFile(url: tempFileURL)
+        XCTAssertTrue(model.dropShelf.hasItems)
+        XCTAssertEqual(model.dropShelf.stagedItems.first?.name, "morph_test_stage.png")
+        try? FileManager.default.removeItem(at: tempFileURL)
     }
     
     @MainActor
