@@ -1650,6 +1650,23 @@ public final class NotchModel: ObservableObject {
         }
     }
     
+    public func syncGlassTracks(from items: [YTMPlaylistItem]) {
+        guard !items.isEmpty else { return }
+        let converted = items.prefix(15).map { item in
+            GlassTrack(
+                title: item.title,
+                artist: item.artist,
+                duration: item.durationSeconds,
+                gradientHexes: ["#ff7ab8", "#6a5cff", "#16d9c5"],
+                videoId: item.videoId,
+                thumbnailURL: item.thumbnailURL
+            )
+        }
+        if !converted.isEmpty {
+            self.glassTracks = converted
+        }
+    }
+    
     private func observeSubmodels() {
         // Break up observation sinks so Swift compiler can type-check effortlessly
         let triggerChange: () -> Void = { [weak self] in
@@ -1679,42 +1696,15 @@ public final class NotchModel: ObservableObject {
             
         // Sync real YouTube Music tracks to Glass Island tracks
         media.$quickPicks
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] picks in
-                guard let self = self, !picks.isEmpty else { return }
-                let converted = picks.prefix(15).map { item in
-                    GlassTrack(
-                        title: item.title,
-                        artist: item.artist,
-                        duration: item.durationSeconds,
-                        gradientHexes: ["#ff7ab8", "#6a5cff", "#16d9c5"],
-                        videoId: item.videoId,
-                        thumbnailURL: item.thumbnailURL
-                    )
-                }
-                if !converted.isEmpty {
-                    self.glassTracks = converted
-                }
+                self?.syncGlassTracks(from: picks)
             }
             .store(in: &cancellables)
             
         media.$playlist
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] queue in
-                guard let self = self, !queue.isEmpty, self.media.quickPicks.isEmpty else { return }
-                let converted = queue.prefix(15).map { item in
-                    GlassTrack(
-                        title: item.title,
-                        artist: item.artist,
-                        duration: item.durationSeconds,
-                        gradientHexes: ["#ff7ab8", "#6a5cff", "#16d9c5"],
-                        videoId: item.videoId,
-                        thumbnailURL: item.thumbnailURL
-                    )
-                }
-                if !converted.isEmpty {
-                    self.glassTracks = converted
-                }
+                guard let self = self, self.media.quickPicks.isEmpty else { return }
+                self.syncGlassTracks(from: queue)
             }
             .store(in: &cancellables)
             
