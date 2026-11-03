@@ -356,7 +356,7 @@ public struct MorphIslandView: View {
                         
                         // Text field strictly for typing
                         TextField(
-                            "Search, focus, plan, or ask Morph...",
+                            "Try \"focus 25\", \"play\", \"what's on today\", \"note\"...",
                             text: $model.spotlightQuery
                         )
                         .focused($isSpotlightFocused)
@@ -1304,36 +1304,154 @@ public struct MorphIslandView: View {
         }
     }
 
-    // MARK: - Compact Staging View (Point 1: Sleek Apple-Grade Staging Card Before 3rd Design: 380 x 125 pt)
+    // MARK: - Glass Island Stage View (Intermediary Action Stage HUD: 440 x 142 pt)
+    private var stageBadgeText: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home:
+                return "READY FOR FOCUS"
+            case .timer(let mins, _):
+                return model.pomodoro.isRunning ? "\(model.pomodoro.formattedTime) ACTIVE" : "READY FOR FOCUS"
+            case .music:
+                return model.media.isPlaying ? "NOW PLAYING" : "READY"
+            case .calendar:
+                return "SCHEDULE CLEAR"
+            case .notes:
+                return "3 NOTES"
+            case .answer:
+                return "YOU ASKED"
+            }
+        }
+        if model.selectedTab == .timer {
+            return model.pomodoro.isRunning ? "\(model.pomodoro.formattedTime) ACTIVE" : "READY FOR FOCUS"
+        } else if model.selectedTab == .music {
+            return model.media.isPlaying ? "NOW PLAYING" : "READY"
+        } else if model.selectedTab == .calendar {
+            return "SCHEDULE CLEAR"
+        } else if model.selectedTab == .notes {
+            return "3 NOTES"
+        }
+        return model.pomodoro.isRunning ? "\(model.pomodoro.formattedTime) ACTIVE" : "READY FOR FOCUS"
+    }
+
+    private var stageHeadlineText: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home(let greeting, _):
+                return greeting
+            case .timer(let mins, _):
+                return "\(mins):00"
+            case .music(_, let title, _, _):
+                return title.isEmpty ? "Glass Hours" : title
+            case .calendar(let headline, _, _):
+                return headline
+            case .notes:
+                return "3 notes"
+            case .answer(_, let headline, _, _):
+                return headline.isEmpty ? "You asked" : headline
+            }
+        }
+        switch model.selectedTab {
+        case .timer:
+            return "\(model.requestedTimerMinutes):00"
+        case .music:
+            return model.media.trackTitle.isEmpty ? "Glass Hours" : model.media.trackTitle
+        case .calendar:
+            return "Monday 2"
+        case .notes:
+            return "3 notes"
+        case .home, .profile:
+            return greetingGreetingText
+        }
+    }
+
+    private var stageSubtitleText: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home(_, let subtitle):
+                return subtitle
+            case .timer(_, let title):
+                return "Ready • \(title.isEmpty ? "Focus Session" : title)"
+            case .music(_, _, let artist, _):
+                let art = artist.isEmpty ? "Marlowe Vale" : artist
+                return "\(art) • 0:42 / 3:08"
+            case .calendar(_, let subtitle, _):
+                return subtitle
+            case .notes(let preview):
+                return preview.isEmpty ? "Scratchpad • Tap to edit" : preview
+            case .answer(_, _, let subtitle, _):
+                return subtitle.isEmpty ? "Prompts that mention the timer, calendar, music or notes are routed there." : subtitle
+            }
+        }
+        switch model.selectedTab {
+        case .timer:
+            return "Ready • Focus Session"
+        case .music:
+            let art = model.media.artistName.isEmpty ? "Marlowe Vale" : model.media.artistName
+            return "\(art) • 0:42 / 3:08"
+        case .calendar:
+            return "November 2026 • Sample events • Next up"
+        case .notes:
+            let txt = model.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return txt.isEmpty ? "Scratchpad • Tap to edit" : (txt.components(separatedBy: .newlines).first ?? txt)
+        case .home, .profile:
+            return stageTelemetrySubtitle
+        }
+    }
+
     private var compactStageView: some View {
-        VStack(spacing: 6) {
-            // Header Row: Living Morphy Mascot + Brand + Context Telemetry + Right 'X'
+        VStack(spacing: 8) {
+            // Top Specular Rim Glint
+            LinearGradient(
+                colors: [.clear, Color.white.opacity(0.35), .clear],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(height: 1)
+            .padding(.horizontal, 24)
+            .padding(.top, 2)
+            
+            // ROW 1: Header (Morphy Mascot Avatar, Brand Wordmark, Status Badge Pill, Close X)
             HStack(spacing: 8) {
-                HStack(spacing: 6) {
+                // Left: Morphy Avatar + MORPH Wordmark
+                HStack(spacing: 7) {
                     MorphyMascotView(model: model, style: .restingStealth)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.black.opacity(0.60)))
+                        .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 1))
+                        .shadow(color: Color.black.opacity(0.50), radius: 3, y: 1)
                     
                     Text("MORPH")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
                         .tracking(1.2)
-                        .foregroundColor(Color.white.opacity(0.85))
+                        .foregroundColor(Color.white.opacity(0.90))
                 }
                 
                 Spacer()
                 
-                // Ambient Context Badge
-                Text(model.pomodoro.isRunning ? "\(model.pomodoro.formattedTime) ACTIVE" : "READY FOR FOCUS")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.70))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2.5)
-                    .background(
-                        Capsule()
-                            .fill(Color.white.opacity(0.10))
-                    )
+                // Right: Micro Status Pill with Pulsing Dot
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: Color.green.opacity(0.60), radius: 3)
+                    
+                    Text(stageBadgeText)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .tracking(0.8)
+                        .foregroundColor(Color.white.opacity(0.80))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                )
                 
-                // Dismiss / Collapse 'X' Button
+                // Dismiss 'X' Button
                 Button(action: {
+                    MorphHaptics.generic()
                     if let ctrl = MorphController.shared {
                         ctrl.dismissToStealth()
                     } else {
@@ -1343,96 +1461,370 @@ public struct MorphIslandView: View {
                     }
                 }) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 9.5, weight: .bold))
                         .foregroundColor(Color.white.opacity(0.65))
-                        .frame(width: 20, height: 20)
+                        .frame(width: 22, height: 22)
                         .background(
                             Circle()
                                 .fill(Color.white.opacity(0.12))
                         )
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .help("Dismiss (ESC)")
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
+            .padding(.horizontal, 16)
             
-            // Central Ambient Headline: Dynamic Greeting & Schedule
-            VStack(spacing: 2) {
-                Text(greetingGreetingText)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+            // ROW 2: Center Typography & Telemetry Display Block
+            VStack(spacing: 3) {
+                Text(stageHeadlineText)
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
                     .foregroundColor(.white)
+                    .lineLimit(1)
                 
-                Text(stageTelemetrySubtitle)
-                    .font(.system(size: 10.5, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.55))
+                Text(stageSubtitleText)
+                    .font(.system(size: 11, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.52))
+                    .lineLimit(1)
+                
+                // If Music feature is active, show subtle audio progress bar
+                if (model.activeIntermediaryStage == nil && model.selectedTab == .music) ||
+                    (model.activeIntermediaryStage != nil && {
+                        if case .music = model.activeIntermediaryStage { return true }
+                        return false
+                    }()) {
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.12))
+                            .frame(height: 2.5)
+                        Capsule()
+                            .fill(Color.white.opacity(0.70))
+                            .frame(width: 60, height: 2.5)
+                    }
+                    .frame(width: 200)
+                    .padding(.top, 1)
+                }
             }
-            .padding(.vertical, 2)
+            .padding(.vertical, 1)
             
-            // Bottom Action Row: Direct one-click transition to the 3rd design
+            // ROW 3: Bottom Action Row (Primary White Pill + Specular Glass Secondary Pills)
             HStack(spacing: 8) {
-                // Primary: Start Focus Session -> Transitions smoothly into 3rd design (extendedPill)
+                // Primary Action Button (White background, high contrast, black text)
                 Button(action: {
                     MorphHaptics.levelChange()
-                    model.startFocusTimerInPill(minutes: model.requestedTimerMinutes, title: model.customTimerTitle.isEmpty ? "Focus Session" : model.customTimerTitle)
+                    handlePrimaryStageAction()
                 }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "flame.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Start \(model.requestedTimerMinutes)m Focus")
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    HStack(spacing: 5.5) {
+                        Image(systemName: primaryStageIcon)
+                            .font(.system(size: 11.5, weight: .bold))
+                        Text(primaryStageTitle)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(.black)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.white))
+                    .padding(.vertical, 6.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.white)
+                            .shadow(color: Color.white.opacity(0.18), radius: 6, y: 1)
+                    )
                 }
                 .buttonStyle(.plain)
                 
-                // Secondary: Music Quick Play
+                // Secondary Glass Pill 1: Music
                 Button(action: {
                     MorphHaptics.generic()
-                    model.openFeature(.music)
+                    handleSecondaryStageAction1()
                 }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Music")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    HStack(spacing: 4.5) {
+                        Image(systemName: secondaryStageIcon1)
+                            .font(.system(size: 10.5, weight: .medium))
+                        Text(secondaryStageTitle1)
+                            .font(.system(size: 11.5, weight: .medium, design: .rounded))
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .foregroundColor(Color.white.opacity(0.90))
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.10))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                    )
                 }
                 .buttonStyle(.plain)
                 
-                // Tertiary: Notes Scratchpad
+                // Secondary Glass Pill 2: Notes
                 Button(action: {
                     MorphHaptics.generic()
-                    model.openFeature(.notes)
+                    handleSecondaryStageAction2()
                 }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "note.text")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Notes")
-                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    HStack(spacing: 4.5) {
+                        Image(systemName: secondaryStageIcon2)
+                            .font(.system(size: 10.5, weight: .medium))
+                        Text(secondaryStageTitle2)
+                            .font(.system(size: 11.5, weight: .medium, design: .rounded))
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .foregroundColor(Color.white.opacity(0.90))
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6.5)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.10))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                    )
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.bottom, 10)
+            .padding(.bottom, 8)
         }
         .frame(width: model.compactStageWidth, height: model.compactStageHeight)
     }
 
-    // MARK: - 3. Expanded Island View (Adaptive: 380 x 125 pt Compact Stage or 640 x 225 pt Full View)
+    // MARK: - Stage Action Handlers & Dynamic Button Data
+    private var primaryStageIcon: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home, .timer:
+                return "flame.fill"
+            case .music:
+                return model.media.isPlaying ? "pause.fill" : "play.fill"
+            case .calendar:
+                return "video.fill"
+            case .notes:
+                return "pin.fill"
+            case .answer:
+                return "checkmark"
+            }
+        }
+        switch model.selectedTab {
+        case .timer:
+            return "flame.fill"
+        case .music:
+            return model.media.isPlaying ? "pause.fill" : "play.fill"
+        case .calendar:
+            return "video.fill"
+        case .notes:
+            return "pin.fill"
+        case .home, .profile:
+            return "flame.fill"
+        }
+    }
+
+    private var primaryStageTitle: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home, .timer:
+                return "Start \(model.requestedTimerMinutes)m Focus"
+            case .music:
+                return model.media.isPlaying ? "Pause" : "Play"
+            case .calendar:
+                return "Join Call"
+            case .notes:
+                return "Pin to Notch"
+            case .answer:
+                return "Done"
+            }
+        }
+        switch model.selectedTab {
+        case .timer:
+            return "Start \(model.requestedTimerMinutes)m Focus"
+        case .music:
+            return model.media.isPlaying ? "Pause" : "Play"
+        case .calendar:
+            return "Join Call"
+        case .notes:
+            return "Pin to Notch"
+        case .home, .profile:
+            return "Start \(model.requestedTimerMinutes)m Focus"
+        }
+    }
+
+    private func handlePrimaryStageAction() {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home, .timer:
+                model.commitIntermediaryTimer()
+            case .music:
+                model.commitIntermediaryMusic(play: !model.media.isPlaying)
+            case .calendar:
+                model.commitIntermediaryCalendarJoinCall()
+            case .notes:
+                model.commitIntermediaryNotesPin()
+            case .answer:
+                model.commitIntermediaryAnswerDone()
+            }
+            return
+        }
+        switch model.selectedTab {
+        case .timer, .home, .profile:
+            model.commitIntermediaryTimer()
+        case .music:
+            model.commitIntermediaryMusic(play: !model.media.isPlaying)
+        case .calendar:
+            model.commitIntermediaryCalendarJoinCall()
+        case .notes:
+            model.commitIntermediaryNotesPin()
+        }
+    }
+
+    private var secondaryStageIcon1: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .music:
+                return "forward.fill"
+            case .calendar:
+                return "calendar"
+            case .notes, .answer:
+                return "doc.on.doc"
+            case .home, .timer:
+                return "music.note"
+            }
+        }
+        switch model.selectedTab {
+        case .music:
+            return "forward.fill"
+        case .calendar:
+            return "calendar"
+        case .notes:
+            return "doc.on.doc"
+        default:
+            return "music.note"
+        }
+    }
+
+    private var secondaryStageTitle1: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .music:
+                return "Next"
+            case .calendar:
+                return "Today"
+            case .notes, .answer:
+                return "Copy"
+            case .home, .timer:
+                return "Music"
+            }
+        }
+        switch model.selectedTab {
+        case .music:
+            return "Next"
+        case .calendar:
+            return "Today"
+        case .notes:
+            return "Copy"
+        default:
+            return "Music"
+        }
+    }
+
+    private func handleSecondaryStageAction1() {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .music:
+                model.media.nextTrack()
+            case .calendar:
+                model.openFeature(.calendar)
+            case .notes:
+                model.scratchpad.copyAll()
+            case .answer:
+                if case .answer(_, let head, let sub, _) = stage {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString("\(head)\n\(sub)", forType: .string)
+                }
+            case .home, .timer:
+                model.presentIntermediaryMusic(action: .open)
+            }
+            return
+        }
+        switch model.selectedTab {
+        case .music:
+            model.media.nextTrack()
+        case .calendar:
+            model.openFeature(.calendar)
+        case .notes:
+            model.scratchpad.copyAll()
+        default:
+            model.presentIntermediaryMusic(action: .open)
+        }
+    }
+
+    private var secondaryStageIcon2: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home, .timer, .music:
+                return "note.text"
+            case .calendar:
+                return "flame"
+            case .notes:
+                return "trash"
+            case .answer:
+                return "arrow.up.forward.app"
+            }
+        }
+        switch model.selectedTab {
+        case .notes:
+            return "trash"
+        case .calendar:
+            return "flame"
+        default:
+            return "note.text"
+        }
+    }
+
+    private var secondaryStageTitle2: String {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home, .timer, .music:
+                return "Notes"
+            case .calendar:
+                return "Focus"
+            case .notes:
+                return "Clear"
+            case .answer:
+                return "Deep View"
+            }
+        }
+        switch model.selectedTab {
+        case .notes:
+            return "Clear"
+        case .calendar:
+            return "Focus"
+        default:
+            return "Notes"
+        }
+    }
+
+    private func handleSecondaryStageAction2() {
+        if let stage = model.activeIntermediaryStage {
+            switch stage {
+            case .home, .timer, .music:
+                model.presentIntermediaryNote(action: .view)
+            case .calendar:
+                model.presentIntermediaryTimer(minutes: 25, title: "Focus Session")
+            case .notes:
+                model.scratchpad.clear()
+            case .answer:
+                if case .answer(let q, let h, let s, let i) = stage {
+                    let aiResp = MorphSpotlightCommandParser.generateAIResponse(for: q, briefAnswer: "\(h) — \(s)", icon: i)
+                    model.displayInBigUI(aiResponse: aiResp)
+                }
+            }
+            return
+        }
+        switch model.selectedTab {
+        case .notes:
+            model.scratchpad.clear()
+        case .calendar:
+            model.presentIntermediaryTimer(minutes: 25, title: "Focus Session")
+        default:
+            model.presentIntermediaryNote(action: .view)
+        }
+    }
+
+    // MARK: - 3. Expanded Island View (Adaptive: Glass Island 440 x 142 pt Compact Stage or 640 x 225 pt Full View)
     private var expandedView: some View {
         Group {
-            if model.interactionMode == .spotlightBar && model.selectedTab == .home && model.activeAIResponse == nil && model.activeContextFeature == nil {
+            if model.isIntermediaryStageActive {
                 compactStageView
             } else {
                 fullExpandedView

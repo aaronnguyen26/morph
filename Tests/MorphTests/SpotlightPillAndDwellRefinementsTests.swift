@@ -25,11 +25,11 @@ final class SpotlightPillAndDwellRefinementsTests: XCTestCase {
     
     // MARK: - Point 1: Staging View is Strictly Smaller Than 1st Screenshot (640x225)
     func testCompactStagingViewDimensionsSmallerThanHomeView() {
-        // Dimensions check: Compact stage (380x125) must be significantly smaller than HomeView (640x225)
-        XCTAssertLessThan(model.compactStageWidth, model.expandedWidth, "Compact stage width (380) must be smaller than full home view (640)")
-        XCTAssertLessThan(model.compactStageHeight, model.expandedHeight, "Compact stage height (125) must be smaller than full home view (225)")
-        XCTAssertEqual(model.compactStageWidth, 380)
-        XCTAssertEqual(model.compactStageHeight, 125)
+        // Dimensions check: Compact stage (440x142) must be significantly smaller than HomeView (640x225)
+        XCTAssertLessThan(model.compactStageWidth, model.expandedWidth, "Compact stage width (440) must be smaller than full home view (640)")
+        XCTAssertLessThan(model.compactStageHeight, model.expandedHeight, "Compact stage height (142) must be smaller than full home view (225)")
+        XCTAssertEqual(model.compactStageWidth, 440)
+        XCTAssertEqual(model.compactStageHeight, 142)
         
         // When in fullExpanded state with Home tab selected (the pre-3rd-design intermediate display)
         model.isExpanded = true
@@ -38,8 +38,8 @@ final class SpotlightPillAndDwellRefinementsTests: XCTestCase {
         model.activeContextFeature = nil
         
         XCTAssertEqual(model.islandState, .fullExpanded)
-        XCTAssertEqual(model.currentWidth, 380, "Staging display before 3rd design must be 380pt wide instead of 640pt")
-        XCTAssertEqual(model.currentHeight, 125, "Staging display before 3rd design must be 125pt high instead of 225pt")
+        XCTAssertEqual(model.currentWidth, 440, "Staging display before 3rd design must be 440pt wide instead of 640pt")
+        XCTAssertEqual(model.currentHeight, 142, "Staging display before 3rd design must be 142pt high instead of 225pt")
         
         // Transition directly from compact staging view into the 3rd design (extendedPill HUD)
         model.startFocusTimerInPill(minutes: 25, title: "Focus Session", autoStart: true)

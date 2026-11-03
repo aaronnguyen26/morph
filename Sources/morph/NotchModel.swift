@@ -271,6 +271,15 @@ public struct MorphAIResponse: Equatable, Identifiable {
     }
 }
 
+public enum MorphIntermediaryStageState: Equatable {
+    case home(greeting: String, subtitle: String)
+    case timer(minutes: Int, title: String)
+    case music(query: String?, trackTitle: String, artist: String, isPlaying: Bool)
+    case calendar(headline: String, subtitle: String, meetLink: String?)
+    case notes(previewText: String)
+    case answer(query: String, headline: String, subtitle: String, icon: String)
+}
+
 @MainActor
 public final class NotchModel: ObservableObject {
     // Apple Dynamic Island & Physical Notch Resting Baseline
@@ -283,9 +292,9 @@ public final class NotchModel: ObservableObject {
     public let expandedWidth: CGFloat = 640
     public let expandedHeight: CGFloat = 225
     
-    // Compact Staging Stage Dimensions (Sleek staging view before 3rd design: 380 width, 125 height)
-    public let compactStageWidth: CGFloat = 380
-    public let compactStageHeight: CGFloat = 125
+    // Glass Island / Intermediary Action Stage Dimensions (440 width, 142 height)
+    public let compactStageWidth: CGFloat = 440
+    public let compactStageHeight: CGFloat = 142
     
     // Spotlight Typing Bar Dimensions (Horizontal Expansion on Hover: widened to 510 pt, perfectly balanced, not too fat)
     public let spotlightBarWidth: CGFloat = 510
@@ -311,6 +320,7 @@ public final class NotchModel: ObservableObject {
     @Published public var isShowingDirectAnswer: Bool = false
     @Published public var activeAIResponse: MorphAIResponse? = nil
     @Published public var activeBackgroundTaskPill: MorphBackgroundTaskPillState = .none
+    @Published public var activeIntermediaryStage: MorphIntermediaryStageState? = nil
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
@@ -536,6 +546,15 @@ public final class NotchModel: ObservableObject {
         }
     }
     
+    public var isIntermediaryStageActive: Bool {
+        guard isExpanded else { return false }
+        if activeIntermediaryStage != nil { return true }
+        if interactionMode == .spotlightBar && selectedTab == .home && activeAIResponse == nil && activeContextFeature == nil {
+            return true
+        }
+        return false
+    }
+    
     public var currentWidth: CGFloat {
         switch islandState {
         case .spotlightBar:
@@ -543,7 +562,7 @@ public final class NotchModel: ObservableObject {
         case .timerPopup:
             return timerPopupWidth
         case .fullExpanded:
-            if interactionMode == .spotlightBar && selectedTab == .home && activeAIResponse == nil && activeContextFeature == nil {
+            if isIntermediaryStageActive {
                 return compactStageWidth
             }
             return expandedWidth
@@ -561,7 +580,7 @@ public final class NotchModel: ObservableObject {
         case .timerPopup:
             return timerPopupHeight
         case .fullExpanded:
-            if interactionMode == .spotlightBar && selectedTab == .home && activeAIResponse == nil && activeContextFeature == nil {
+            if isIntermediaryStageActive {
                 return compactStageHeight
             }
             return expandedHeight
@@ -1056,6 +1075,7 @@ public final class NotchModel: ObservableObject {
         self.spotlightQuery = ""
         self.isShowingDirectAnswer = false
         self.activeBackgroundTaskPill = .none
+        self.activeIntermediaryStage = nil
         self.directAnswerText = ""
         self.directAnswerIcon = "sparkles"
         self.isEditingTimerInPill = false
@@ -1067,6 +1087,185 @@ public final class NotchModel: ObservableObject {
         self.isHovered = false
         if !isPomodoroSessionActive {
             self.isExpanded = false
+        }
+    }
+    
+    // MARK: - Glass Island Intermediary Action Staging System
+    public func presentIntermediaryHome() {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let name = supabase.currentUser.firstName.isEmpty ? "Minh" : supabase.currentUser.firstName
+        let greeting = hour < 12 ? "Good morning, \(name)" : (hour < 17 ? "Good afternoon, \(name)" : "Good evening, \(name)")
+        self.activeIntermediaryStage = .home(
+            greeting: greeting,
+            subtitle: "\(screenName) • Schedule Clear"
+        )
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+        }
+    }
+    
+    public func presentIntermediaryTimer(minutes: Int, title: String) {
+        self.requestedTimerMinutes = minutes
+        self.customTimerTitle = title
+        self.activeIntermediaryStage = .timer(minutes: minutes, title: title)
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+        }
+    }
+    
+    public func commitIntermediaryTimer(minutes: Int? = nil, title: String? = nil) {
+        let mins = minutes ?? self.requestedTimerMinutes
+        let t = title ?? (self.customTimerTitle.isEmpty ? "Focus Session" : self.customTimerTitle)
+        self.activeIntermediaryStage = nil
+        startFocusTimerInPill(minutes: mins, title: t, autoStart: true, asBackgroundTaskPill: true)
+    }
+    
+    public func presentIntermediaryMusic(action: MusicAction) {
+        let track = self.media.trackTitle.isEmpty ? "Glass Hours" : self.media.trackTitle
+        let artist = self.media.artistName.isEmpty ? "Marlowe Vale" : self.media.artistName
+        switch action {
+        case .play(let query):
+            self.activeIntermediaryStage = .music(query: query, trackTitle: query ?? track, artist: artist, isPlaying: self.media.isPlaying)
+        case .open, .queryStatus, .pause, .next, .previous, .volumeUp, .volumeDown, .mute:
+            self.activeIntermediaryStage = .music(query: nil, trackTitle: track, artist: artist, isPlaying: self.media.isPlaying)
+        }
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+        }
+    }
+    
+    public func commitIntermediaryMusic(play: Bool) {
+        self.activeIntermediaryStage = nil
+        if play {
+            self.media.play()
+        } else {
+            self.media.pause()
+        }
+        let title = self.media.trackTitle.isEmpty ? "Glass Hours" : self.media.trackTitle
+        let artist = self.media.artistName.isEmpty ? "Marlowe Vale" : self.media.artistName
+        self.activeBackgroundTaskPill = .media(trackTitle: title, artist: artist)
+        self.selectedTab = .music
+        self.isExpanded = false
+        if let ctrl = MorphController.shared {
+            ctrl.scheduleWindowShrink()
+        }
+    }
+    
+    public func presentIntermediaryCalendar(action: CalendarAction) {
+        let briefing = self.calendar.fetchTodayBriefing()
+        let headline = "Monday 2"
+        let subtitle = briefing.detail.isEmpty ? "November 2026 • Sample events • Next up: Team Sync" : "November 2026 • \(briefing.detail)"
+        self.activeIntermediaryStage = .calendar(headline: headline, subtitle: subtitle, meetLink: briefing.meetLink)
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+        }
+    }
+    
+    public func commitIntermediaryCalendarJoinCall() {
+        self.activeIntermediaryStage = nil
+        let briefing = self.calendar.fetchTodayBriefing()
+        if let link = briefing.meetLink, let url = URL(string: link) {
+            NSWorkspace.shared.open(url)
+        }
+        self.activeBackgroundTaskPill = .calendar(title: "Call Joined", timeText: "Online", meetLink: briefing.meetLink, fullEvent: nil)
+        self.isExpanded = false
+        if let ctrl = MorphController.shared {
+            ctrl.scheduleWindowShrink()
+        }
+    }
+    
+    public func presentIntermediaryNote(action: NoteAction) {
+        let currentNotes = self.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var preview = currentNotes.isEmpty ? "buy oat milk" : (currentNotes.components(separatedBy: .newlines).first ?? currentNotes)
+        switch action {
+        case .add(let text, _):
+            preview = text
+            if self.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.scratchpad.text = text
+            } else {
+                self.scratchpad.text += "\n" + text
+            }
+        case .clear:
+            self.scratchpad.clear()
+            preview = "Notes cleared"
+        case .copyToClipboard:
+            self.scratchpad.copyAll()
+            preview = "Copied to clipboard"
+        case .view, .readPreview:
+            break
+        }
+        self.activeIntermediaryStage = .notes(previewText: preview)
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+        }
+    }
+    
+    public func commitIntermediaryNotesPin() {
+        var preview = "buy oat milk"
+        if case .notes(let p) = activeIntermediaryStage, !p.isEmpty {
+            preview = p
+        } else {
+            let current = self.scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            preview = current.isEmpty ? "buy oat milk" : (current.components(separatedBy: .newlines).first ?? current)
+        }
+        self.activeIntermediaryStage = nil
+        self.isNotePinnedToNotch = true
+        self.activeBackgroundTaskPill = .note(previewText: preview)
+        self.isExpanded = false
+        if let ctrl = MorphController.shared {
+            ctrl.scheduleWindowShrink()
+        }
+    }
+    
+    public func presentIntermediaryAnswer(query: String, headline: String, subtitle: String, icon: String) {
+        self.activeIntermediaryStage = .answer(query: query, headline: headline, subtitle: subtitle, icon: icon)
+        self.isSpotlightBarActive = false
+        self.spotlightQuery = ""
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            self.isExpanded = true
+        }
+        if let ctrl = MorphController.shared {
+            ctrl.expandPanel()
+        }
+    }
+    
+    public func commitIntermediaryAnswerDone() {
+        guard case .answer(_, let headline, _, let icon) = activeIntermediaryStage else {
+            if let ctrl = MorphController.shared {
+                ctrl.dismissToStealth()
+            }
+            return
+        }
+        self.activeIntermediaryStage = nil
+        self.activeBackgroundTaskPill = .directAnswer(text: headline, icon: icon)
+        self.isExpanded = false
+        if let ctrl = MorphController.shared {
+            ctrl.scheduleWindowShrink()
         }
     }
     
