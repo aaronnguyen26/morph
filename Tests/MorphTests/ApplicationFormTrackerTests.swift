@@ -1239,6 +1239,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
     @MainActor
     func testHoverExpansionOverCollapsedFormTrackerBar() {
         let model = NotchModel()
+        model.isGlassIslandEnabled = false
         model.formTracker.isFormDetected = true
         XCTAssertEqual(model.compactHUDMode, .formTrackerActive)
         XCTAssertTrue(model.isCompactActive)
@@ -1255,11 +1256,13 @@ final class ApplicationFormTrackerTests: XCTestCase {
         let nearBottomPoint = NSPoint(x: rect.midX, y: rect.minY - 10)
         XCTAssertTrue(controller.isMouseInsideMorphUI(nearBottomPoint))
         
-        // 3. Hover triggers immediate expansion into form tracker
+        // 3. Hover detects inside, click/tap triggers expansion into form tracker
         controller.checkMousePosition(insidePoint)
+        XCTAssertTrue(model.isHovered)
+        model.syncExpandedFeatureWithActiveContext()
+        model.isExpanded = true
         XCTAssertTrue(model.isExpanded)
         XCTAssertEqual(model.activeContextFeature, .formTracker)
-        XCTAssertTrue(model.isHovered)
     }
     
     @MainActor

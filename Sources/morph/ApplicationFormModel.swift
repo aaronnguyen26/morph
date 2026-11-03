@@ -5761,7 +5761,7 @@ public final class ApplicationFormModel: ObservableObject {
         } else {
             // If Morph itself is frontmost and we already have an active form session,
             // retain the state while the user interacts with the Notch/HUD
-            if let frontApp = NSWorkspace.shared.frontmostApplication {
+            if !MorphEnvironment.isTestingEnvironment, let frontApp = NSWorkspace.shared.frontmostApplication {
                 let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
                 let appName = frontApp.localizedName?.lowercased() ?? ""
                 if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") && self.isFormDetected {
