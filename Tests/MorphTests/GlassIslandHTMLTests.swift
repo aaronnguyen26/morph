@@ -157,9 +157,11 @@ final class GlassIslandHTMLTests: XCTestCase {
     func testMusicPlayerControls() {
         model.setGlassIslandState(.music)
         XCTAssertEqual(model.glassTrackIndex, 0)
-        XCTAssertEqual(model.glassTracks[0].title, "Glass Hours")
-        XCTAssertEqual(model.glassTracks[0].artist, "Marlowe Vale")
-        XCTAssertEqual(model.glassTracks[0].duration, 188)
+        let count = model.glassTracks.count
+        XCTAssertGreaterThanOrEqual(count, 3)
+        XCTAssertEqual(model.glassTracks[0].title, "Starboy")
+        XCTAssertEqual(model.glassTracks[0].artist, "The Weeknd ft. Daft Punk")
+        XCTAssertEqual(model.glassTracks[0].duration, 230)
         
         // Play / Pause
         model.isGlassMusicPlaying = false
@@ -169,23 +171,23 @@ final class GlassIslandHTMLTests: XCTestCase {
         // Skip track (next)
         model.skipGlassMusic(1)
         XCTAssertEqual(model.glassTrackIndex, 1)
-        XCTAssertEqual(model.glassTracks[1].title, "Low Tide Signals")
+        XCTAssertEqual(model.glassTracks[1].title, "Midnight City")
         
         // Skip track wrapping around
-        model.skipGlassMusic(1)
-        XCTAssertEqual(model.glassTrackIndex, 2)
+        model.skipGlassMusic(count - 2)
+        XCTAssertEqual(model.glassTrackIndex, count - 1)
         model.skipGlassMusic(1)
         XCTAssertEqual(model.glassTrackIndex, 0)
         
         // Previous track (when cur <= 3 skips to prev track)
         model.seekGlassMusic(to: 2)
         model.prevGlassMusic()
-        XCTAssertEqual(model.glassTrackIndex, 2)
+        XCTAssertEqual(model.glassTrackIndex, count - 1)
         
         // Previous track (when cur > 3 rewinds to 0 without changing track index)
         model.seekGlassMusic(to: 45)
         model.prevGlassMusic()
-        XCTAssertEqual(model.glassTrackIndex, 2)
+        XCTAssertEqual(model.glassTrackIndex, count - 1)
         XCTAssertEqual(model.glassTrackCurrentSeconds, 0)
         
         // Seek
