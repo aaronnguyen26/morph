@@ -617,6 +617,10 @@ public final class MediaControllerModel: ObservableObject {
         engine.playVibe(vibe)
     }
     
+    public func playVibe(_ vibe: String) {
+        playQuickVibe(vibe)
+    }
+    
     public func playSearch(_ query: String) {
         if isOffline {
             triggerOfflineHandling(for: query)

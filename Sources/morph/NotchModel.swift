@@ -2201,7 +2201,7 @@ public final class NotchModel: ObservableObject {
                 } else if let firstPick = media.quickPicks.first {
                     media.playQuickPick(firstPick)
                 } else if media.isSignedIn {
-                    media.playVibe("supermix")
+                    media.playQuickVibe("supermix")
                 } else {
                     media.openSignIn()
                 }
