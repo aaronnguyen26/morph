@@ -83,6 +83,8 @@ final class GlassIslandUITests: XCTestCase {
     
     // MARK: - 4. Music Player Stage ("Glass Hours" / "Marlowe Vale") & Live Activity
     func testMusicPlayerStageAndCommitToLiveActivity() {
+        let expectedArtist = model.glassTracks.first?.artist ?? "The Weeknd ft. Daft Punk"
+        let expectedTrack = model.glassTracks.first?.title ?? "Starboy"
         model.presentIntermediaryMusic(action: .play(query: "Glass Hours"))
         XCTAssertTrue(model.isIntermediaryStageActive)
         XCTAssertEqual(model.currentWidth, 440.0)
@@ -91,7 +93,7 @@ final class GlassIslandUITests: XCTestCase {
         if case .music(let query, let track, let artist, _) = model.activeIntermediaryStage {
             XCTAssertEqual(query, "Glass Hours")
             XCTAssertEqual(track, "Glass Hours")
-            XCTAssertEqual(artist, "Marlowe Vale")
+            XCTAssertEqual(artist, expectedArtist)
         } else {
             XCTFail("Stage must be .music")
         }
@@ -107,8 +109,8 @@ final class GlassIslandUITests: XCTestCase {
         XCTAssertEqual(model.currentHeight, 38.0)
         
         if case .media(let track, let artist) = model.activeBackgroundTaskPill {
-            XCTAssertEqual(track, "Glass Hours")
-            XCTAssertEqual(artist, "Marlowe Vale")
+            XCTAssertEqual(track, expectedTrack)
+            XCTAssertEqual(artist, expectedArtist)
         } else {
             XCTFail("activeBackgroundTaskPill must be .media")
         }

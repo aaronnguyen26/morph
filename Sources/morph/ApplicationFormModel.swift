@@ -5005,8 +5005,9 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 var tag = (el.tagName || '').toLowerCase();
                 var t = (el.getAttribute('type') || '').toLowerCase();
                 var q = (tag === 'textarea') ? 'paragraph' : (t === 'radio' ? 'multipleChoice' : (t === 'checkbox' ? 'checkboxes' : (tag === 'select' ? 'dropdown' : 'shortAnswer')));
-                if (l) {
-                    out.push(l.replace(/:::/g, ':') + ':::' + clean(el.value || '').replace(/\|\|\|/g, '|') + ':::' + q + ':::');
+                var v = clean(el.value || '').replace(/\|\|\|/g, '|');
+                if (l && v) {
+                    out.push(l.replace(/:::/g, ':') + ':::' + v + ':::' + q + ':::');
                 }
             }
         }
@@ -5070,20 +5071,51 @@ public final class FormInputAutoTracker: @unchecked Sendable {
                 }
             }
         }
+        let knownTypes: Set<String> = [
+            "shortAnswer", "paragraph", "multipleChoice", "checkboxes",
+            "dropdown", "fileUpload", "linearScale", "grid", "date", "time", "closed", "info", "section"
+        ]
         var results: [ExtractedInputItem] = []
         for pair in output.components(separatedBy: "|||") {
             let parts = pair.components(separatedBy: ":::")
             guard parts.count >= 2 else { continue }
             let lbl = ApplicationFormModel.cleanQuestionTitle(parts[0])
             guard !lbl.isEmpty else { continue }
-            let val = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-            let qType = parts.count >= 3 && !parts[2].isEmpty ? parts[2].trimmingCharacters(in: .whitespacesAndNewlines) : nil
-            let options: [String] = {
-                guard parts.count >= 4 && !parts[3].isEmpty else { return [] }
-                return parts[3].components(separatedBy: ";;;")
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            }()
+            
+            let val: String
+            let qType: String?
+            let options: [String]
+            
+            if parts.count == 2 {
+                val = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                qType = nil
+                options = []
+            } else if parts.count == 3 {
+                let candidateType = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
+                if knownTypes.contains(candidateType) {
+                    val = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    qType = candidateType
+                    options = []
+                } else {
+                    val = parts[1...].joined(separator: ":::").trimmingCharacters(in: .whitespacesAndNewlines)
+                    qType = nil
+                    options = []
+                }
+            } else {
+                let candidateType = parts[parts.count - 2].trimmingCharacters(in: .whitespacesAndNewlines)
+                if knownTypes.contains(candidateType) {
+                    val = parts[1...(parts.count - 3)].joined(separator: ":::").trimmingCharacters(in: .whitespacesAndNewlines)
+                    qType = candidateType
+                    let rawOpts = parts[parts.count - 1]
+                    options = rawOpts.components(separatedBy: ";;;")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                } else {
+                    val = parts[1...].joined(separator: ":::").trimmingCharacters(in: .whitespacesAndNewlines)
+                    qType = nil
+                    options = []
+                }
+            }
             results.append(ExtractedInputItem(label: lbl, value: val, questionType: qType, options: options))
         }
         return results

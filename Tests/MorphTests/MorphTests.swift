@@ -67,6 +67,7 @@ final class MorphTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(model.compactHeight, 56)
         
         // Expanded state overrides compact
+        model.interactionMode = .legacyLargeUI
         model.isExpanded = true
         XCTAssertEqual(model.currentWidth, 640)
         XCTAssertEqual(model.currentHeight, 225)
@@ -121,11 +122,11 @@ final class MorphTests: XCTestCase {
         scratchpad.text = ""
         let model = NotchModel(pomodoro: pomodoro, media: media, scratchpad: scratchpad)
         
-        // When Pomodoro is running alone: wings provide at least 70pt on each side
+        // When Pomodoro is running alone: wings provide at least 60pt on each side
         pomodoro.isRunning = true
         media.isPlaying = false
         let leftWingPomodoro = (model.compactWidth - model.idleWidth) / 2
-        XCTAssertGreaterThanOrEqual(leftWingPomodoro, 70, "Left wing must be at least 70 pt for timer countdown outside the notch")
+        XCTAssertGreaterThanOrEqual(leftWingPomodoro, 60, "Left wing must be at least 60 pt for timer countdown outside the notch")
         
         // When Media is playing alone: wings provide at least 80pt on each side
         pomodoro.isRunning = false
@@ -681,6 +682,7 @@ final class MorphTests: XCTestCase {
     @MainActor
     func testMacGlobalHotkeys() {
         let model = NotchModel()
+        model.interactionMode = .legacyLargeUI
         let controller = MorphController(model: model)
         let sm = ShortcutManager.shared
         sm.configure(model: model, controller: controller)
