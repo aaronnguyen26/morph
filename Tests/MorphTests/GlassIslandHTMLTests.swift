@@ -177,9 +177,16 @@ final class GlassIslandHTMLTests: XCTestCase {
         model.skipGlassMusic(1)
         XCTAssertEqual(model.glassTrackIndex, 0)
         
-        // Previous track
+        // Previous track (when cur <= 3 skips to prev track)
+        model.seekGlassMusic(to: 2)
         model.prevGlassMusic()
         XCTAssertEqual(model.glassTrackIndex, 2)
+        
+        // Previous track (when cur > 3 rewinds to 0 without changing track index)
+        model.seekGlassMusic(to: 45)
+        model.prevGlassMusic()
+        XCTAssertEqual(model.glassTrackIndex, 2)
+        XCTAssertEqual(model.glassTrackCurrentSeconds, 0)
         
         // Seek
         model.seekGlassMusic(to: 45)
@@ -205,6 +212,13 @@ final class GlassIslandHTMLTests: XCTestCase {
         model.closeGlassNote()
         XCTAssertEqual(model.glassNotesMode, .list)
         XCTAssertEqual(model.glassNotes[0].title, "Updated Title")
+        
+        // Creating an empty note and closing it automatically removes it
+        let countBeforeEmpty = model.glassNotes.count
+        model.addGlassNote(title: "", body: "")
+        XCTAssertEqual(model.glassNotes.count, countBeforeEmpty + 1)
+        model.closeGlassNote()
+        XCTAssertEqual(model.glassNotes.count, countBeforeEmpty, "Empty note must be removed on close per prototype spec")
     }
     
     // MARK: - 6. Prompt Routing Understanding
