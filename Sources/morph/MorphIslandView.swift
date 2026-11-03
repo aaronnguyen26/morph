@@ -2087,6 +2087,18 @@ public struct MorphIslandView: View {
                         }
                         .frame(width: 112, height: 112)
                         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    } else if let trackThumb = (model.glassTracks.indices.contains(model.glassTrackIndex) ? model.glassTracks[model.glassTrackIndex].thumbnailURL : nil), let url = URL(string: trackThumb) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            default:
+                                musicFallbackArtView
+                            }
+                        }
+                        .frame(width: 112, height: 112)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                     } else {
                         musicFallbackArtView
                     }
@@ -2202,28 +2214,48 @@ public struct MorphIslandView: View {
                 }
             }
             
-            // Browser Sign-in Button (if not connected or playing)
+            // Sign-in or Quick Play Button
             if !model.media.isSignedIn && !model.media.isDirectEngineConnected && model.media.trackTitle.isEmpty {
                 Button(action: {
                     MorphHaptics.levelChange()
-                    model.media.openSignInInBrowser()
+                    model.media.openSignIn()
                 }) {
-                    HStack(spacing: 5.5) {
-                        Image(systemName: "safari")
-                            .font(.system(size: 10.5, weight: .bold))
-                        Text("Sign in to YouTube Music in Browser")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.crop.circle.badge.plus")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Sign In to YouTube Music")
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(Color.white.opacity(0.95))
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, 6)
                     .background(
                         Capsule()
-                            .fill(Color.white.opacity(0.14))
-                            .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.9))
+                            .fill(Color.white.opacity(0.16))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.38), lineWidth: 0.9))
                     )
                 }
                 .buttonStyle(.plain)
+                .help("Opens Morph's secure YouTube Music sign-in window")
+            } else if model.media.isSignedIn && model.media.trackTitle.isEmpty && !model.isGlassMusicPlaying {
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.toggleGlassMusicPlay()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Play Your Library")
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.white)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Start playback from your YouTube Music recommendations")
             }
         }
         .padding(.horizontal, 8)

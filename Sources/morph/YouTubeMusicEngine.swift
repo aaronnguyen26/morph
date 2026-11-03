@@ -51,6 +51,16 @@ public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
     public var videoId: String?
     public var thumbnailURL: String?
     
+    public var durationSeconds: Int {
+        let parts = duration.split(separator: ":").compactMap { Int($0) }
+        if parts.count == 2 {
+            return parts[0] * 60 + parts[1]
+        } else if parts.count == 3 {
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        }
+        return 180
+    }
+    
     public init(id: String = UUID().uuidString, title: String, artist: String, duration: String = "", isPlaying: Bool = false, videoId: String? = nil, thumbnailURL: String? = nil) {
         self.id = id
         self.title = title
@@ -293,6 +303,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var isSignedIn: Bool = false
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
+    @Published public var isWaitingForSignInCompletion: Bool = false
     @Published public var currentURLString: String = "https://music.youtube.com"
     @Published public var connectionState: String = "Connecting..."
     @Published public var canGoBack: Bool = false
@@ -385,6 +396,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func loadGoogleSignIn() {
+        self.isWaitingForSignInCompletion = true
         // Direct Google Sign-In endpoint that redirects back to YouTube Music once completed
         let signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
         if let url = URL(string: signInURLString) {
@@ -589,6 +601,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             self.libraryError = nil
             fetchRealUserPlaylists()
             fetchQuickPicks()
+            
+            // If the user was signing in via Morph's dedicated window, auto-dismiss and return to Morph
+            if self.isWaitingForSignInCompletion || (self.isPlayerWindowVisible && self.currentURLString.contains("music.youtube.com")) {
+                self.isWaitingForSignInCompletion = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                    guard let self = self else { return }
+                    if self.isPlayerWindowVisible {
+                        self.hidePlayerWindow()
+                    }
+                }
+            }
         }
         
         if !title.isEmpty && title != "YouTube Music" {
@@ -644,7 +667,18 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.isOffline = false
         
         // Inspect and flush persistent auth cookies
-        checkAuthCookies()
+        checkAuthCookies { [weak self] signedIn in
+            guard let self = self else { return }
+            if signedIn && (self.isWaitingForSignInCompletion || (self.isPlayerWindowVisible && self.currentURLString.contains("music.youtube.com"))) {
+                self.isWaitingForSignInCompletion = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                    guard let self = self else { return }
+                    if self.isPlayerWindowVisible {
+                        self.hidePlayerWindow()
+                    }
+                }
+            }
+        }
         
         // Auto-detect if user just returned from Google Sign-In or arrived at YouTube Music
         if let url = webView.url?.absoluteString {
@@ -2784,7 +2818,7 @@ public struct PlayerWindowToolbarView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 10.5, weight: .bold))
                             .foregroundColor(Color.green)
-                        Text("Signed In")
+                        Text("Connected • Signed In")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.white)
                     }
@@ -2801,7 +2835,7 @@ public struct PlayerWindowToolbarView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.down.right.and.arrow.up.left")
                                 .font(.system(size: 9.5, weight: .bold))
-                            Text("Done • Sync to Morph")
+                            Text("Done • Play in Morph")
                                 .font(.system(size: 10.5, weight: .bold))
                         }
                         .foregroundColor(.black)
@@ -2811,7 +2845,7 @@ public struct PlayerWindowToolbarView: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .help("Sync playlists & return to Morph Mini Player")
+                    .help("Sync playlists & return to Morph")
                 }
             } else {
                 Button(action: {

@@ -1439,14 +1439,14 @@ public final class MediaControllerModel: ObservableObject {
     // MARK: - Direct & Browser-Based Authentication & Tab Management
     public func openSignIn() {
         isWaitingForBrowserSignIn = true
-        browserAuthStatusMessage = "Sign in via the Morph YouTube Music window or your browser. Once signed in, your playlists and music sync automatically."
+        browserAuthStatusMessage = "Sign in via the Morph YouTube Music window. Once signed in, your playlists and music sync directly into Morph."
         engine.loadGoogleSignIn()
     }
     
     public func openSignInInBrowser() {
-        isWaitingForBrowserSignIn = true
-        browserAuthStatusMessage = "Opened YouTube Music sign-in tab in your browser. Once signed in, you can close that tab and play directly from Morph."
-        engine.openSignInInBrowser()
+        // Direct in-app sign-in captures session cookies directly into Morph's engine.
+        // Directing to openSignIn() ensures the user's login is never isolated in an external browser.
+        openSignIn()
     }
     
     public func openInBrowser() {
@@ -1511,7 +1511,10 @@ public final class MediaControllerModel: ObservableObject {
         // Fast, non-blocking check using Cocoa NSRunningApplication
         let chromeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty
         let safariRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty
-        guard chromeRunning || safariRunning else { return }
+        let braveRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.brave.Browser").isEmpty
+        let edgeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.microsoft.edgemac").isEmpty
+        let arcRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "company.thebrowser.Browser").isEmpty
+        guard chromeRunning || safariRunning || braveRunning || edgeRunning || arcRunning else { return }
         
         // Run off-main asynchronously so the main thread and UI runloop are never blocked
         let result: String = await withCheckedContinuation { continuation in
@@ -1524,6 +1527,45 @@ public final class MediaControllerModel: ObservableObject {
                             repeat with t in tabs of w
                                 if (URL of t) contains "music.youtube.com" then
                                     return "CHROME_YTM:" & (title of t)
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return "NONE"
+                    """
+                } else if braveRunning {
+                    script = """
+                    tell application "Brave Browser"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    return "BRAVE_YTM:" & (title of t)
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return "NONE"
+                    """
+                } else if edgeRunning {
+                    script = """
+                    tell application "Microsoft Edge"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    return "EDGE_YTM:" & (title of t)
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return "NONE"
+                    """
+                } else if arcRunning {
+                    script = """
+                    tell application "Arc"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    return "ARC_YTM:" & (title of t)
                                 end if
                             end repeat
                         end repeat
@@ -1560,6 +1602,15 @@ public final class MediaControllerModel: ObservableObject {
         if result.starts(with: "CHROME_YTM:") {
             let rawTitle = result.replacingOccurrences(of: "CHROME_YTM:", with: "")
             parseTabTitle(rawTitle, source: "YouTube Music • Chrome")
+        } else if result.starts(with: "BRAVE_YTM:") {
+            let rawTitle = result.replacingOccurrences(of: "BRAVE_YTM:", with: "")
+            parseTabTitle(rawTitle, source: "YouTube Music • Brave")
+        } else if result.starts(with: "EDGE_YTM:") {
+            let rawTitle = result.replacingOccurrences(of: "EDGE_YTM:", with: "")
+            parseTabTitle(rawTitle, source: "YouTube Music • Edge")
+        } else if result.starts(with: "ARC_YTM:") {
+            let rawTitle = result.replacingOccurrences(of: "ARC_YTM:", with: "")
+            parseTabTitle(rawTitle, source: "YouTube Music • Arc")
         } else if result.starts(with: "SAFARI_YTM:") {
             let rawTitle = result.replacingOccurrences(of: "SAFARI_YTM:", with: "")
             parseTabTitle(rawTitle, source: "YouTube Music • Safari")

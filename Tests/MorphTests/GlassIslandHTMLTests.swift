@@ -336,4 +336,50 @@ final class GlassIslandHTMLTests: XCTestCase {
         model.toggleGlassMusicPlay()
         XCTAssertTrue(model.isGlassMusicPlaying)
     }
+    
+    // MARK: - 10. YouTube Music Direct Sign-In and Real Library Access
+    func testYouTubeMusicDirectSignInFlowWithoutExternalBrowser() {
+        let engine = model.media.engine
+        XCTAssertFalse(engine.isWaitingForSignInCompletion)
+        
+        // Calling openSignIn sets waiting flag and triggers loadGoogleSignIn on engine
+        model.media.openSignIn()
+        XCTAssertTrue(model.media.isWaitingForBrowserSignIn)
+        XCTAssertTrue(engine.isWaitingForSignInCompletion)
+        XCTAssertTrue(model.media.browserAuthStatusMessage?.contains("Morph YouTube Music window") == true)
+        
+        // Calling openSignInInBrowser now routes directly to openSignIn to avoid external browser tab drop
+        model.media.openSignInInBrowser()
+        XCTAssertTrue(model.media.isWaitingForBrowserSignIn)
+        XCTAssertTrue(engine.isWaitingForSignInCompletion)
+    }
+    
+    func testGlassTracksRealLibrarySyncAndPlayback() {
+        // Feed real YouTube Music quick picks
+        let realPick = YTMPlaylistItem(
+            id: "pick_1",
+            title: "Golden Hour",
+            artist: "JVKE",
+            duration: "3:29",
+            isPlaying: false,
+            videoId: "PEM0Vs8jf1w",
+            thumbnailURL: "https://lh3.googleusercontent.com/test_art"
+        )
+        model.media.quickPicks = [realPick]
+        
+        // Check that glassTracks synced real track metadata
+        XCTAssertEqual(model.glassTracks.first?.title, "Golden Hour")
+        XCTAssertEqual(model.glassTracks.first?.artist, "JVKE")
+        XCTAssertEqual(model.glassTracks.first?.videoId, "PEM0Vs8jf1w")
+        XCTAssertEqual(model.glassTracks.first?.thumbnailURL, "https://lh3.googleusercontent.com/test_art")
+        XCTAssertEqual(model.glassTracks.first?.duration, 209)
+        
+        // When not playing yet, glassMusicTitle reflects the synced track
+        XCTAssertEqual(model.glassMusicTitle, "Golden Hour")
+        XCTAssertEqual(model.glassMusicArtist, "JVKE")
+        
+        // Skipping track starts the real track via engine.play(videoId:)
+        model.skipGlassMusic(1)
+        XCTAssertEqual(model.glassTrackCurrentSeconds, 0)
+    }
 }

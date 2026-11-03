@@ -323,13 +323,25 @@ public struct GlassTrack: Equatable, Identifiable {
     public var artist: String
     public var duration: Int
     public var gradientHexes: [String]
+    public var videoId: String?
+    public var thumbnailURL: String?
     
-    public init(id: UUID = UUID(), title: String, artist: String, duration: Int, gradientHexes: [String]) {
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        artist: String,
+        duration: Int,
+        gradientHexes: [String],
+        videoId: String? = nil,
+        thumbnailURL: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.artist = artist
         self.duration = duration
         self.gradientHexes = gradientHexes
+        self.videoId = videoId
+        self.thumbnailURL = thumbnailURL
     }
 }
 
@@ -1441,8 +1453,10 @@ public final class NotchModel: ObservableObject {
     }
     
     public func presentIntermediaryMusic(action: MusicAction) {
-        let track = self.media.trackTitle.isEmpty ? "Glass Hours" : self.media.trackTitle
-        let artist = self.media.artistName.isEmpty ? "Marlowe Vale" : self.media.artistName
+        let fallbackTrack = glassTracks.first?.title ?? (media.isSignedIn ? "YouTube Music" : "Connect YouTube Music")
+        let fallbackArtist = glassTracks.first?.artist ?? (media.isSignedIn ? "Your Library" : "Sign in to play")
+        let track = self.media.trackTitle.isEmpty ? fallbackTrack : self.media.trackTitle
+        let artist = self.media.artistName.isEmpty ? fallbackArtist : self.media.artistName
         switch action {
         case .play(let query):
             self.activeIntermediaryStage = .music(query: query, trackTitle: query ?? track, artist: artist, isPlaying: self.media.isPlaying)
@@ -1462,12 +1476,16 @@ public final class NotchModel: ObservableObject {
     public func commitIntermediaryMusic(play: Bool) {
         self.activeIntermediaryStage = nil
         if play {
-            self.media.play()
+            if media.trackTitle.isEmpty || !media.isPlaying {
+                toggleGlassMusicPlay()
+            } else {
+                self.media.play()
+            }
         } else {
             self.media.pause()
         }
-        let title = self.media.trackTitle.isEmpty ? "Glass Hours" : self.media.trackTitle
-        let artist = self.media.artistName.isEmpty ? "Marlowe Vale" : self.media.artistName
+        let title = self.media.trackTitle.isEmpty ? (glassTracks.first?.title ?? "YouTube Music") : self.media.trackTitle
+        let artist = self.media.artistName.isEmpty ? (glassTracks.first?.artist ?? "Your Library") : self.media.artistName
         self.activeBackgroundTaskPill = .media(trackTitle: title, artist: artist)
         self.selectedTab = .music
         self.isExpanded = false
@@ -1655,6 +1673,47 @@ public final class NotchModel: ObservableObject {
             .sink { [weak self] tab in
                 if tab != .home {
                     self?.lastUsedFeatureTab = tab
+                }
+            }
+            .store(in: &cancellables)
+            
+        // Sync real YouTube Music tracks to Glass Island tracks
+        media.$quickPicks
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] picks in
+                guard let self = self, !picks.isEmpty else { return }
+                let converted = picks.prefix(15).map { item in
+                    GlassTrack(
+                        title: item.title,
+                        artist: item.artist,
+                        duration: item.durationSeconds,
+                        gradientHexes: ["#ff7ab8", "#6a5cff", "#16d9c5"],
+                        videoId: item.videoId,
+                        thumbnailURL: item.thumbnailURL
+                    )
+                }
+                if !converted.isEmpty {
+                    self.glassTracks = converted
+                }
+            }
+            .store(in: &cancellables)
+            
+        media.$playlist
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] queue in
+                guard let self = self, !queue.isEmpty, self.media.quickPicks.isEmpty else { return }
+                let converted = queue.prefix(15).map { item in
+                    GlassTrack(
+                        title: item.title,
+                        artist: item.artist,
+                        duration: item.durationSeconds,
+                        gradientHexes: ["#ff7ab8", "#6a5cff", "#16d9c5"],
+                        videoId: item.videoId,
+                        thumbnailURL: item.thumbnailURL
+                    )
+                }
+                if !converted.isEmpty {
+                    self.glassTracks = converted
                 }
             }
             .store(in: &cancellables)
@@ -1998,7 +2057,7 @@ public final class NotchModel: ObservableObject {
         guard !hasPromptedMusicSignIn else { return }
         hasPromptedMusicSignIn = true
         if !media.isSignedIn && !media.isDirectEngineConnected && !MorphEnvironment.isTestingEnvironment {
-            media.openSignInInBrowser()
+            media.openSignIn()
         }
     }
     
@@ -2128,7 +2187,27 @@ public final class NotchModel: ObservableObject {
             media.pause()
             _simulatedGlassMusicPlaying = false
         } else {
-            media.play()
+            if media.trackTitle.isEmpty || !media.isPlaying {
+                // If not currently playing, start the active track or first recommendation
+                if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
+                    let track = glassTracks[glassTrackIndex]
+                    if let vid = track.videoId, !vid.isEmpty {
+                        media.engine.play(videoId: vid)
+                    } else if !track.title.isEmpty {
+                        media.playSearch("\(track.title) \(track.artist)")
+                    } else {
+                        media.play()
+                    }
+                } else if let firstPick = media.quickPicks.first {
+                    media.playQuickPick(firstPick)
+                } else if media.isSignedIn {
+                    media.playVibe("supermix")
+                } else {
+                    media.openSignIn()
+                }
+            } else {
+                media.play()
+            }
             _simulatedGlassMusicPlaying = true
         }
         glassMusicTimer?.invalidate()
@@ -2148,13 +2227,22 @@ public final class NotchModel: ObservableObject {
     }
     
     public func skipGlassMusic(_ delta: Int = 1) {
-        if delta > 0 {
+        if !glassTracks.isEmpty {
+            glassTrackIndex = (glassTrackIndex + delta + glassTracks.count) % glassTracks.count
+            let track = glassTracks[glassTrackIndex]
+            if let vid = track.videoId, !vid.isEmpty {
+                media.engine.play(videoId: vid)
+            } else if !track.title.isEmpty {
+                media.playSearch("\(track.title) \(track.artist)")
+            } else if delta > 0 {
+                media.nextTrack()
+            } else {
+                media.previousTrack()
+            }
+        } else if delta > 0 {
             media.nextTrack()
         } else {
             media.previousTrack()
-        }
-        if !glassTracks.isEmpty {
-            glassTrackIndex = (glassTrackIndex + delta + glassTracks.count) % glassTracks.count
         }
         glassTrackCurrentSeconds = 0
     }
