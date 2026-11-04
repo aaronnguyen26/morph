@@ -307,7 +307,14 @@ public enum GlassIslandState: String, CaseIterable, Equatable {
     case calendar
     case music
     case notes
+    case forms
     case reply
+}
+
+public enum GlassFormMode: String, CaseIterable, Equatable {
+    case live
+    case copies
+    case profile
 }
 
 public enum GlassTimerStatus: String, CaseIterable, Equatable {
@@ -530,6 +537,11 @@ public final class NotchModel: ObservableObject {
     // Prompt Input
     @Published public var glassPromptText: String = ""
     @Published public var isGlassIslandPinned: Bool = false
+    
+    // Form Assistant State
+    @Published public var glassFormMode: GlassFormMode = .live
+    @Published public var selectedFormCopyId: String? = nil
+    @Published public var isFormCopyDetailOpen: Bool = false
     
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
@@ -796,10 +808,12 @@ public final class NotchModel: ObservableObject {
                 return 208
             } else if isGlassMusicPlaying {
                 return 196
+            } else if formTracker.isFormDetected {
+                return 280
             } else {
                 return 176
             }
-        case .prompt, .timer, .calendar, .music, .notes, .reply:
+        case .prompt, .timer, .calendar, .music, .notes, .forms, .reply:
             return 460
         }
     }
@@ -809,7 +823,7 @@ public final class NotchModel: ObservableObject {
         case .idle:
             return 38
         case .prompt:
-            return 56
+            return isPromptPeekActive ? 108 : 56
         case .timer:
             return 258
         case .calendar:
@@ -817,6 +831,8 @@ public final class NotchModel: ObservableObject {
         case .music:
             return 384
         case .notes:
+            return 284
+        case .forms:
             return 284
         case .reply:
             return 152
@@ -829,7 +845,7 @@ public final class NotchModel: ObservableObject {
             return 19
         case .prompt:
             return 28
-        case .timer, .calendar, .music, .notes, .reply:
+        case .timer, .calendar, .music, .notes, .forms, .reply:
             return 34
         }
     }
@@ -846,9 +862,141 @@ public final class NotchModel: ObservableObject {
             return "#ff7ab8"
         case .notes:
             return "#ffd36a"
+        case .forms:
+            return "#8ff0b4"
         case .reply:
             return "#b79cff"
         }
+    }
+    
+    public var isPromptPeekActive: Bool {
+        guard glassIslandState == .prompt else { return false }
+        let clean = glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !clean.isEmpty
+    }
+    
+    public struct PromptPeekInfo: Equatable {
+        public var title: String
+        public var subtitle: String
+        public var icon: String
+        public var actionType: String
+        public var matchedRecordId: String? = nil
+        
+        public init(
+            title: String,
+            subtitle: String,
+            icon: String,
+            actionType: String,
+            matchedRecordId: String? = nil
+        ) {
+            self.title = title
+            self.subtitle = subtitle
+            self.icon = icon
+            self.actionType = actionType
+            self.matchedRecordId = matchedRecordId
+        }
+    }
+    
+    public var promptPeekInfo: PromptPeekInfo? {
+        let q = glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return nil }
+        let lower = q.lowercased()
+        
+        // 1. Check form memory storage match (from Supabase or local memory)
+        let memories = supabase.searchMemories(query: q)
+        if let match = memories.first {
+            let snippet = match.body.replacingOccurrences(of: "\n", with: " · ").prefix(60)
+            return PromptPeekInfo(
+                title: "Form Memory: \(match.title.isEmpty ? "Saved Copy" : match.title)",
+                subtitle: "“\(snippet)”",
+                icon: "doc.plaintext.fill",
+                actionType: "memory",
+                matchedRecordId: match.id
+            )
+        }
+        
+        // 2. Check autofill command
+        if lower.contains("autofill") || lower == "fill" {
+            return PromptPeekInfo(
+                title: "Autofill Google Form",
+                subtitle: "Fill saved profile answers into active form",
+                icon: "pencil.and.outline",
+                actionType: "autofill"
+            )
+        }
+        
+        // 3. Check notes
+        let notePattern = #"^(?:note|remember|jot)\s*[:\-]?\s*(.+)$"#
+        if let regex = try? NSRegularExpression(pattern: notePattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: q, options: [], range: NSRange(location: 0, length: q.utf16.count)) != nil {
+            return PromptPeekInfo(
+                title: "Save as a note",
+                subtitle: "“\(q.prefix(50))” · stored in Memory",
+                icon: "doc.text.fill",
+                actionType: "note"
+            )
+        }
+        
+        // 4. Check focus timer
+        let timerPattern = #"\b(?:focus|timer|pomodoro)\b(?:\D*(\d{1,3}))?"#
+        if let regex = try? NSRegularExpression(pattern: timerPattern, options: [.caseInsensitive]),
+           let m = regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) {
+            var mins = 25
+            if m.numberOfRanges > 1 && m.range(at: 1).location != NSNotFound {
+                if let r = Range(m.range(at: 1), in: lower), let parsed = Int(lower[r]) {
+                    mins = max(1, min(180, parsed))
+                }
+            }
+            return PromptPeekInfo(
+                title: "Start a \(mins)-minute focus session",
+                subtitle: "The timer starts right away",
+                icon: "timer",
+                actionType: "timer"
+            )
+        }
+        
+        // 5. Check calendar
+        let calPattern = #"\b(calendar|schedule|agenda|meeting|meetings|today|next up)\b"#
+        if let regex = try? NSRegularExpression(pattern: calPattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            return PromptPeekInfo(
+                title: "Open today’s schedule",
+                subtitle: "Shows your next event",
+                icon: "calendar",
+                actionType: "calendar"
+            )
+        }
+        
+        // 6. Check music
+        let musicPattern = #"\b(play|pause|music|song|track|skip|next)\b"#
+        if let regex = try? NSRegularExpression(pattern: musicPattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            let action = lower.contains("pause") ? "Pause music" : (lower.contains("skip") || lower.contains("next") ? "Skip track" : "Play music")
+            return PromptPeekInfo(
+                title: action,
+                subtitle: "YouTube Music",
+                icon: "music.note",
+                actionType: "music"
+            )
+        }
+        
+        // 7. Check form keywords
+        if lower.contains("form") || lower.contains("receipt") || lower.contains("history") || lower.contains("judge") {
+            return PromptPeekInfo(
+                title: "Open Form Assistant",
+                subtitle: "View live form and saved memory copies",
+                icon: "list.bullet.clipboard.fill",
+                actionType: "forms"
+            )
+        }
+        
+        // 8. Default ask
+        return PromptPeekInfo(
+            title: "Ask “\(q.prefix(32))”",
+            subtitle: "Saved to Memory as a prompt",
+            icon: "sparkles",
+            actionType: "ask"
+        )
     }
     
     public var formattedGlassTimerTime: String {
@@ -2409,6 +2557,39 @@ public final class NotchModel: ObservableObject {
         guard !q.isEmpty else { return }
         
         let lower = q.lowercased()
+        
+        // 0A. Supabase Memory Storage Retrieval (Form Copies & Input Data)
+        let memories = supabase.searchMemories(query: q)
+        if let match = memories.first {
+            selectedFormCopyId = match.id
+            isFormCopyDetailOpen = true
+            glassFormMode = .copies
+            glassPromptText = ""
+            setGlassIslandState(.forms)
+            return
+        }
+        
+        // 0B. Autofill Command: "autofill", "fill"
+        if lower == "autofill" || lower == "fill" {
+            _ = formTracker.autofillActiveForm()
+            glassPromptText = ""
+            setGlassIslandState(.idle)
+            return
+        }
+        
+        // 0C. Forms / Assistant Routing: "form", "forms", "receipt", "history", "judge"
+        let formPattern = #"\b(form|forms|autofill|fill|judge|judging|receipt|receipts|response|responses|history|past)\b"#
+        if let regex = try? NSRegularExpression(pattern: formPattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            if lower.contains("receipt") || lower.contains("history") || lower.contains("past") || lower.contains("response") {
+                glassFormMode = .copies
+            } else {
+                glassFormMode = .live
+            }
+            glassPromptText = ""
+            setGlassIslandState(.forms)
+            return
+        }
         
         // 1. Note matching: "note: ...", "remember ...", "jot ..."
         let notePattern = #"^(?:note|remember|jot)\s*[:\-]?\s*(.+)$"#

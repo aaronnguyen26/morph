@@ -309,25 +309,16 @@ final class ApplicationFormTrackerTests: XCTestCase {
             dispatcher: mockDispatcher
         )
         
-        var exportedSession: ApplicationFormSession?
-        model.onSessionExported = { exported in
-            exportedSession = exported
-        }
-        
         model.startTracking(title: "Scholarship Application", defaultEmail: "scholar@university.edu")
         model.addField(label: "Essay", value: "This scholarship will support my research in renewable energy.", category: .question)
         
         let success = await model.dispatchEmailCopy()
         XCTAssertTrue(success)
-        XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 1)
-        XCTAssertEqual(mockDispatcher.dispatchedSessions.first?.formTitle, "Scholarship Application")
-        XCTAssertEqual(mockDispatcher.dispatchedSessions.first?.recipientEmail, "scholar@university.edu")
-        
-        XCTAssertTrue(model.activeSession?.isSubmitted ?? false)
-        XCTAssertTrue(model.activeSession?.emailDeliveryStatus.isSent ?? false)
-        XCTAssertNotNil(model.deliveryToastMessage)
-        XCTAssertTrue(model.deliveryToastMessage?.contains("scholar@university.edu") ?? false)
-        XCTAssertNotNil(exportedSession)
+        // Emailing has been scrapped in favor of Supabase Memory storage
+        XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 0)
+        XCTAssertGreaterThanOrEqual(model.savedFormCopies.count, 1)
+        XCTAssertEqual(model.savedFormCopies.first?.formTitle, "Scholarship Application")
+        XCTAssertEqual(model.deliveryToastMessage, "Saved copy to Supabase Memory!")
     }
     
     func testDispatchEmailCopyInvalidEmail() async {
@@ -341,9 +332,9 @@ final class ApplicationFormTrackerTests: XCTestCase {
         model.addField(label: "Passport Number", value: "A12345678", category: .personal)
         
         let success = await model.dispatchEmailCopy()
-        XCTAssertFalse(success)
+        XCTAssertTrue(success)
         XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 0)
-        XCTAssertEqual(model.deliveryToastMessage, "Invalid email address")
+        XCTAssertEqual(model.deliveryToastMessage, "Saved copy to Supabase Memory!")
     }
     
     func testDispatchEmailCopyFailure() async {
@@ -357,10 +348,9 @@ final class ApplicationFormTrackerTests: XCTestCase {
         model.addField(label: "Name", value: "John", category: .personal)
         
         let success = await model.dispatchEmailCopy()
-        XCTAssertFalse(success)
+        XCTAssertTrue(success)
         XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 0)
-        XCTAssertEqual(model.activeSession?.emailDeliveryStatus, .failed("Mail service offline"))
-        XCTAssertTrue(model.deliveryToastMessage?.contains("Delivery failed") ?? false)
+        XCTAssertEqual(model.deliveryToastMessage, "Saved copy to Supabase Memory!")
     }
     
     func testAppendSummaryToScratchpad() {
@@ -3085,17 +3075,12 @@ final class ApplicationFormTrackerTests: XCTestCase {
         
         let success = await model.dispatchEmailCopy()
         XCTAssertTrue(success)
-        XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 1)
-        
-        let dispatched = mockDispatcher.dispatchedSessions.first
-        XCTAssertEqual(dispatched?.recipientEmail, "aaronn.nguyen.work@gmail.com")
-        XCTAssertEqual(dispatched?.formTitle, "Laguna Schools BP 2026: IA/SA Application Form")
-        XCTAssertTrue(dispatched?.formattedSummary.contains("Aaron Nguyen") ?? false)
-        XCTAssertTrue(dispatched?.formattedSummary.contains("Instructional Assistant") ?? false)
-        XCTAssertTrue(dispatched?.formattedSummary.contains("Recipient Copy:** aaronn.nguyen.work@gmail.com") ?? false)
-        
-        XCTAssertNotNil(model.deliveryToastMessage)
-        XCTAssertTrue(model.deliveryToastMessage?.contains("aaronn.nguyen.work@gmail.com") ?? false)
+        // Emailing has been scrapped in favor of Supabase Memory storage
+        XCTAssertEqual(mockDispatcher.dispatchedSessions.count, 0)
+        XCTAssertGreaterThanOrEqual(model.savedFormCopies.count, 1)
+        XCTAssertEqual(model.savedFormCopies.first?.answers["Full Name"], "Aaron Nguyen")
+        XCTAssertEqual(model.savedFormCopies.first?.formTitle, "Laguna Schools BP 2026: IA/SA Application Form")
+        XCTAssertEqual(model.deliveryToastMessage, "Saved copy to Supabase Memory!")
     }
     
     @MainActor

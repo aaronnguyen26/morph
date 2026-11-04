@@ -1007,117 +1007,42 @@ public struct ApplicationFormTrackerView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
     
-    // Dedicated Email Dispatch Deck (Gmail Native)
+    // Dedicated Memory Persistence Deck (Supabase Memory Storage)
     private var emailDispatchCard: some View {
-        VStack(spacing: 4) {
-            // Destination Email Pill
-            HStack(spacing: 4) {
-                Text("GMAIL")
-                    .font(.system(size: 6.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 3.5)
-                    .padding(.vertical, 1)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                
-                TextField(ApplicationFormModel.defaultRecipientEmail, text: $emailInput)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white)
-                    .onSubmit {
-                        formTracker.setRecipientEmail(emailInput)
-                    }
-                    .onChange(of: emailInput) { _, newVal in
-                        formTracker.setRecipientEmail(newVal)
-                    }
-                
-                Spacer(minLength: 2)
-                
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 7.5))
-                    .foregroundColor(Color.white.opacity(0.85))
+        VStack(spacing: 5) {
+            Button(action: {
+                _ = formTracker.saveFormSnapshot(flashLabel: true)
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "icloud.and.arrow.up.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("Save to Supabase Memory")
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4.5)
+                .background(Color.white)
+                .clipShape(Capsule())
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color.white.opacity(0.04))
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-            )
+            .buttonStyle(.plain)
             
-            // Actions: Primary Gmail Dispatch + Web Compose Quick Open
-            HStack(spacing: 4) {
-                // Primary Action: High-Contrast Pure White Capsule CTA Button
-                Button(action: {
-                    guard !isSendingCopy else { return }
-                    isSendingCopy = true
-                    Task {
-                        _ = await formTracker.dispatchEmailCopy()
-                        await MainActor.run {
-                            isSendingCopy = false
-                        }
-                    }
-                }) {
-                    HStack(spacing: 4) {
-                        if isSendingCopy || session?.emailDeliveryStatus == .sending {
-                            ProgressView()
-                                .scaleEffect(0.55)
-                                .frame(width: 10, height: 10)
-                            Text("Sending...")
-                                .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                        } else if case .sent = session?.emailDeliveryStatus {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 8.5, weight: .bold))
-                                .foregroundColor(.black)
-                            Text("Sent to Gmail!")
-                                .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                        } else {
-                            Image(systemName: "paperplane.fill")
-                                .font(.system(size: 8, weight: .bold))
-                            Text("Send to Gmail")
-                                .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                        }
-                    }
-                    .foregroundColor(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4.5)
-                    .background(Color.white)
-                    .clipShape(Capsule())
+            Button(action: {
+                formTracker.copySummaryToClipboard()
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "doc.on.doc.fill")
+                        .font(.system(size: 7.5))
+                    Text("Copy Markdown")
+                        .font(.system(size: 7.5, weight: .semibold, design: .rounded))
                 }
-                .buttonStyle(.plain)
-                .disabled(isSendingCopy || session?.emailDeliveryStatus == .sending)
-                
-                // Secondary Quick Action: Direct Gmail Web Composer
-                Button(action: {
-                    let target = formTracker.recipientEmail.isEmpty ? ApplicationFormModel.defaultRecipientEmail : formTracker.recipientEmail
-                    let cleanTitle = session?.formTitle.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let subject = cleanTitle.isEmpty ? "Application Form" : cleanTitle
-                    GmailEngine.shared.openGmailWebCompose(
-                        recipient: target,
-                        subject: subject,
-                        body: session?.formattedSummary ?? ""
-                    )
-                }) {
-                    HStack(spacing: 2.5) {
-                        Image(systemName: "arrow.up.forward.square")
-                            .font(.system(size: 7.5, weight: .bold))
-                        Text("Web")
-                            .font(.system(size: 7.5, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundColor(Color.white.opacity(0.8))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4.5)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(Capsule())
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("Open form receipt draft directly in Gmail Web in your browser")
+                .foregroundColor(Color.white.opacity(0.85))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3.5)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
         }
         .padding(5)
         .background(Color.white.opacity(0.04))

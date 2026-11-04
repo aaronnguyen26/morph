@@ -543,6 +543,60 @@ public struct ApplicationFormSession: Identifiable, Equatable, Sendable, Codable
     }
 }
 
+// MARK: - Saved Form Copy Record (Glass Island Copies)
+public struct SavedFormCopyRecord: Identifiable, Equatable, Sendable, Codable {
+    public var id: String
+    public var formTitle: String
+    public var savedAt: Date
+    public var answers: [String: String]
+    public var sourceURL: String?
+    public var sourceAppName: String
+    
+    public init(
+        id: String = UUID().uuidString,
+        formTitle: String,
+        savedAt: Date = Date(),
+        answers: [String: String] = [:],
+        sourceURL: String? = nil,
+        sourceAppName: String = "Web Browser"
+    ) {
+        self.id = id
+        self.formTitle = formTitle
+        self.savedAt = savedAt
+        self.answers = answers
+        self.sourceURL = sourceURL
+        self.sourceAppName = sourceAppName
+    }
+    
+    public var previewSummary: String {
+        let nonEmpty = answers.filter { !$0.value.isEmpty && $0.value != "—" }
+        if nonEmpty.isEmpty { return "Empty" }
+        return nonEmpty.prefix(2).map { "\($0.value)" }.joined(separator: " · ")
+    }
+    
+    public var formattedClipboardText: String {
+        var lines: [String] = []
+        lines.append("\(formTitle)")
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        lines.append("Saved \(formatter.string(from: savedAt))")
+        lines.append("---")
+        for (q, a) in answers.sorted(by: { $0.key < $1.key }) {
+            lines.append("\(q): \(a)")
+        }
+        return lines.joined(separator: "\n")
+    }
+    
+    public var answersJSONString: String {
+        if let data = try? JSONSerialization.data(withJSONObject: answers),
+           let str = String(data: data, encoding: .utf8) {
+            return str
+        }
+        return "{}"
+    }
+}
+
 // MARK: - Browser Engine & User Browser Profile Personalization
 public enum BrowserEngineFamily: String, CaseIterable, Codable, Sendable {
     case polar = "Polar"
@@ -5377,6 +5431,17 @@ public final class ApplicationFormModel: ObservableObject {
     @Published public var recipientEmail: String = defaultRecipientEmail
     @Published public var deliveryToastMessage: String? = nil
     @Published public var historySessions: [ApplicationFormSession] = []
+    @Published public var savedFormCopies: [SavedFormCopyRecord] = []
+    @Published public var profileAnswers: [String: String] = [
+        "Full Name": "John Chen",
+        "Email Address": "jchen.debate@tabroom.org",
+        "Institutional Conflicts": "St. Marks School of Texas",
+        "Division Preference": "Policy / CX",
+        "Availability": "Saturday all rounds, Sunday elims",
+        "Judging Paradigm": "Tabula rasa, tech > truth, speed fine if clear"
+    ]
+    private static let savedFormCopiesStorageKey = "com.morph.form.saved_copies"
+    private static let profileAnswersStorageKey = "com.morph.form.profile_answers"
     @Published public var activeFieldIndex: Int = 0
     @Published public var isAutoRetrievingSchema: Bool = false
     @Published public var lastAutoCapturedAt: Date? = nil
@@ -5436,12 +5501,137 @@ public final class ApplicationFormModel: ObservableObject {
         self.dispatcher = dispatcher ?? DefaultEmailDispatcher()
         self.userDefaultBrowser = userDefaultBrowser ?? PersonalizedBrowserDetector.detectDefaultBrowser()
         
+        loadSavedFormCopies()
+        loadProfileAnswers()
+        
         if !MorphEnvironment.isTestingEnvironment {
             loadDrafts()
             self.autoTracker = FormInputAutoTracker(model: self)
             self.autoTracker?.start()
             startPolling()
         }
+    }
+    
+    // MARK: - Saved Copies and Profile Persistence
+    public func loadSavedFormCopies() {
+        if let data = UserDefaults.standard.data(forKey: Self.savedFormCopiesStorageKey),
+           let list = try? JSONDecoder().decode([SavedFormCopyRecord].self, from: data) {
+            self.savedFormCopies = list
+        }
+    }
+    
+    public func saveSavedFormCopies() {
+        if let data = try? JSONEncoder().encode(savedFormCopies) {
+            UserDefaults.standard.set(data, forKey: Self.savedFormCopiesStorageKey)
+        }
+    }
+    
+    public func loadProfileAnswers() {
+        if let data = UserDefaults.standard.data(forKey: Self.profileAnswersStorageKey),
+           let dict = try? JSONDecoder().decode([String: String].self, from: data) {
+            self.profileAnswers = dict
+        }
+    }
+    
+    public func saveProfileAnswers() {
+        if let data = try? JSONEncoder().encode(profileAnswers) {
+            UserDefaults.standard.set(data, forKey: Self.profileAnswersStorageKey)
+        }
+    }
+    
+    public func saveProfileAnswer(key: String, value: String) {
+        self.profileAnswers[key] = value
+        saveProfileAnswers()
+    }
+    
+    @discardableResult
+    public func saveFormSnapshot(flashLabel: Bool = false) -> SavedFormCopyRecord? {
+        guard let session = activeSession else { return nil }
+        var ans: [String: String] = [:]
+        for f in session.fields where f.isActionableQuestion {
+            ans[f.label] = f.value.isEmpty ? (profileAnswers[f.label] ?? "—") : f.value
+        }
+        
+        let rec = SavedFormCopyRecord(
+            id: UUID().uuidString,
+            formTitle: session.formTitle.isEmpty ? "Google Form" : session.formTitle,
+            savedAt: Date(),
+            answers: ans,
+            sourceURL: session.sourceURL,
+            sourceAppName: session.sourceAppName
+        )
+        savedFormCopies.insert(rec, at: 0)
+        saveSavedFormCopies()
+        
+        // Save to Supabase memory store locally immediately
+        let memory = GlassMemoryItem(
+            id: rec.id,
+            userId: SupabaseService.shared.currentUser.id,
+            kind: "form",
+            title: rec.formTitle,
+            body: session.formattedSummary,
+            metaJSON: rec.answersJSONString,
+            createdAt: rec.savedAt,
+            updatedAt: rec.savedAt,
+            syncStatus: "local"
+        )
+        if let idx = SupabaseService.shared.memoryItems.firstIndex(where: { $0.id == memory.id }) {
+            SupabaseService.shared.memoryItems[idx] = memory
+        } else {
+            SupabaseService.shared.memoryItems.insert(memory, at: 0)
+        }
+        SupabaseService.shared.saveMemoryItemsCache()
+        Task {
+            await SupabaseService.shared.saveMemoryItem(memory)
+        }
+        
+        // Also sync to form_receipts
+        syncToSupabase()
+        
+        if flashLabel {
+            showToast("Saved form copy to Memory!")
+        }
+        return rec
+    }
+    
+    public func markFormSubmitted() {
+        guard var session = activeSession else { return }
+        session.isSubmitted = true
+        activeSession = session
+        _ = saveFormSnapshot(flashLabel: false)
+        showToast("Form submitted · Copy saved in Island")
+    }
+    
+    @discardableResult
+    public func autofillActiveForm() -> Int {
+        guard var session = activeSession else { return 0 }
+        var filledCount = 0
+        
+        func resolveValue(for label: String) -> String? {
+            let lower = label.lowercased()
+            if let exact = profileAnswers[label], !exact.isEmpty { return exact }
+            if lower.contains("name") { return profileAnswers["Full Name"] }
+            if lower.contains("email") || lower.contains("tabroom") { return profileAnswers["Email Address"] }
+            if lower.contains("conflict") || lower.contains("institution") || lower.contains("school") { return profileAnswers["Institutional Conflicts"] }
+            if lower.contains("division") || lower.contains("pref") { return profileAnswers["Division Preference"] }
+            if lower.contains("avail") || lower.contains("round") || lower.contains("schedule") { return profileAnswers["Availability"] }
+            if lower.contains("paradigm") || lower.contains("philosophy") || lower.contains("experience") { return profileAnswers["Judging Paradigm"] }
+            return nil
+        }
+        
+        for idx in session.fields.indices {
+            if session.fields[idx].isActionableQuestion && session.fields[idx].value.isEmpty {
+                if let val = resolveValue(for: session.fields[idx].label) {
+                    session.fields[idx].value = val
+                    filledCount += 1
+                }
+            }
+        }
+        
+        self.activeSession = session
+        saveDrafts()
+        showToast(filledCount > 0 ? "Autofilled \(filledCount) answers from Profile!" : "Profile answers already filled!")
+        return filledCount
     }
     
     // MARK: - Draft & History Persistence
@@ -6590,54 +6780,11 @@ public final class ApplicationFormModel: ObservableObject {
         return .custom
     }
     
-    // MARK: - Email Dispatch
-    private var isDispatchingEmail: Bool = false
-    
+    // MARK: - Email Dispatch (Deprecated - Replaced by Supabase Memory Storage)
     public func dispatchEmailCopy() async -> Bool {
-        guard !isDispatchingEmail else { return false }
-        isDispatchingEmail = true
-        defer { isDispatchingEmail = false }
-        
-        guard var session = activeSession else { return false }
-        
-        var destination = recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        if destination.isEmpty || destination == "user@example.com" || destination.contains("minh7898888") {
-            destination = Self.defaultRecipientEmail
-            self.recipientEmail = destination
-        }
-        guard !destination.isEmpty && destination.contains("@") else {
-            showToast("Invalid email address")
-            return false
-        }
-        
-        session.recipientEmail = destination
-        session.emailDeliveryStatus = .sending
-        activeSession?.emailDeliveryStatus = .sending
-        
-        do {
-            let result = try await dispatcher.dispatchCopy(session: session)
-            if result.success {
-                session.emailDeliveryStatus = .sent(result.dispatchedAt)
-                session.lastDispatchedAt = result.dispatchedAt
-                session.isSubmitted = true
-                activeSession = session
-                
-                showToast("Copy emailed to \(destination)!")
-                onSessionExported?(session)
-                syncToSupabase()
-                return true
-            } else {
-                session.emailDeliveryStatus = .failed(result.message)
-                activeSession = session
-                showToast("Delivery failed: \(result.message)")
-                return false
-            }
-        } catch {
-            session.emailDeliveryStatus = .failed(error.localizedDescription)
-            activeSession = session
-            showToast("Error: \(error.localizedDescription)")
-            return false
-        }
+        _ = saveFormSnapshot(flashLabel: false)
+        showToast("Saved copy to Supabase Memory!")
+        return true
     }
     
     // MARK: - Utilities

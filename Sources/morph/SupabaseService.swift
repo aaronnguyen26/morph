@@ -121,6 +121,53 @@ public struct FormReceiptRecord: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+/// Represents a local-first memory record synced to Supabase `memories` table (from Glass Island HTML)
+public struct GlassMemoryItem: Codable, Identifiable, Sendable, Equatable {
+    public var id: String
+    public var userId: String
+    public var kind: String // "form", "note", "prompt", "focus", "music"
+    public var title: String
+    public var body: String
+    public var metaJSON: String
+    public var createdAt: Date
+    public var updatedAt: Date
+    public var syncStatus: String // "synced", "local", "error"
+    
+    public init(
+        id: String = UUID().uuidString,
+        userId: String = "",
+        kind: String = "form",
+        title: String = "",
+        body: String = "",
+        metaJSON: String = "{}",
+        createdAt: Date = Date(),
+        updatedAt: Date = Date(),
+        syncStatus: String = "local"
+    ) {
+        self.id = id
+        self.userId = userId
+        self.kind = kind
+        self.title = title
+        self.body = body
+        self.metaJSON = metaJSON
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.syncStatus = syncStatus
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case kind
+        case title
+        case body
+        case metaJSON = "meta_json"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case syncStatus = "sync_status"
+    }
+}
+
 /// Aggregated user statistics and dashboard telemetry
 public struct DashboardMetrics: Codable, Sendable, Equatable {
     public var todayFocusMinutes: Int
@@ -186,6 +233,7 @@ public final class SupabaseService: ObservableObject {
     @Published public var currentUser: UserProfile
     @Published public var focusSessions: [FocusSessionRecord] = []
     @Published public var formReceipts: [FormReceiptRecord] = []
+    @Published public var memoryItems: [GlassMemoryItem] = []
     @Published public var connectionState: SupabaseConnectionState = .connecting
     @Published public var isSyncing: Bool = false
     @Published public var lastSyncTime: Date?
@@ -193,6 +241,7 @@ public final class SupabaseService: ObservableObject {
     private let userDefaultsKey = "com.morph.supabase.cached_profile"
     private let sessionsCacheKey = "com.morph.supabase.cached_sessions"
     private let formReceiptsCacheKey = "com.morph.supabase.cached_form_receipts"
+    private let memoryItemsCacheKey = "com.morph.supabase.cached_memory_items"
     private let offlineQueueKey = "com.morph.supabase.offline_queue"
     private var urlSession: URLSession
     
@@ -238,6 +287,12 @@ public final class SupabaseService: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: formReceiptsCacheKey),
            let cachedReceipts = try? JSONDecoder().decode([FormReceiptRecord].self, from: data) {
             self.formReceipts = cachedReceipts
+        }
+        
+        // Load cached memory items
+        if let data = UserDefaults.standard.data(forKey: memoryItemsCacheKey),
+           let cachedMemories = try? JSONDecoder().decode([GlassMemoryItem].self, from: data) {
+            self.memoryItems = cachedMemories
         }
         
         // Initial sync
@@ -617,6 +672,184 @@ public final class SupabaseService: ObservableObject {
         }
     }
     
+    // MARK: - Glass Island Memory Store (Supabase REST)
+    public func saveMemoryItem(_ item: GlassMemoryItem) async {
+        // Upsert locally
+        let updated = item
+        if let idx = memoryItems.firstIndex(where: { $0.id == item.id }) {
+            memoryItems[idx] = updated
+        } else {
+            memoryItems.insert(updated, at: 0)
+        }
+        saveMemoryItemsCache()
+        
+        guard !isTesting else {
+            connectionState = .connected
+            lastSyncTime = Date()
+            return
+        }
+        
+        // Post directly to Supabase PostgREST table: memories
+        guard let url = URL(string: "\(baseURL.absoluteString)/rest/v1/memories") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 3.0
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+        
+        let formatter = ISO8601DateFormatter()
+        let payload: [String: Any] = [
+            "id": updated.id,
+            "user_id": updated.userId.isEmpty ? currentUser.id : updated.userId,
+            "kind": updated.kind,
+            "title": updated.title,
+            "body": updated.body,
+            "meta": (try? JSONSerialization.jsonObject(with: Data(updated.metaJSON.utf8))) ?? [:],
+            "created_at": formatter.string(from: updated.createdAt),
+            "updated_at": formatter.string(from: updated.updatedAt)
+        ]
+        
+        if let bodyData = try? JSONSerialization.data(withJSONObject: payload) {
+            request.httpBody = bodyData
+            do {
+                let (_, response) = try await urlSession.data(for: request)
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    if let idx = memoryItems.firstIndex(where: { $0.id == updated.id }) {
+                        memoryItems[idx].syncStatus = "synced"
+                        saveMemoryItemsCache()
+                    }
+                    connectionState = .connected
+                    lastSyncTime = Date()
+                }
+            } catch {
+                // Preserved in local cache
+            }
+        }
+    }
+    
+    public func fetchMemoryItems(kind: String? = nil, limit: Int = 100) async -> [GlassMemoryItem] {
+        guard !isTesting else {
+            if let k = kind {
+                return memoryItems.filter { $0.kind == k }
+            }
+            return memoryItems
+        }
+        
+        var urlString = "\(baseURL.absoluteString)/rest/v1/memories?user_id=eq.\(currentUser.id)&order=updated_at.desc&limit=\(limit)"
+        if let k = kind {
+            urlString += "&kind=eq.\(k)"
+        }
+        guard let url = URL(string: urlString) else {
+            return memoryItems
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 3.0
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                if let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                    let formatter = ISO8601DateFormatter()
+                    var remoteItems: [GlassMemoryItem] = []
+                    for dict in array {
+                        let id = dict["id"] as? String ?? UUID().uuidString
+                        let userId = dict["user_id"] as? String ?? ""
+                        let k = dict["kind"] as? String ?? "form"
+                        let title = dict["title"] as? String ?? ""
+                        let body = dict["body"] as? String ?? ""
+                        let metaDict = dict["meta"] as? [String: Any] ?? [:]
+                        let metaJSON = (try? String(data: JSONSerialization.data(withJSONObject: metaDict), encoding: .utf8)) ?? "{}"
+                        let createdStr = dict["created_at"] as? String ?? ""
+                        let updatedStr = dict["updated_at"] as? String ?? ""
+                        let created = formatter.date(from: createdStr) ?? Date()
+                        let updated = formatter.date(from: updatedStr) ?? created
+                        
+                        remoteItems.append(GlassMemoryItem(
+                            id: id,
+                            userId: userId,
+                            kind: k,
+                            title: title,
+                            body: body,
+                            metaJSON: metaJSON,
+                            createdAt: created,
+                            updatedAt: updated,
+                            syncStatus: "synced"
+                        ))
+                    }
+                    
+                    var existingIds = Set(remoteItems.map { $0.id })
+                    var merged = remoteItems
+                    for local in memoryItems where !existingIds.contains(local.id) {
+                        merged.append(local)
+                        existingIds.insert(local.id)
+                    }
+                    merged.sort { $0.updatedAt > $1.updatedAt }
+                    self.memoryItems = merged
+                    saveMemoryItemsCache()
+                    self.connectionState = .connected
+                    self.lastSyncTime = Date()
+                    return merged
+                }
+            }
+        } catch {
+            // Return cached
+        }
+        return memoryItems
+    }
+    
+    public func searchMemories(query: String) -> [GlassMemoryItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return memoryItems }
+        
+        let words = q.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        guard !words.isEmpty else { return memoryItems }
+        
+        var scored: [(item: GlassMemoryItem, score: Double)] = []
+        for item in memoryItems {
+            let ti = item.title.lowercased()
+            let bo = item.body.lowercased()
+            let me = item.metaJSON.lowercased()
+            let kind = item.kind.lowercased()
+            
+            var totalScore = 0.0
+            var allMatch = true
+            
+            for w in words {
+                let inTitle = ti.contains(w)
+                let inBody = bo.contains(w)
+                let inMeta = me.contains(w)
+                let inKind = kind.contains(w)
+                
+                if !inTitle && !inBody && !inMeta && !inKind {
+                    allMatch = false
+                    break
+                }
+                totalScore += (inTitle ? 3.0 : 0.0) + (inBody ? 1.0 : 0.0) + (inMeta ? 1.5 : 0.0) + (inKind ? 0.5 : 0.0)
+            }
+            
+            if allMatch && totalScore > 0 {
+                scored.append((item, totalScore))
+            }
+        }
+        
+        scored.sort { $0.score > $1.score }
+        return scored.map { $0.item }
+    }
+    
+    public func saveMemoryItemsCache() {
+        if let data = try? JSONEncoder().encode(memoryItems) {
+            UserDefaults.standard.set(data, forKey: memoryItemsCacheKey)
+        }
+    }
+    
     /// Returns aggregated metrics for displaying in future dashboard views
     public func fetchDashboardMetrics() -> DashboardMetrics {
         let calendar = Calendar.current
@@ -654,7 +887,7 @@ public final class SupabaseService: ObservableObject {
     public func flushOfflineQueue() async {
         guard !isTesting else { return }
         guard let data = UserDefaults.standard.data(forKey: offlineQueueKey),
-              var queue = try? JSONDecoder().decode([FocusSessionRecord].self, from: data),
+              let queue = try? JSONDecoder().decode([FocusSessionRecord].self, from: data),
               !queue.isEmpty else {
             return
         }
