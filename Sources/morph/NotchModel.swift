@@ -2253,10 +2253,10 @@ public final class NotchModel: ObservableObject {
             glassMusicTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.isGlassMusicPlaying else { return }
-                    self.glassTrackCurrentSeconds += 1
-                    let curDur = !self.glassTracks.isEmpty ? self.glassTracks[self.glassTrackIndex].duration : 180
-                    if self.glassTrackCurrentSeconds >= curDur {
-                        self.skipGlassMusic(1)
+                    if self.media.currentTime > 0 {
+                        self.glassTrackCurrentSeconds = Int(self.media.currentTime)
+                    } else {
+                        self.glassTrackCurrentSeconds += 1
                     }
                 }
             }
@@ -2293,7 +2293,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public func seekGlassMusic(to seconds: Int) {
-        let curDur = Double(!glassTracks.isEmpty ? glassTracks[glassTrackIndex].duration : 180)
+        let curDur = Double(!glassTracks.isEmpty ? glassTracks[glassTrackIndex].duration : (media.duration > 0 ? Int(media.duration) : 180))
         let fraction = curDur > 0 ? Double(seconds) / curDur : 0
         media.seek(to: fraction)
         media.currentTime = Double(seconds)
@@ -2350,6 +2350,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public func playGlassLibraryTrack(_ track: YTMPlaylistItem) {
+        glassTrackCurrentSeconds = 0
         if let pl = glassSelectedPlaylist {
             media.selectPlaylist(pl)
             media.playSongInSelectedPlaylist(track)
@@ -2362,6 +2363,7 @@ public final class NotchModel: ObservableObject {
     
     public func playGlassSelectedPlaylistAll(shuffle: Bool = false) {
         guard let pl = glassSelectedPlaylist else { return }
+        glassTrackCurrentSeconds = 0
         media.selectPlaylist(pl)
         if shuffle {
             media.toggleShuffle()

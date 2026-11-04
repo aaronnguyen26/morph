@@ -2673,30 +2673,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             } catch(e) {}
                             return;
                         }
-                        setTimeout(function() {
-                            triggerNextVideo();
-                        }, 250);
+                        // Allow YouTube Music's native queue engine to advance naturally without cutting off tracks
                     });
                     
-                    // Continuous playback watchdog: if playback reaches the very end (< 0.5s remaining) and stops/pauses
+                    // Continuous playback: dismiss any "Still watching?" modals and keep autoplay active
                     v.addEventListener('timeupdate', function() {
                         dismissModalsAndEnableAutoplay();
-                        if (window._morphTargetRepeatMode === 'one' || v.loop) {
-                            return;
-                        }
-                        if (v.duration > 3 && v.currentTime >= (v.duration - 0.4) && !v._morphAutoAdvancing) {
-                            v._morphAutoAdvancing = true;
-                            setTimeout(function() {
-                                if (window._morphTargetRepeatMode === 'one' || v.loop) {
-                                    v._morphAutoAdvancing = false;
-                                    return;
-                                }
-                                if (v.ended || v.paused || v.currentTime >= (v.duration - 0.5)) {
-                                    triggerNextVideo();
-                                }
-                                setTimeout(function() { v._morphAutoAdvancing = false; }, 3000);
-                            }, 500);
-                        }
                     });
                 }
             }

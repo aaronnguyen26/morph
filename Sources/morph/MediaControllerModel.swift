@@ -178,25 +178,14 @@ public final class MediaControllerModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.isPlaying else { return }
-                    // Only advance artificial ticker if completely in offline demo mode.
-                    // Never fight real WebKit or browser streams!
-                    if !self.isDirectEngineConnected && !self.isBrowserConnected {
-                        if self.currentTime < self.duration {
+                    // Only advance artificial ticker if strictly in offline demo mode with known track duration.
+                    // Never fight real WebKit or browser streams, and never skip tracks on a timer!
+                    if self.isOffline && !self.isDirectEngineConnected && !self.isBrowserConnected {
+                        if self.duration > 0 && self.currentTime < self.duration {
                             self.currentTime += 1
-                        } else {
+                        } else if self.duration > 0 && self.currentTime >= self.duration {
                             if self.repeatMode == .one {
                                 self.currentTime = 0
-                            } else {
-                                self.nextTrack()
-                            }
-                        }
-                    } else if self.isDirectEngineConnected {
-                        // Watchdog auto-advance: if playback finishes and engine is at duration end
-                        if self.duration > 0 && self.currentTime >= (self.duration - 0.5) {
-                            if self.repeatMode == .one {
-                                // Smoothly loop single track back to start
-                                self.currentTime = 0
-                                self.seek(to: 0)
                             } else {
                                 self.nextTrack()
                             }

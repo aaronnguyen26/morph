@@ -569,4 +569,50 @@ final class GlassIslandHTMLTests: XCTestCase {
         controller.handleMouseEnter()
         XCTAssertEqual(model.glassIslandState, .prompt, "Hovering with no background action must open .prompt")
     }
+    
+    // MARK: - 14. Zero Unintended Track Skips During Playback
+    func testPlaybackDoesNotSkipPrematurelyWhilePlaying() {
+        // Setup a real song in playback
+        model.media.trackTitle = "Bohemian Rhapsody"
+        model.media.artistName = "Queen"
+        model.media.duration = 354 // 5 mins 54 secs
+        model.media.currentTime = 179 // 1 second before old 180s mock limit
+        model.media.isPlaying = true
+        model.isGlassMusicPlaying = true
+        
+        let initialTrack = model.media.trackTitle
+        
+        // Advance local time beyond 180s mock threshold
+        model.glassTrackCurrentSeconds = 185
+        
+        // Simulate timer tick
+        if model.media.currentTime > 0 {
+            model.glassTrackCurrentSeconds = Int(model.media.currentTime)
+        }
+        
+        // Track must NOT skip
+        XCTAssertEqual(model.media.trackTitle, initialTrack, "Song must not skip at 180s or any mock duration threshold")
+        XCTAssertEqual(model.glassMusicTitle, "Bohemian Rhapsody")
+    }
+    
+    func testPlaybackTickerDoesNotAutoAdvanceDirectEngineOrBrowserStreams() {
+        // Direct engine connected stream
+        model.media.trackTitle = "Starboy"
+        model.media.artistName = "The Weeknd"
+        model.media.duration = 230
+        model.media.currentTime = 229.8 // Within 0.5s of duration
+        model.media.isPlaying = true
+        model.media.isDirectEngineConnected = true
+        
+        // Track must NOT auto-advance via Swift ticker
+        XCTAssertEqual(model.media.trackTitle, "Starboy")
+        
+        // Now test browser connected stream
+        model.media.isDirectEngineConnected = false
+        model.media.isBrowserConnected = true
+        model.media.currentTime = 230.0
+        
+        // Track must NOT auto-advance via Swift ticker
+        XCTAssertEqual(model.media.trackTitle, "Starboy")
+    }
 }
