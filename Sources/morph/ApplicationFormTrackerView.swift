@@ -813,7 +813,7 @@ public struct ApplicationFormTrackerView: View {
             
             // Right: Dispatch Deck & Metadata
             VStack(alignment: .leading, spacing: 5) {
-                Text("RECEIPT DISPATCH")
+                Text("MEMORY STORAGE")
                     .font(.system(size: 7, weight: .bold, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.5))
                     .tracking(0.5)
@@ -978,17 +978,22 @@ public struct ApplicationFormTrackerView: View {
                 .help("Copy markdown summary to clipboard")
                 
                 Button(action: {
-                    let target = record.recipientEmail.isEmpty ? ApplicationFormModel.defaultRecipientEmail : record.recipientEmail
-                    GmailEngine.shared.openGmailWebCompose(
-                        recipient: target,
-                        subject: record.formTitle,
-                        body: record.formattedSummary
+                    let mem = GlassMemoryItem(
+                        id: record.id,
+                        kind: "form",
+                        title: record.formTitle,
+                        body: record.formattedSummary,
+                        metaJSON: record.fieldsJSON
                     )
+                    Task {
+                        await SupabaseService.shared.saveMemoryItem(mem)
+                    }
+                    formTracker.showToast("Archived to Supabase Memory!")
                 }) {
                     HStack(spacing: 2) {
-                        Image(systemName: "paperplane.fill")
+                        Image(systemName: "brain.head.profile")
                             .font(.system(size: 6.5))
-                        Text("Gmail")
+                        Text("Memory")
                             .font(.system(size: 7, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(.white)
@@ -998,7 +1003,7 @@ public struct ApplicationFormTrackerView: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("Open receipt draft in Gmail")
+                .help("Archive form record to Supabase memory")
             }
         }
         .padding(.horizontal, 8)

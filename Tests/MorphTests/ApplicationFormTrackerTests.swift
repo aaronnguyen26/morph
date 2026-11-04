@@ -3160,10 +3160,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         do {
             let result = try await dispatcher.dispatchCopy(session: session)
             XCTAssertTrue(result.success)
-            XCTAssertTrue(result.message.contains("aaronn.nguyen.work@gmail.com"))
-            if let msgId = result.messageId {
-                await GmailEngine.shared.trashMessage(messageId: msgId)
-            }
+            XCTAssertTrue(result.message.contains("Supabase Memory Storage"))
         } catch {
             XCTFail("DefaultEmailDispatcher should not throw: \(error.localizedDescription)")
         }
@@ -3210,7 +3207,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         XCTAssertFalse(res)
     }
     
-    func testDefaultEmailDispatcherRoutesToGmailExclusively() async {
+    func testDefaultEmailDispatcherArchivesToSupabaseMemoryExclusively() async {
         let dispatcher = DefaultEmailDispatcher()
         let session = ApplicationFormSession(
             formTitle: "Laguna Schools Form",
@@ -3225,11 +3222,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         do {
             let res = try await dispatcher.dispatchCopy(session: session)
             XCTAssertTrue(res.success)
-            XCTAssertTrue(res.message.contains("Gmail"), "Dispatcher message must explicitly confirm Gmail routing")
-            XCTAssertTrue(res.message.contains("aaronn.nguyen.work@gmail.com"))
-            if let msgId = res.messageId {
-                await GmailEngine.shared.trashMessage(messageId: msgId)
-            }
+            XCTAssertTrue(res.message.contains("Supabase Memory Storage"), "Dispatcher must confirm Supabase Memory Storage archiving")
         } catch {
             XCTFail("Should not throw: \(error.localizedDescription)")
         }

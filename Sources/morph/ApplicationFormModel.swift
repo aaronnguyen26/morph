@@ -2780,35 +2780,18 @@ public struct DefaultEmailDispatcher: ApplicationEmailDispatcherProtocol {
     
     @MainActor
     public func dispatchCopy(session: ApplicationFormSession) async throws -> EmailDispatchResult {
-        let cleanTitle = session.formTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let subject = cleanTitle.isEmpty ? "Application Form" : cleanTitle
-        let body = session.formattedSummary
-        let rawRecipient = session.recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
-        let recipient = (!rawRecipient.isEmpty && rawRecipient != "user@example.com" && !rawRecipient.contains("minh7898888"))
-            ? rawRecipient
-            : ApplicationFormModel.defaultRecipientEmail
-        
-        guard !recipient.isEmpty && recipient.contains("@") else {
-            return EmailDispatchResult(success: false, message: "No recipient email provided")
-        }
-        
-        // Send receipt via Gmail (Gmail REST API if authenticated, or Gmail Web Compose in browser)
-        // Never launches macOS Mail.app or uses mailto:
-        let gmailResult = await GmailEngine.shared.sendFormReceipt(
-            recipient: recipient,
-            subject: subject,
-            body: body,
-            htmlContent: session.professionalHTMLSummary
+        // Scrapped emailing receipt: archive session snapshot directly to Supabase Memory Storage
+        let answers = session.fields.reduce(into: [String: String]()) { $0[$1.label] = $1.value }
+        let meta = (try? String(data: JSONEncoder().encode(answers), encoding: .utf8)) ?? "{}"
+        let memory = GlassMemoryItem(
+            id: session.id.uuidString,
+            kind: "form",
+            title: session.formTitle.isEmpty ? "Application Form" : session.formTitle,
+            body: session.formattedSummary,
+            metaJSON: meta
         )
-        if gmailResult.success {
-            if gmailResult.viaWebFallback {
-                return EmailDispatchResult(success: true, message: "Drafted copy in Gmail Web for \(recipient)", messageId: gmailResult.messageId)
-            } else {
-                return EmailDispatchResult(success: true, message: "Receipt sent via Gmail to \(recipient)", messageId: gmailResult.messageId)
-            }
-        }
-        
-        return EmailDispatchResult(success: false, message: gmailResult.error ?? "Failed to send receipt via Gmail", messageId: nil)
+        await SupabaseService.shared.saveMemoryItem(memory)
+        return EmailDispatchResult(success: true, message: "Archived to Supabase Memory Storage", messageId: session.id.uuidString)
     }
 }
 
