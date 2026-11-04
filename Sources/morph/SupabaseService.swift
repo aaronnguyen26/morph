@@ -119,6 +119,14 @@ public struct FormReceiptRecord: Codable, Identifiable, Sendable, Equatable {
         case submittedAt = "submitted_at"
         case createdAt = "created_at"
     }
+    
+    public var fields: [FormInputField] {
+        guard let data = fieldsJSON.data(using: .utf8),
+              let list = try? JSONDecoder().decode([FormInputField].self, from: data) else {
+            return []
+        }
+        return list
+    }
 }
 
 /// Represents a local-first memory record synced to Supabase `memories` table (from Glass Island HTML)

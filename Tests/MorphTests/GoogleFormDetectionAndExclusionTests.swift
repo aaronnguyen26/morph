@@ -520,4 +520,104 @@ final class GoogleFormDetectionAndExclusionTests: XCTestCase {
         XCTAssertEqual(model.activeSession?.fields[2].value, "")
         XCTAssertEqual(model.activeSession?.answeredCount, 0)
     }
+
+    // MARK: - 8. Wide Range Multi-Browser Coverage Tests
+
+    func testWideRangeOfBrowsersEngineFamilyAndDetection() {
+        let browserTestCases: [(bundleID: String, name: String, expectedFamily: BrowserEngineFamily)] = [
+            ("com.google.Chrome", "Google Chrome", .chromium),
+            ("com.google.Chrome.canary", "Google Chrome Canary", .chromium),
+            ("com.brave.Browser", "Brave Browser", .chromium),
+            ("company.thebrowser.Browser", "Arc", .chromium),
+            ("com.microsoft.edgemac", "Microsoft Edge", .chromium),
+            ("com.operasoftware.Opera", "Opera", .chromium),
+            ("com.vivaldi.Vivaldi", "Vivaldi", .chromium),
+            ("com.apple.Safari", "Safari", .safari),
+            ("com.apple.SafariTechnologyPreview", "Safari Technology Preview", .safari),
+            ("org.mozilla.firefox", "Firefox", .gecko),
+            ("app.zen-browser.zen", "Zen Browser", .gecko),
+            ("jp.abel.floorp", "Floorp", .gecko),
+            ("net.waterfox.waterfox", "Waterfox", .gecko),
+            ("io.gitlab.librewolf-community.librewolf", "LibreWolf", .gecko),
+            ("org.torproject.torbrowser", "Tor Browser", .gecko),
+            ("com.kagi.orion", "Orion", .webkit),
+            ("com.duckduckgo.macos.browser", "DuckDuckGo", .webkit),
+            ("com.polar.browser", "Polar", .polar)
+        ]
+
+        for b in browserTestCases {
+            let family = PersonalizedBrowserDetector.engineFamily(for: b.bundleID, name: b.name)
+            XCTAssertEqual(family, b.expectedFamily, "Engine family for \(b.name) (\(b.bundleID)) mismatch")
+        }
+    }
+
+    func testMultiBrowserTitleAndURLDetection() {
+        let multiBrowserTitles = [
+            "Laguna Schools BP 2026: IA/SA Application Form - Google Chrome - Cabdi",
+            "Laguna Schools BP 2026: IA/SA Application Form - Safari",
+            "Laguna Schools BP 2026: IA/SA Application Form — Mozilla Firefox",
+            "Laguna Schools BP 2026: IA/SA Application Form - Arc",
+            "Laguna Schools BP 2026: IA/SA Application Form - Brave",
+            "Laguna Schools BP 2026: IA/SA Application Form - Microsoft Edge",
+            "Laguna Schools BP 2026: IA/SA Application Form - Zen Browser",
+            "Laguna Schools BP 2026: IA/SA Application Form - Orion",
+            "Laguna Schools BP 2026: IA/SA Application Form - DuckDuckGo",
+            "Laguna Schools BP 2026: IA/SA Application Form - Polar"
+        ]
+
+        for rawTitle in multiBrowserTitles {
+            XCTAssertTrue(
+                DefaultApplicationFormDetector.isFormTitle(rawTitle),
+                "isFormTitle should detect form title across all browsers: \(rawTitle)"
+            )
+            let cleaned = DefaultApplicationFormDetector.cleanTitle(rawTitle)
+            XCTAssertEqual(cleaned, "Laguna Schools BP 2026: IA/SA Application Form")
+        }
+
+        // Test Google Form URL variations (including closedform and preview)
+        let googleFormURLs = [
+            "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/closedform",
+            "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform",
+            "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/formResponse",
+            "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/preview",
+            "https://forms.gle/xyz123abc"
+        ]
+
+        for u in googleFormURLs {
+            XCTAssertTrue(
+                DefaultApplicationFormDetector.isFormURL(u),
+                "isFormURL should detect Google Form URL: \(u)"
+            )
+            XCTAssertFalse(
+                FormExclusionRegistry.isBlacklistedURL(u),
+                "FormExclusionRegistry should never blacklist Google Form URL: \(u)"
+            )
+        }
+    }
+
+    func testNonFormTabSwitchImmediateRejectionAcrossBrowsers() {
+        let nonFormTabs = [
+            (title: "Your first chat with Claude - Claude", url: "https://claude.ai/chat/123"),
+            (title: "Google Search - best restaurants", url: "https://www.google.com/search?q=best+restaurants"),
+            (title: "YouTube Music - Chill Beats", url: "https://music.youtube.com/watch?v=123"),
+            (title: "Overleaf, Online LaTeX Editor - Document", url: "https://www.overleaf.com/project/123"),
+            (title: "GitHub - owner/repo: A great tool", url: "https://github.com/owner/repo"),
+            (title: "Wikipedia, the free encyclopedia", url: "https://en.wikipedia.org/wiki/Main_Page")
+        ]
+
+        for t in nonFormTabs {
+            XCTAssertFalse(
+                DefaultApplicationFormDetector.isFormTitle(t.title),
+                "Non-form tab title should be rejected: \(t.title)"
+            )
+            XCTAssertFalse(
+                DefaultApplicationFormDetector.isFormURL(t.url),
+                "Non-form tab URL should NOT be detected as a form: \(t.url)"
+            )
+            XCTAssertTrue(
+                FormExclusionRegistry.isBlacklistedURL(t.url),
+                "Non-form tab URL should be blacklisted: \(t.url)"
+            )
+        }
+    }
 }

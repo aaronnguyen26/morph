@@ -377,13 +377,42 @@ public struct ApplicationFormTrackerView: View {
                 }
                 .padding(.top, 1)
                 
-                // 2. High-Contrast Headline Question Label
-                Text(field.label)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                // 2. High-Contrast Headline Question Label & Input Saved Answer CTA
+                HStack(alignment: .top, spacing: 6) {
+                    Text(field.label)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    Spacer(minLength: 4)
+                    
+                    if let saved = formTracker.resolveSavedInput(for: field), !saved.isEmpty, !isFormClosed {
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: saved)
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 7, weight: .bold))
+                                Text(field.value == saved ? "Re-input" : "Input: \"\(saved.prefix(14))\(saved.count > 14 ? "…" : "")\"")
+                                    .font(.system(size: 7.5, weight: .semibold, design: .rounded))
+                                    .lineLimit(1)
+                            }
+                            .foregroundColor(Color(hex: "#8ff0b4"))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2.5)
+                            .background(Color(hex: "#8ff0b4").opacity(0.12))
+                            .clipShape(Capsule())
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color(hex: "#8ff0b4").opacity(0.35), lineWidth: 0.6)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
                 
                 if !field.questionDescription.isEmpty {
                     Text(field.questionDescription)
@@ -638,6 +667,26 @@ public struct ApplicationFormTrackerView: View {
             Text("↵ Enter to confirm")
                 .font(.system(size: 6.8, weight: .medium, design: .monospaced))
                 .foregroundColor(Color.white.opacity(0.35))
+            
+            if let saved = formTracker.resolveSavedInput(for: field), !saved.isEmpty, !isFormClosed {
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: saved)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down.doc.fill")
+                            .font(.system(size: 6.5))
+                        Text("Input Answer")
+                            .font(.system(size: 7.2, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(Color(hex: "#b79cff"))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color(hex: "#b79cff").opacity(0.15))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
             
             // Primary Confirm CTA
             Button(action: {

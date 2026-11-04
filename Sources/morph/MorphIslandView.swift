@@ -356,13 +356,7 @@ public struct MorphIslandView: View {
                     onMouseEnter()
                     if model.isGlassIslandEnabled && model.glassIslandState == .idle {
                         withAnimation(MorphUniversalAnimation.stateExpansion) {
-                            if model.isBackgroundMusicActive {
-                                model.setGlassIslandState(.music)
-                            } else if model.isBackgroundTimerActive {
-                                model.setGlassIslandState(.timer)
-                            } else {
-                                model.setGlassIslandState(.prompt)
-                            }
+                            model.setGlassIslandState(model.contextualOpenState)
                         }
                     }
                 } else {
@@ -372,13 +366,7 @@ public struct MorphIslandView: View {
             .onTapGesture {
                 if model.isGlassIslandEnabled && model.glassIslandState == .idle {
                     withAnimation(MorphUniversalAnimation.stateExpansion) {
-                        if model.isBackgroundMusicActive {
-                            model.setGlassIslandState(.music)
-                        } else if model.isBackgroundTimerActive {
-                            model.setGlassIslandState(.timer)
-                        } else {
-                            model.setGlassIslandState(.prompt)
-                        }
+                        model.setGlassIslandState(model.contextualOpenState)
                     }
                 }
             }
@@ -1462,9 +1450,26 @@ public struct MorphIslandView: View {
     }
     
     // MARK: - Idle Capsule View (176 x 38 pt resting, up to 280 pt with Live Activity)
+    // MARK: - Idle Capsule View (176 x 38 pt resting, up to 410 pt with Live Activity)
     private var glassIdleView: some View {
         HStack(spacing: 8) {
-            if model.isGlassTimerActive && model.isGlassMusicPlaying {
+            if model.formTracker.isFormDetected {
+                if model.isGlassMusicPlaying {
+                    miniMusicView
+                    Rectangle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 1, height: 14)
+                    miniFormView
+                } else if model.isGlassTimerActive {
+                    miniTimerView
+                    Rectangle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 1, height: 14)
+                    miniFormView
+                } else {
+                    miniFormView
+                }
+            } else if model.isGlassTimerActive && model.isGlassMusicPlaying {
                 miniTimerView
                 Rectangle()
                     .fill(Color.white.opacity(0.18))
@@ -1474,8 +1479,6 @@ public struct MorphIslandView: View {
                 miniTimerView
             } else if model.isGlassMusicPlaying {
                 miniMusicView
-            } else if model.formTracker.isFormDetected {
-                miniFormView
             } else {
                 Image(systemName: "sparkles")
                     .font(.system(size: 13, weight: .semibold))
@@ -1494,7 +1497,7 @@ public struct MorphIslandView: View {
                 .foregroundColor(Color(hex: "#8ff0b4"))
             
             Text(miniFormStatusText)
-                .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -1511,18 +1514,18 @@ public struct MorphIslandView: View {
                     }
                 }
             }) {
-                Text(miniActionIsAutofill ? "Autofill" : "View")
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3.5)
+                Text(miniActionLabel)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(miniActionIsAutofill ? .white : Color(hex: "#8ff0b4"))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
                     .background(
                         Capsule()
-                            .fill(miniActionIsAutofill ? Color(hex: "#8b6ceb").opacity(0.8) : Color.white.opacity(0.14))
+                            .fill(miniActionIsAutofill ? Color(hex: "#8b6ceb").opacity(0.85) : Color(hex: "#8ff0b4").opacity(0.18))
                     )
                     .overlay(
                         Capsule()
-                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                            .stroke(miniActionIsAutofill ? Color.white.opacity(0.3) : Color(hex: "#8ff0b4").opacity(0.45), lineWidth: 0.8)
                     )
             }
             .buttonStyle(.plain)
@@ -1530,6 +1533,14 @@ public struct MorphIslandView: View {
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle {
+                MorphHaptics.levelChange()
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    model.setGlassIslandState(.forms)
+                }
+            }
+        }
         .onTapGesture {
             MorphHaptics.levelChange()
             withAnimation(MorphUniversalAnimation.stateExpansion) {
@@ -1540,19 +1551,49 @@ public struct MorphIslandView: View {
     
     private var miniFormStatusText: String {
         if let session = model.formTracker.activeSession {
-            let answered = session.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }.count
-            let total = session.fields.filter { $0.isActionableQuestion }.count
-            if answered > 0 {
-                return "Noted \(answered)/\(total) answers"
+            let title = cleanPersonalizedTitle(session.formTitle)
+            if !title.isEmpty {
+                return title
             }
         }
-        return "Google Form open · ready to note answers"
+        let detected = cleanPersonalizedTitle(model.formTracker.detectedFormTitle)
+        if !detected.isEmpty {
+            return detected
+        }
+        return "Google Form"
+    }
+
+    private var miniActionLabel: String {
+        if miniActionIsAutofill {
+            return "Autofill"
+        }
+        if let session = model.formTracker.activeSession {
+            let answered = session.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }.count
+            let total = session.fields.filter { $0.isActionableQuestion }.count
+            if answered > 0 && total > 0 {
+                return "\(answered)/\(total)"
+            }
+        }
+        return "Active"
+    }
+
+    private func cleanPersonalizedTitle(_ raw: String) -> String {
+        let clean = DefaultApplicationFormDetector.stripServiceSuffixes(
+            DefaultApplicationFormDetector.cleanTitle(raw)
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let genericList = ["google forms", "google form", "untitled form", "polar", ""]
+        if genericList.contains(clean.lowercased()) {
+            return ""
+        }
+        return clean
     }
     
     private var miniActionIsAutofill: Bool {
         guard let session = model.formTracker.activeSession else { return false }
+        let ready = model.formTracker.readyToAutofillCount
         let answered = session.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }.count
-        return answered < 3
+        return ready > 0 && (answered < 3 || answered < session.fields.count)
     }
     
     private var glassPromptPeekView: some View {
@@ -1629,6 +1670,14 @@ public struct MorphIslandView: View {
                 .opacity(model.glassTimerStatus == .paused ? 0.6 : 1.0)
         }
         .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle {
+                MorphHaptics.levelChange()
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    model.setGlassIslandState(.timer)
+                }
+            }
+        }
         .onTapGesture {
             MorphHaptics.levelChange()
             withAnimation(MorphUniversalAnimation.stateExpansion) {
@@ -1662,6 +1711,14 @@ public struct MorphIslandView: View {
             GlassIslandEqualizerView(isPlaying: model.isGlassMusicPlaying, height: 13, barColor: Color(hex: "#ff9fcb"))
         }
         .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle {
+                MorphHaptics.levelChange()
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    model.setGlassIslandState(.music)
+                }
+            }
+        }
         .onTapGesture {
             MorphHaptics.levelChange()
             withAnimation(MorphUniversalAnimation.stateExpansion) {
@@ -1855,19 +1912,24 @@ public struct MorphIslandView: View {
                         MorphHaptics.levelChange()
                         _ = model.formTracker.saveFormSnapshot(flashLabel: true)
                     }) {
-                        Text("Save Copy")
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .frame(height: 28)
-                            .background(Color.white.opacity(0.10))
-                            .clipShape(Capsule())
-                            .overlay(
-                                Capsule()
-                                    .stroke(Color.white.opacity(0.20), lineWidth: 0.5)
-                            )
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.arrow.down.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text("Save")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
+                        )
                     }
                     .buttonStyle(.plain)
+                    .help("Save form answers straight into Supabase Memory")
                 }
             }
             .frame(height: 30)
@@ -1944,8 +2006,8 @@ public struct MorphIslandView: View {
                                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                                         .foregroundColor(.white)
                                         .lineLimit(1)
-                                } else if let profileVal = model.formTracker.profileAnswers[field.label], !profileVal.isEmpty {
-                                    Text("Fill: \(profileVal)")
+                                } else if let savedVal = model.formTracker.resolveSavedInput(for: field), !savedVal.isEmpty {
+                                    Text("Fill: \(savedVal)")
                                         .font(.system(size: 11.5, weight: .medium, design: .rounded))
                                         .foregroundColor(Color(hex: "#8ff0b4"))
                                         .lineLimit(1)
@@ -1963,8 +2025,9 @@ public struct MorphIslandView: View {
                             )
                             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .onTapGesture {
-                                if field.value.isEmpty, let profileVal = model.formTracker.profileAnswers[field.label] {
-                                    model.formTracker.updateField(id: field.id, value: profileVal)
+                                if let savedVal = model.formTracker.resolveSavedInput(for: field), !savedVal.isEmpty {
+                                    MorphHaptics.levelChange()
+                                    _ = model.formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: savedVal)
                                 }
                             }
                         }
@@ -2032,9 +2095,9 @@ public struct MorphIslandView: View {
                                     
                                     Spacer(minLength: 4)
                                     
-                                    Text(pair.value)
+                                    Text(pair.value.isEmpty ? "—" : pair.value)
                                         .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(pair.value.isEmpty ? Color.white.opacity(0.35) : .white)
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, 12)
@@ -2166,8 +2229,42 @@ public struct MorphIslandView: View {
     }
     
     private var selectedCopyRecord: SavedFormCopyRecord? {
-        guard let id = model.selectedFormCopyId else { return model.formTracker.savedFormCopies.first }
-        return model.formTracker.savedFormCopies.first(where: { $0.id == id }) ?? model.formTracker.savedFormCopies.first
+        if let id = model.selectedFormCopyId {
+            if let found = model.formTracker.savedFormCopies.first(where: { $0.id == id }) {
+                return found
+            }
+            if let mem = model.supabase.memoryItems.first(where: { $0.id == id }) {
+                var dict: [String: String] = [:]
+                if let data = mem.metaJSON.data(using: .utf8),
+                   let parsed = try? JSONDecoder().decode([String: String].self, from: data) {
+                    dict = parsed
+                }
+                return SavedFormCopyRecord(
+                    id: mem.id,
+                    formTitle: mem.title.isEmpty ? "Saved Form" : mem.title,
+                    savedAt: mem.createdAt,
+                    answers: dict
+                )
+            }
+            if let rec = model.supabase.formReceipts.first(where: { $0.id == id }) {
+                var dict: [String: String] = [:]
+                if let data = rec.fieldsJSON.data(using: .utf8),
+                   let fields = try? JSONDecoder().decode([FormInputField].self, from: data) {
+                    for f in fields where f.isActionableQuestion {
+                        dict[f.label] = f.value
+                    }
+                }
+                return SavedFormCopyRecord(
+                    id: rec.id,
+                    formTitle: rec.formTitle.isEmpty ? "Saved Form" : rec.formTitle,
+                    savedAt: rec.createdAt,
+                    answers: dict,
+                    sourceURL: rec.sourceURL,
+                    sourceAppName: rec.sourceAppName
+                )
+            }
+        }
+        return model.formTracker.savedFormCopies.first
     }
     
     private func formModeButton(mode: GlassFormMode, label: String) -> some View {

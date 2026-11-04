@@ -514,6 +514,24 @@ public final class NotchModel: ObservableObject {
         if case .timer = activeBackgroundTaskPill { return true }
         return false
     }
+    
+    public var isBackgroundFormActive: Bool {
+        return formTracker.isFormDetected || formTracker.isTracking
+    }
+    
+    public var contextualOpenState: GlassIslandState {
+        if isBackgroundFormActive {
+            return .forms
+        } else if isBackgroundMusicActive {
+            return .music
+        } else if isBackgroundTimerActive {
+            return .timer
+        } else if calendar.showNotchAlert {
+            return .calendar
+        } else {
+            return .prompt
+        }
+    }
     private var glassMusicTimer: Timer? = nil
     @Published public var hasPromptedMusicSignIn: Bool = false
     
@@ -802,14 +820,22 @@ public final class NotchModel: ObservableObject {
     public var glassIslandWidth: CGFloat {
         switch glassIslandState {
         case .idle:
-            if isGlassTimerActive && isGlassMusicPlaying {
+            if formTracker.isFormDetected {
+                if isGlassTimerActive && isGlassMusicPlaying {
+                    return 410
+                } else if isGlassMusicPlaying {
+                    return 380
+                } else if isGlassTimerActive {
+                    return 370
+                } else {
+                    return 300
+                }
+            } else if isGlassTimerActive && isGlassMusicPlaying {
                 return 268
             } else if isGlassTimerActive {
                 return 208
             } else if isGlassMusicPlaying {
                 return 196
-            } else if formTracker.isFormDetected {
-                return 280
             } else {
                 return 176
             }
@@ -915,11 +941,43 @@ public final class NotchModel: ObservableObject {
             )
         }
         
-        // 2. Check autofill command
-        if lower.contains("autofill") || lower == "fill" {
+        if let matchCopy = formTracker.savedFormCopies.first(where: {
+            $0.formTitle.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0.formTitle)
+        }) {
+            return PromptPeekInfo(
+                title: "Form Memory: \(matchCopy.formTitle)",
+                subtitle: "“\(matchCopy.previewSummary)”",
+                icon: "doc.plaintext.fill",
+                actionType: "memory",
+                matchedRecordId: matchCopy.id
+            )
+        }
+        
+        if let matchReceipt = supabase.formReceipts.first(where: {
+            $0.formTitle.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0.formTitle)
+        }) {
+            return PromptPeekInfo(
+                title: "Form Memory: \(matchReceipt.formTitle)",
+                subtitle: "“\(matchReceipt.totalQuestions) questions captured”",
+                icon: "doc.plaintext.fill",
+                actionType: "memory",
+                matchedRecordId: matchReceipt.id
+            )
+        }
+        
+        // 2. Check input question or autofill command
+        if lower.contains("input") || lower == "fill question" || lower == "fill this" {
+            return PromptPeekInfo(
+                title: "Input Saved Answer",
+                subtitle: "Input recorded answer for active question into form",
+                icon: "arrow.down.doc.fill",
+                actionType: "inputQuestion"
+            )
+        }
+        if lower.contains("autofill") || lower == "fill" || lower == "fill form" {
             return PromptPeekInfo(
                 title: "Autofill Google Form",
-                subtitle: "Fill saved profile answers into active form",
+                subtitle: "Fill saved answers into active form",
                 icon: "pencil.and.outline",
                 actionType: "autofill"
             )
@@ -2569,8 +2627,38 @@ public final class NotchModel: ObservableObject {
             return
         }
         
-        // 0B. Autofill Command: "autofill", "fill"
-        if lower == "autofill" || lower == "fill" {
+        if let matchCopy = formTracker.savedFormCopies.first(where: {
+            $0.formTitle.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0.formTitle)
+        }) {
+            selectedFormCopyId = matchCopy.id
+            isFormCopyDetailOpen = true
+            glassFormMode = .copies
+            glassPromptText = ""
+            setGlassIslandState(.forms)
+            return
+        }
+        
+        if let matchReceipt = supabase.formReceipts.first(where: {
+            $0.formTitle.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0.formTitle)
+        }) {
+            selectedFormCopyId = matchReceipt.id
+            isFormCopyDetailOpen = true
+            glassFormMode = .copies
+            glassPromptText = ""
+            setGlassIslandState(.forms)
+            return
+        }
+        
+        // 0B1. Question Input Command: "input", "input answer", "fill question", "input question", "fill this"
+        if lower == "input" || lower == "input answer" || lower == "input question" || lower == "fill question" || lower == "fill this" {
+            _ = formTracker.inputSavedAnswerForActiveQuestion()
+            glassPromptText = ""
+            setGlassIslandState(.idle)
+            return
+        }
+        
+        // 0B. Autofill Command: "autofill", "fill", "fill form"
+        if lower == "autofill" || lower == "fill" || lower == "fill form" {
             _ = formTracker.autofillActiveForm()
             glassPromptText = ""
             setGlassIslandState(.idle)
