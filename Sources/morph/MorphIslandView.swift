@@ -2778,8 +2778,6 @@ public struct MorphIslandView: View {
             )
             
             Spacer()
-            
-            glassMusicServiceBadge
         }
         .frame(height: 32)
     }
@@ -2894,6 +2892,55 @@ public struct MorphIslandView: View {
                     }
                     
                     HStack(spacing: 12) {
+                        // Loop / Repeat button (left of Prev)
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                                model.media.toggleRepeat()
+                            }
+                        }) {
+                            ZStack(alignment: .bottomTrailing) {
+                                Image(systemName: model.media.repeatMode.iconName)
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundColor(model.media.repeatMode != .off ? .white : Color.white.opacity(0.45))
+                                if model.media.repeatMode == .all {
+                                    Circle()
+                                        .fill(Color(hex: "#ff7ab8"))
+                                        .frame(width: 5, height: 5)
+                                        .offset(x: 2, y: 2)
+                                }
+                            }
+                            .frame(width: 36, height: 36)
+                            .background(
+                                Circle()
+                                    .fill(model.media.repeatMode != .off
+                                          ? Color.white.opacity(0.18)
+                                          : Color.clear)
+                                    .overlay(
+                                        Circle().stroke(
+                                            model.media.repeatMode != .off
+                                                ? Color.white.opacity(0.35)
+                                                : Color.clear,
+                                            lineWidth: 0.8
+                                        )
+                                    )
+                            )
+                            .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Loop: \(model.media.repeatMode.hudTitle) (Click to cycle)")
+                        .contextMenu {
+                            Button(action: { model.media.setRepeatMode(.off) }) {
+                                Label("Loop Off", systemImage: model.media.repeatMode == .off ? "checkmark" : "")
+                            }
+                            Button(action: { model.media.setRepeatMode(.all) }) {
+                                Label("Loop All", systemImage: model.media.repeatMode == .all ? "checkmark" : "")
+                            }
+                            Button(action: { model.media.setRepeatMode(.one) }) {
+                                Label("Loop Current Track", systemImage: model.media.repeatMode == .one ? "checkmark" : "")
+                            }
+                        }
+                        
                         Spacer()
                         
                         Button(action: {
@@ -2945,6 +2992,34 @@ public struct MorphIslandView: View {
                         .buttonStyle(.plain)
                         
                         Spacer()
+                        
+                        // Shuffle button (right of Next, symmetric with Loop)
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            model.media.toggleShuffle()
+                        }) {
+                            Image(systemName: "shuffle")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(model.media.isShuffle ? .white : Color.white.opacity(0.45))
+                                .frame(width: 36, height: 36)
+                                .background(
+                                    Circle()
+                                        .fill(model.media.isShuffle
+                                              ? Color.white.opacity(0.18)
+                                              : Color.clear)
+                                        .overlay(
+                                            Circle().stroke(
+                                                model.media.isShuffle
+                                                    ? Color.white.opacity(0.35)
+                                                    : Color.clear,
+                                                lineWidth: 0.8
+                                            )
+                                        )
+                                )
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(model.media.isShuffle ? "Shuffle On" : "Shuffle Off")
                     }
                 }
             }
@@ -3210,8 +3285,9 @@ public struct MorphIslandView: View {
     
     private var glassPlaylistGridView: some View {
         let playlists = model.media.playlists
+        let quickPicks = model.media.quickPicks
         return Group {
-            if playlists.isEmpty {
+            if playlists.isEmpty && quickPicks.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
                     Image(systemName: "music.note.list")
@@ -3242,45 +3318,138 @@ public struct MorphIslandView: View {
                 }
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-                        ForEach(playlists) { pl in
-                            Button(action: {
-                                MorphHaptics.levelChange()
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    model.selectGlassPlaylist(pl)
-                                }
-                            }) {
-                                HStack(spacing: 10) {
-                                    glassCoverThumbnail(url: pl.thumbnailURL, size: 44, cornerRadius: 12)
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(pl.title)
-                                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                            .foregroundColor(.white)
-                                            .lineLimit(1)
-                                        
-                                        Text(pl.tracks.count > 0 ? "\(pl.tracks.count) songs" : (pl.subtitle.isEmpty ? "Playlist" : pl.subtitle))
-                                            .font(.system(size: 11.5, weight: .regular, design: .rounded))
-                                            .foregroundColor(Color.white.opacity(0.62))
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 8)
-                                .frame(height: 56)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .fill(Color.white.opacity(0.09))
-                                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.20), lineWidth: 0.8))
-                                )
+                    VStack(alignment: .leading, spacing: 10) {
+                        // ── Quick Picks shelf (YouTube Music style) ──────────────────
+                        if !quickPicks.isEmpty {
+                            glassQuickPicksShelf(picks: quickPicks)
+                        }
+                        
+                        // ── Playlists grid ───────────────────────────────────────────
+                        if !playlists.isEmpty {
+                            HStack {
+                                Text("YOUR LIBRARY")
+                                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.45))
+                                    .tracking(1.2)
+                                Spacer()
                             }
-                            .buttonStyle(.plain)
+                            
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
+                                ForEach(playlists) { pl in
+                                    Button(action: {
+                                        MorphHaptics.levelChange()
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            model.selectGlassPlaylist(pl)
+                                        }
+                                    }) {
+                                        HStack(spacing: 10) {
+                                            glassCoverThumbnail(url: pl.thumbnailURL, size: 44, cornerRadius: 12)
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(pl.title)
+                                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                                    .foregroundColor(.white)
+                                                    .lineLimit(1)
+                                                
+                                                Text(pl.tracks.count > 0 ? "\(pl.tracks.count) songs" : (pl.subtitle.isEmpty ? "Playlist" : pl.subtitle))
+                                                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                                                    .foregroundColor(Color.white.opacity(0.62))
+                                                    .lineLimit(1)
+                                            }
+                                            Spacer()
+                                        }
+                                        .padding(.horizontal, 8)
+                                        .frame(height: 56)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                .fill(Color.white.opacity(0.09))
+                                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.20), lineWidth: 0.8))
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                     }
                     .padding(.vertical, 2)
                 }
             }
         }
+    }
+    
+    // MARK: - Glass Quick Picks Shelf (YouTube Music style)
+    private func glassQuickPicksShelf(picks: [YTMPlaylistItem]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header row
+            HStack(alignment: .center, spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Quick Picks")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("Picked for you")
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.55))
+                }
+                Spacer()
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.media.refreshQuickPicks()
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color.white.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .help("Refresh Quick Picks")
+            }
+            
+            // Horizontal scrolling track cards
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(picks.prefix(12)) { track in
+                        let isActive = model.media.trackTitle == track.title && (model.media.isPlaying || model.media.currentTime > 0)
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            model.media.playQuickPick(track)
+                        }) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ZStack(alignment: .bottomLeading) {
+                                    glassCoverThumbnail(url: track.thumbnailURL, size: 90, cornerRadius: 14)
+                                    if isActive {
+                                        HStack(spacing: 2) {
+                                            GlassIslandEqualizerView(isPlaying: model.media.isPlaying, height: 10, barColor: .white)
+                                        }
+                                        .padding(5)
+                                        .background(Color.black.opacity(0.45))
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .padding(5)
+                                    }
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(track.title.isEmpty ? "Unknown" : track.title)
+                                        .font(.system(size: 11.5, weight: isActive ? .bold : .semibold, design: .rounded))
+                                        .foregroundColor(isActive ? Color(hex: "#ff7ab8") : .white)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                    Text(track.artist.isEmpty ? "Artist" : track.artist)
+                                        .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                                        .foregroundColor(Color.white.opacity(0.55))
+                                        .lineLimit(1)
+                                }
+                            }
+                            .frame(width: 90)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 1)
+                .padding(.bottom, 2)
+            }
+        }
+        .padding(.bottom, 4)
     }
     
     private var glassMusicQueueView: some View {

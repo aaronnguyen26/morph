@@ -64,6 +64,9 @@ public final class MediaControllerModel: ObservableObject {
     private var repeatModeLockoutUntil: Date?
     private var lastProcessedQueueIds: [String] = []
     private var lastProcessedTrackSignature: String = ""
+    private var stalledPlaybackCount: Int = 0
+    private var lastObservedPlaybackTime: Double? = nil
+    public var isTestingSimulation: Bool = false
     
     // Offline status & Downloads management
     public let networkMonitor: NetworkMonitor
@@ -233,6 +236,7 @@ public final class MediaControllerModel: ObservableObject {
                 
                 // If YouTube Music is playing or has track data, prioritize direct engine
                 if !data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0 {
+                    let wasPlaying = self.isPlaying
                     self.trackTitle = data.title
                     self.artistName = data.artist.isEmpty ? "YouTube Music" : data.artist
                     self.albumArtURL = data.albumArtURL
@@ -251,6 +255,23 @@ public final class MediaControllerModel: ObservableObject {
                         self.currentTime = data.currentTime
                     }
                     self.duration = data.duration
+                    
+                    // Stalled playback watchdog: if playing and has duration, but currentTime remains frozen at 0:
+                    if data.isPlaying && data.duration > 0 {
+                        if data.currentTime <= 0.05 && self.lastObservedPlaybackTime != nil && self.lastObservedPlaybackTime! <= 0.05 {
+                            self.stalledPlaybackCount += 1
+                            if self.stalledPlaybackCount >= 1 && (!self.isTestingEnvironment || self.isTestingSimulation) {
+                                self.engine.ensurePlayback()
+                            }
+                        } else {
+                            self.stalledPlaybackCount = 0
+                            self.lastObservedPlaybackTime = data.currentTime
+                        }
+                    } else {
+                        self.stalledPlaybackCount = 0
+                        self.lastObservedPlaybackTime = nil
+                    }
+                    
                     // Auto-correct YouTube Music player if web player drifted from the correlated volume
                     if abs(data.volume - self.volume) > 0.08 && !self.isTestingEnvironment && self.duration > 0 {
                         if self.isDirectEngineActive {
@@ -284,6 +305,10 @@ public final class MediaControllerModel: ObservableObject {
                     let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
                     let trackChanged = (currentSignature != self.lastProcessedTrackSignature)
                     if queueChanged || trackChanged {
+                        // Watchdog: If previous state was playing and new track loaded in paused state at 0s, resume immediately!
+                        if wasPlaying && !data.isPlaying && data.duration > 0 && !self.isTestingEnvironment {
+                            self.engine.ensurePlayback()
+                        }
                         self.lastProcessedTrackSignature = currentSignature
                         self.syncPlayingTrackWithPlaylists()
                         
@@ -347,7 +372,6 @@ public final class MediaControllerModel: ObservableObject {
             .store(in: &cancellables)
             
         engine.$quickPicks
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] picks in
                 guard let self = self else { return }
                 if !picks.isEmpty {
@@ -372,6 +396,15 @@ public final class MediaControllerModel: ObservableObject {
             .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
             .sink { [weak self] query in
                 self?.runCatalogSearch(query)
+            }
+            .store(in: &cancellables)
+            
+        // Observe direct WebKit track completion to drive continuous sequential playlist playback
+        engine.trackEndedPublisher
+            .sink { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.handleTrackEnded()
+                }
             }
             .store(in: &cancellables)
     }
@@ -459,38 +492,21 @@ public final class MediaControllerModel: ObservableObject {
         }
     }
     
-    public func nextTrack() {
-        if isDirectEngineActive {
-            if repeatMode == .all {
-                if let sel = selectedPlaylist, !sel.tracks.isEmpty {
-                    let activeId = activeTrackId(in: sel.tracks)
-                    if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }),
-                       currentIdx == sel.tracks.count - 1 {
-                        let firstItem = sel.tracks[0]
-                        playSongInSelectedPlaylist(firstItem)
-                        return
-                    }
-                } else if !playlist.isEmpty {
-                    let activeId = activeTrackId(in: playlist)
-                    if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }),
-                       currentIdx == playlist.count - 1 {
-                        let firstItem = playlist[0]
-                        markPlaying(firstItem)
-                        if let qIdx = Int(firstItem.id) {
-                            engine.playQueueIndex(qIdx)
-                        } else {
-                            engine.playQueueIndex(0)
-                        }
-                        return
-                    }
-                }
-            }
-            engine.nextTrack()
+    public func handleTrackEnded(force: Bool = false) {
+        guard (!isTestingEnvironment && !isTestingSimulation) || force else { return }
+        if repeatMode == .one {
+            currentTime = 0
+            lastSeekToZeroTime = Date()
+            seek(to: 0)
+            play()
             return
         }
-        
-        // Continuous Playback: If we have an active playlist or queue, advance to next track
-        if let sel = selectedPlaylist, !sel.tracks.isEmpty {
+        nextTrack()
+    }
+    
+    public func nextTrack() {
+        // 1. If currently inside an active playlist (and not pl_queue), advance sequentially through the playlist!
+        if let sel = selectedPlaylist, !sel.tracks.isEmpty, sel.id != "pl_queue" {
             let activeId = activeTrackId(in: sel.tracks)
             if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
                 let nextIdx = currentIdx + 1
@@ -499,23 +515,46 @@ public final class MediaControllerModel: ObservableObject {
                     playSongInSelectedPlaylist(nextItem)
                     return
                 } else if repeatMode == .all {
-                    // Loop back to start
                     let firstItem = sel.tracks[0]
                     playSongInSelectedPlaylist(firstItem)
                     return
+                } else {
+                    stop()
+                    return
                 }
+            } else if let firstItem = sel.tracks.first {
+                playSongInSelectedPlaylist(firstItem)
+                return
             }
-        } else if !playlist.isEmpty {
+        }
+        
+        // 2. Queue playback: if user has a populated queue, advance deterministically
+        if !playlist.isEmpty {
             let activeId = activeTrackId(in: playlist)
             if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
                 let nextIdx = currentIdx + 1
                 if nextIdx < playlist.count {
                     let nextItem = playlist[nextIdx]
-                    playQueueTrack(nextItem)
+                    if isDirectEngineActive {
+                        markPlaying(nextItem)
+                        let qIdx = Int(nextItem.id) ?? nextIdx
+                        engine.playQueueIndex(qIdx, videoId: nextItem.videoId, title: nextItem.title, artist: nextItem.artist)
+                    } else {
+                        playQueueTrack(nextItem)
+                    }
                     return
                 } else if repeatMode == .all {
                     let firstItem = playlist[0]
-                    playQueueTrack(firstItem)
+                    if isDirectEngineActive {
+                        markPlaying(firstItem)
+                        let qIdx = Int(firstItem.id) ?? 0
+                        engine.playQueueIndex(qIdx, videoId: firstItem.videoId, title: firstItem.title, artist: firstItem.artist)
+                    } else {
+                        playQueueTrack(firstItem)
+                    }
+                    return
+                } else {
+                    stop()
                     return
                 }
             }
@@ -564,11 +603,8 @@ public final class MediaControllerModel: ObservableObject {
                     let prevItem = playlist[prevIdx]
                     markPlaying(prevItem)
                     if isDirectEngineActive {
-                        if let qIdx = Int(prevItem.id) {
-                            engine.playQueueIndex(qIdx)
-                        } else {
-                            engine.playQueueIndex(prevIdx)
-                        }
+                        let qIdx = Int(prevItem.id) ?? prevIdx
+                        engine.playQueueIndex(qIdx, videoId: prevItem.videoId, title: prevItem.title, artist: prevItem.artist)
                     } else {
                         playQueueTrack(prevItem)
                     }
@@ -578,11 +614,8 @@ public final class MediaControllerModel: ObservableObject {
                     let lastItem = playlist[lastIdx]
                     markPlaying(lastItem)
                     if isDirectEngineActive {
-                        if let qIdx = Int(lastItem.id) {
-                            engine.playQueueIndex(qIdx)
-                        } else {
-                            engine.playQueueIndex(lastIdx)
-                        }
+                        let qIdx = Int(lastItem.id) ?? lastIdx
+                        engine.playQueueIndex(qIdx, videoId: lastItem.videoId, title: lastItem.title, artist: lastItem.artist)
                     } else {
                         playQueueTrack(lastItem)
                     }
@@ -808,7 +841,7 @@ public final class MediaControllerModel: ObservableObject {
     
     /// Fetches the real tracks (playlist, album or artist) of `selectedPlaylist` from YouTube Music.
     public func loadTracksForSelectedPlaylist() {
-        guard let pl = selectedPlaylist, pl.id != "pl_queue", pl.kind != .queue else { return }
+        guard let pl = selectedPlaylist, pl.id != "pl_queue", pl.id != "pl_quickpicks", pl.kind != .queue else { return }
         trackLoadTask?.cancel()
         isLoadingTracks = true
         tracksError = nil
@@ -853,6 +886,25 @@ public final class MediaControllerModel: ObservableObject {
         } else {
             rightDeckSection = .playlists
         }
+    }
+    
+    public func openQuickPicksPlaylist() {
+        trackLoadTask?.cancel()
+        isLoadingTracks = false
+        tracksError = nil
+        isSearchingSongs = false
+        songSearchQuery = ""
+        let picks = quickPicks.isEmpty ? YTMParser.defaultQuickPicks : quickPicks
+        let pl = YTMPlaylist(
+            id: "pl_quickpicks",
+            title: "Quick Picks",
+            subtitle: "Personalized Mix • \(picks.count) tracks",
+            thumbnailURL: picks.first?.thumbnailURL,
+            tracks: picks,
+            browseId: "FEmusic_home"
+        )
+        selectedPlaylist = pl
+        rightDeckSection = .playlists
     }
     
     public func openQuickPicksSection() {
@@ -1021,7 +1073,7 @@ public final class MediaControllerModel: ObservableObject {
     
     /// `list=` parameter for starting playback inside the currently opened container (artists play as radio).
     private var selectedPlaybackListId: String? {
-        guard let sel = selectedPlaylist, sel.kind != .artist, sel.kind != .queue, sel.id != "pl_queue" else { return nil }
+        guard let sel = selectedPlaylist, sel.kind != .artist, sel.kind != .queue, sel.id != "pl_queue", sel.id != "pl_quickpicks" else { return nil }
         let raw = sel.playbackListId ?? (sel.kind == .playlist ? sel.id : nil)
         guard let r = raw else { return nil }
         return r.hasPrefix("VL") ? String(r.dropFirst(2)) : r
@@ -1153,6 +1205,10 @@ public final class MediaControllerModel: ObservableObject {
     public func syncPlayingTrackWithPlaylists() {
         // 1. Sync selectedPlaylist
         if var sel = selectedPlaylist {
+            if sel.id == "pl_quickpicks" {
+                sel.tracks = quickPicks
+                sel.subtitle = "Personalized Mix • \(quickPicks.count) tracks"
+            }
             let activeId = activeTrackId(in: sel.tracks)
             var changed = false
             for i in 0..<sel.tracks.count {
@@ -1173,7 +1229,7 @@ public final class MediaControllerModel: ObservableObject {
                     }
                 }
             }
-            if changed {
+            if changed || sel.id == "pl_quickpicks" {
                 selectedPlaylist = sel
             }
         }
@@ -1209,6 +1265,10 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
+        if selectedPlaylist?.id == "pl_quickpicks" {
+            playQuickPick(item, startRadio: true)
+            return
+        }
         if selectedPlaylist?.id == "pl_downloads" {
             playDownloadedTrack(item)
             return
@@ -1230,19 +1290,19 @@ public final class MediaControllerModel: ObservableObject {
         if selectedPlaylist?.id == "pl_queue" || rightDeckSection == .queue {
             // Live queue: play by exact queue index or fallback to direct videoId
             if let idx = Int(item.id) {
-                engine.playQueueIndex(idx)
+                engine.playQueueIndex(idx, videoId: item.videoId, title: item.title, artist: item.artist)
             } else if let matchIdx = effectivePlaylist.firstIndex(where: { $0.id == item.id }) {
-                engine.playQueueIndex(matchIdx)
+                engine.playQueueIndex(matchIdx, videoId: item.videoId, title: item.title, artist: item.artist)
             } else if let matchIdx = playlist.firstIndex(where: { $0.id == item.id || ($0.title == item.title && $0.artist == item.artist) }) {
-                engine.playQueueIndex(matchIdx)
+                engine.playQueueIndex(matchIdx, videoId: item.videoId, title: item.title, artist: item.artist)
             } else if let vid = item.videoId, !vid.isEmpty {
-                engine.play(videoId: vid)
+                engine.play(videoId: vid, fallbackToRadio: false)
             } else {
                 playSearch("\(item.title) \(item.artist)")
             }
         } else if let vid = item.videoId, !vid.isEmpty {
-            // Direct playback of the exact clicked track in the playlist container
-            engine.play(videoId: vid, listId: selectedPlaybackListId)
+            // Direct playback of the exact clicked track in the playlist container (without radio hijack)
+            engine.play(videoId: vid, listId: selectedPlaybackListId, fallbackToRadio: false)
         } else {
             // Never blindly click random DOM list items on unrelated pages; search and play exact track
             playSearch("\(item.title) \(item.artist)")
@@ -1251,6 +1311,10 @@ public final class MediaControllerModel: ObservableObject {
     
     public func playEntireSelectedPlaylist() {
         guard let sel = selectedPlaylist, let first = sel.tracks.first else { return }
+        if sel.id == "pl_quickpicks" {
+            playQuickPick(first, startRadio: true)
+            return
+        }
         if sel.id == "pl_downloads" {
             playDownloadedTrack(first)
             return
@@ -1261,11 +1325,38 @@ public final class MediaControllerModel: ObservableObject {
         }
         if let vid = first.videoId, sel.id != "pl_queue" {
             markPlaying(first)
-            engine.play(videoId: vid, listId: selectedPlaybackListId)
+            engine.play(videoId: vid, listId: selectedPlaybackListId, fallbackToRadio: false)
             return
         }
         playSongInSelectedPlaylist(first)
         engine.playEntirePlaylist()
+    }
+    
+    /// Inserts a song into the live queue immediately after the currently active playing song.
+    public func playNext(_ track: YTMPlaylistItem) {
+        var cleanTrack = track
+        cleanTrack.isPlaying = false
+        
+        let activeId = activeTrackId(in: playlist)
+        // Remove prior occurrence to prevent duplicates in queue
+        playlist.removeAll(where: { $0.id == track.id || (track.videoId?.isEmpty == false && $0.videoId == track.videoId) })
+        
+        if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
+            let insertIdx = min(currentIdx + 1, playlist.count)
+            playlist.insert(cleanTrack, at: insertIdx)
+        } else {
+            playlist.insert(cleanTrack, at: 0)
+        }
+        
+        // Persist offline queue snapshot
+        YTMUserOfflineStore.shared.recordTracks(playlist)
+        
+        // Synchronize opened queue view if visible
+        if let sel = selectedPlaylist, sel.id == "pl_queue" {
+            var updated = sel
+            updated.tracks = playlist
+            selectedPlaylist = updated
+        }
     }
     
     public func refreshPlaylists() {
@@ -1381,15 +1472,11 @@ public final class MediaControllerModel: ObservableObject {
             triggerOfflineHandling(for: item.title)
             return
         }
-        trackTitle = item.title
-        artistName = item.artist
-        currentTime = 0
-        isPlaying = true
+        markPlaying(item)
         
-        if let idx = Int(item.id) {
-            engine.playQueueIndex(idx)
-        } else if let matchIdx = playlist.firstIndex(where: { $0.id == item.id }) {
-            engine.playQueueIndex(matchIdx)
+        let qIdx = Int(item.id) ?? playlist.firstIndex(where: { $0.id == item.id })
+        if let idx = qIdx {
+            engine.playQueueIndex(idx, videoId: item.videoId, title: item.title, artist: item.artist)
         } else {
             playSearch(item.title + " " + item.artist)
         }

@@ -230,6 +230,39 @@ public struct MediaView: View {
                     .font(.system(size: 8.5, weight: .heavy, design: .rounded))
                     .foregroundColor(theme.textPrimary)
                     .lineLimit(1)
+                
+                if media.repeatMode != .off {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                            media.toggleRepeat()
+                        }
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: media.repeatMode.iconName)
+                                .font(.system(size: 6.5, weight: .bold))
+                            Text(media.repeatMode == .one ? "Loop 1" : "Loop All")
+                                .font(.system(size: 6.5, weight: .bold))
+                        }
+                        .foregroundColor(theme.activePillText)
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1.5)
+                        .background(theme.activePillBackground)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Loop Active: \(media.repeatMode.hudTitle). Click to cycle, right-click for options.")
+                    .contextMenu {
+                        Button(action: { media.setRepeatMode(.off) }) {
+                            Label("Loop Off", systemImage: media.repeatMode == .off ? "checkmark" : "")
+                        }
+                        Button(action: { media.setRepeatMode(.all) }) {
+                            Label("Loop All (Playlist & Queue)", systemImage: media.repeatMode == .all ? "checkmark" : "")
+                        }
+                        Button(action: { media.setRepeatMode(.one) }) {
+                            Label("Loop Current Track", systemImage: media.repeatMode == .one ? "checkmark" : "")
+                        }
+                    }
+                }
             }
             .fixedSize(horizontal: true, vertical: false)
             
@@ -582,15 +615,35 @@ public struct MediaView: View {
                     media.toggleRepeat()
                 }
             }) {
-                Image(systemName: media.repeatMode.iconName)
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(media.repeatMode != .off ? theme.textPrimary : theme.textTertiary)
-                    .frame(width: 19, height: 19)
-                    .background(media.repeatMode != .off ? theme.cardBackgroundElevated : theme.cardBackground)
-                    .clipShape(Circle())
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: media.repeatMode.iconName)
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(media.repeatMode != .off ? theme.textPrimary : theme.textTertiary)
+                    
+                    if media.repeatMode == .all {
+                        Circle()
+                            .fill(theme.focusAccent)
+                            .frame(width: 3.5, height: 3.5)
+                            .offset(x: 1, y: 1)
+                    }
+                }
+                .frame(width: 19, height: 19)
+                .background(media.repeatMode != .off ? theme.cardBackgroundElevated : theme.cardBackground)
+                .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(media.repeatMode.displayTitle)
+            .help("Loop: \(media.repeatMode.hudTitle) (Click to cycle, right-click to choose)")
+            .contextMenu {
+                Button(action: { media.setRepeatMode(.off) }) {
+                    Label("Loop Off", systemImage: media.repeatMode == .off ? "checkmark" : "")
+                }
+                Button(action: { media.setRepeatMode(.all) }) {
+                    Label("Loop All (Playlist & Queue)", systemImage: media.repeatMode == .all ? "checkmark" : "")
+                }
+                Button(action: { media.setRepeatMode(.one) }) {
+                    Label("Loop Current Track", systemImage: media.repeatMode == .one ? "checkmark" : "")
+                }
+            }
             
             Button(action: {
                 media.stop()
@@ -1296,6 +1349,9 @@ public struct MediaView: View {
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(spacing: 4) {
+                        // Quick Entry: Algorithmic Quick Picks recommendations
+                        quickPicksPlaylistCardRow
+                        
                         // Quick Entry: Now Playing Live Queue (only if queue has real items)
                         if !media.effectivePlaylist.isEmpty {
                             nowPlayingQueueCardRow
@@ -1549,6 +1605,59 @@ public struct MediaView: View {
         .frame(width: size, height: size)
     }
     
+    private var quickPicksPlaylistCardRow: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                media.openQuickPicksPlaylist()
+            }
+        }) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(theme.cardBackgroundElevated)
+                        .frame(width: 26, height: 26)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                }
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Quick Picks")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.textPrimary)
+                        .lineLimit(1)
+                    
+                    Text("\(media.quickPicks.count) recommendations • Start radio")
+                        .font(.system(size: 8, weight: .regular))
+                        .foregroundColor(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer(minLength: 4)
+                
+                HStack(spacing: 4) {
+                    Text("\(media.quickPicks.count)")
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textTertiary)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(theme.textTertiary)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(theme.cardBackgroundSubtle)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(theme.hairlineBorder, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Open Quick Picks recommendations")
+    }
+    
     private var nowPlayingQueueCardRow: some View {
         Button(action: {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
@@ -1671,7 +1780,7 @@ public struct MediaView: View {
     
     private func playlistFallbackIcon(for playlist: YTMPlaylist) -> some View {
         let isLiked = playlist.id == "pl_liked" || playlist.title.lowercased().contains("liked")
-        let isMix = playlist.id == "pl_supermix" || playlist.title.lowercased().contains("mix")
+        let isMix = playlist.id == "pl_supermix" || playlist.id == "pl_quickpicks" || playlist.title.lowercased().contains("mix") || playlist.title.lowercased().contains("quick pick")
         let iconName = isLiked ? "heart.fill" : (isMix ? "sparkles" : "music.note.list")
         return Image(systemName: iconName)
             .font(.system(size: 10, weight: .bold))
@@ -1706,11 +1815,61 @@ public struct MediaView: View {
                             }
                             .padding(.vertical, 4)
                         }
+                        
+                        // Algorithmic Quick Picks recommendation shelf inside playlist (Native YouTube Music style)
+                        if playlist.id != "pl_quickpicks" && !media.quickPicks.isEmpty {
+                            playlistQuickPicksShelf(for: playlist)
+                        }
                     }
                     .padding(.trailing, 2)
                 }
             }
             .frame(maxHeight: .infinity)
+        }
+    }
+    
+    private func playlistQuickPicksShelf(for playlist: YTMPlaylist) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                HStack(spacing: 3) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                    Text("Quick Picks")
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.textPrimary)
+                        .lineLimit(1)
+                }
+                
+                Text("• Suggestions based on this playlist")
+                    .font(.system(size: 7, weight: .regular))
+                    .foregroundColor(theme.textTertiary)
+                    .lineLimit(1)
+                
+                Spacer(minLength: 4)
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        media.refreshQuickPicks()
+                    }
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(theme.textSecondary)
+                        .frame(width: 14, height: 14)
+                        .background(theme.cardBackgroundElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Refresh Quick Picks suggestions")
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
+            
+            ForEach(media.quickPicks.prefix(5)) { pick in
+                quickPickDetailedRow(track: pick)
+            }
         }
     }
     
@@ -1968,11 +2127,28 @@ public struct MediaView: View {
                 
                 Spacer(minLength: 4)
                 
-                // Track Duration
-                if !song.duration.isEmpty {
-                    Text(song.duration)
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.textTertiary)
+                // Track Duration & Quick Actions
+                HStack(spacing: 4) {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                            media.playNext(song)
+                        }
+                    }) {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(theme.textTertiary)
+                            .frame(width: 14, height: 14)
+                            .background(theme.cardBackgroundElevated.opacity(0.6))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play Next")
+
+                    if !song.duration.isEmpty {
+                        Text(song.duration)
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundColor(theme.textTertiary)
+                    }
                 }
             }
             .padding(.horizontal, 7)
@@ -1986,6 +2162,22 @@ public struct MediaView: View {
         }
         .buttonStyle(.plain)
         .help("Play \(song.title)")
+        .contextMenu {
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    media.playSongInSelectedPlaylist(song)
+                }
+            }) {
+                Label("Play Now", systemImage: "play.fill")
+            }
+            Button(action: {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                    media.playNext(song)
+                }
+            }) {
+                Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+        }
     }
     
     private var defaultArtPlaceholder: some View {

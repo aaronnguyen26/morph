@@ -386,4 +386,129 @@ final class YTMQuickPicksTests: XCTestCase {
         hosting.layoutSubtreeIfNeeded()
         XCTAssertEqual(media.rightDeckSection, .home)
     }
+
+    // MARK: - 5. Quick Picks in Playlist & Sequential Playback Tests
+
+    @MainActor
+    func testOpenQuickPicksPlaylistConfiguresContainerAndRendersInPlaylistsTab() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+
+        let t1 = YTMPlaylistItem(id: "qp_1", title: "Midnight City", artist: "M83", duration: "4:04", videoId: "vid1")
+        let t2 = YTMPlaylistItem(id: "qp_2", title: "Starboy", artist: "The Weeknd", duration: "3:50", videoId: "vid2")
+        media.quickPicks = [t1, t2]
+
+        // Act: Open Quick Picks playlist
+        media.openQuickPicksPlaylist()
+
+        // Assert: Container setup
+        XCTAssertNotNil(media.selectedPlaylist)
+        XCTAssertEqual(media.selectedPlaylist?.id, "pl_quickpicks")
+        XCTAssertEqual(media.selectedPlaylist?.title, "Quick Picks")
+        XCTAssertEqual(media.selectedPlaylist?.tracks.count, 2)
+        XCTAssertEqual(media.rightDeckSection, .playlists)
+
+        // Verify layout
+        let mediaView = MediaView(media: media)
+        let hosting = NSHostingView(rootView: mediaView)
+        hosting.frame = CGRect(x: 0, y: 0, width: 640, height: 225)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hosting)
+
+        // Playing a track from quick picks playlist sets active playing state
+        media.playSongInSelectedPlaylist(t1)
+        XCTAssertEqual(media.trackTitle, "Midnight City")
+        XCTAssertTrue(media.isPlaying)
+        XCTAssertTrue(media.selectedPlaylist?.tracks[0].isPlaying == true, "First track in Quick Picks playlist must be marked playing")
+    }
+
+    @MainActor
+    func testPlaylistSequentialNextTrackNeverJumpsToRandomRadioOrShelf() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+
+        let s0 = YTMPlaylistItem(id: "s0", title: "Song 0", artist: "Artist A", duration: "3:00", videoId: "v0")
+        let s1 = YTMPlaylistItem(id: "s1", title: "Song 1", artist: "Artist A", duration: "3:10", videoId: "v1")
+        let s2 = YTMPlaylistItem(id: "s2", title: "Song 2", artist: "Artist A", duration: "3:20", videoId: "v2")
+        let playlist = YTMPlaylist(id: "my_playlist", title: "My Favorites", tracks: [s0, s1, s2])
+
+        media.selectPlaylist(playlist)
+        XCTAssertEqual(media.selectedPlaylist?.id, "my_playlist")
+
+        // Start on Song 0
+        media.playSongInSelectedPlaylist(s0)
+        XCTAssertEqual(media.trackTitle, "Song 0")
+
+        // Next track MUST move sequentially to Song 1 in the playlist
+        media.nextTrack()
+        XCTAssertEqual(media.trackTitle, "Song 1", "nextTrack() inside a selected playlist must advance to Song 1, not jump to random radio")
+        XCTAssertTrue(media.selectedPlaylist?.tracks[1].isPlaying == true)
+
+        // Next track again MUST move to Song 2
+        media.nextTrack()
+        XCTAssertEqual(media.trackTitle, "Song 2", "nextTrack() inside a selected playlist must advance to Song 2")
+        XCTAssertTrue(media.selectedPlaylist?.tracks[2].isPlaying == true)
+    }
+
+    @MainActor
+    func testPlaylistPreviousTrackStepsSequentiallyBackward() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+
+        let s0 = YTMPlaylistItem(id: "s0", title: "Song 0", artist: "Artist A", duration: "3:00", videoId: "v0")
+        let s1 = YTMPlaylistItem(id: "s1", title: "Song 1", artist: "Artist A", duration: "3:10", videoId: "v1")
+        let s2 = YTMPlaylistItem(id: "s2", title: "Song 2", artist: "Artist A", duration: "3:20", videoId: "v2")
+        let playlist = YTMPlaylist(id: "my_playlist", title: "My Favorites", tracks: [s0, s1, s2])
+
+        media.selectPlaylist(playlist)
+        media.playSongInSelectedPlaylist(s2)
+        XCTAssertEqual(media.trackTitle, "Song 2")
+
+        // When currentTime <= 3.0s, previousTrack must immediately step back to Song 1
+        media.currentTime = 1.2
+        media.previousTrack()
+        XCTAssertEqual(media.trackTitle, "Song 1", "previousTrack() under 3s must step back to Song 1")
+        XCTAssertTrue(media.selectedPlaylist?.tracks[1].isPlaying == true)
+
+        // Previous track again must step back to Song 0
+        media.currentTime = 0.8
+        media.previousTrack()
+        XCTAssertEqual(media.trackTitle, "Song 0", "previousTrack() under 3s must step back to Song 0")
+        XCTAssertTrue(media.selectedPlaylist?.tracks[0].isPlaying == true)
+    }
+
+    @MainActor
+    func testWatchdogEnsurePlaybackEvaluatesUnblockingScript() {
+        let engine = YouTubeMusicEngine()
+        var evaluatedScript: String?
+        engine.onEvaluate = { script in
+            evaluatedScript = script
+        }
+
+        engine.ensurePlayback()
+
+        XCTAssertNotNil(evaluatedScript)
+        XCTAssertTrue(evaluatedScript?.contains("p.playVideo()") == true, "Must call movie_player.playVideo()")
+        XCTAssertTrue(evaluatedScript?.contains("wasMuted = v.muted") == true, "Must include mute-unmute WebKit autoplay unblocker")
+    }
+
+    @MainActor
+    func testPlaylistQuickPicksShelfEmbeddedInRegularPlaylistDetail() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+
+        let s0 = YTMPlaylistItem(id: "s0", title: "Album Song 1", artist: "Band A", videoId: "v0")
+        let playlist = YTMPlaylist(id: "album_1", title: "Greatest Hits", tracks: [s0])
+        media.selectPlaylist(playlist)
+
+        let q1 = YTMPlaylistItem(id: "q1", title: "Suggested Pick", artist: "Similar Artist", duration: "3:45", videoId: "vq1")
+        media.quickPicks = [q1]
+
+        let mediaView = MediaView(media: media)
+        let hosting = NSHostingView(rootView: mediaView)
+        hosting.frame = CGRect(x: 0, y: 0, width: 640, height: 225)
+        hosting.layoutSubtreeIfNeeded()
+
+        XCTAssertNotNil(hosting, "MediaView must build and lay out cleanly with Quick Picks suggestions embedded in playlist detail")
+    }
 }

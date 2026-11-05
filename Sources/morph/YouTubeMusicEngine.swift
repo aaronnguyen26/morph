@@ -318,6 +318,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var quickPicksError: String? = nil
     private var lastQuickPicksSync: Date?
     
+    public let trackEndedPublisher = PassthroughSubject<Void, Never>()
+    
     public var lastEvaluatedScript: String?
     public var onEvaluate: ((String) -> Void)?
     
@@ -455,6 +457,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let repStr = (body["repeatMode"] as? String) ?? "off"
         let repeatMode = YTMRepeatMode(rawValue: repStr) ?? .off
         let signedIn = (body["isSignedIn"] as? Bool) ?? false
+        let isEnded = (body["isEnded"] as? Bool) ?? false
+        
+        if isEnded {
+            self.trackEndedPublisher.send()
+        }
         
         var parsedQueue: [YTMPlaylistItem] = []
         if let rawQueue = body["queue"] as? [[String: Any]] {
@@ -903,6 +910,42 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
+    public func ensurePlayback() {
+        let script = """
+        (function() {
+            try {
+                if (typeof dismissModalsAndEnableAutoplay === 'function') {
+                    dismissModalsAndEnableAutoplay();
+                }
+                if (typeof ensureActivePlayback === 'function') {
+                    ensureActivePlayback();
+                }
+                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                var v = document.querySelector('video');
+                if (p && typeof p.getPlayerState === 'function') {
+                    var s = p.getPlayerState();
+                    if ((s === -1 || s === 2 || s === 5) && typeof p.playVideo === 'function') {
+                        p.playVideo();
+                    }
+                }
+                if (v && v.paused && !v.ended) {
+                    var wasMuted = v.muted;
+                    var promise = v.play();
+                    if (promise !== undefined) {
+                        promise.catch(function() {
+                            v.muted = true;
+                            v.play().then(function() {
+                                setTimeout(function() { v.muted = wasMuted; }, 150);
+                            }).catch(function(){});
+                        });
+                    }
+                }
+            } catch(e) {}
+        })();
+        """
+        evaluate(script)
+    }
+    
     public func nextTrack() {
         let script = """
         (function() {
@@ -940,11 +983,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                           document.querySelector('ytmusic-player-bar [aria-label*="tiếp" i]');
                 var clicked = false;
                 if (btn && !(btn.disabled || btn.getAttribute('aria-disabled') === 'true')) {
-                    btn.click();
+                    var inner = btn.querySelector('button, #button');
+                    (inner || btn).click();
+                    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                     clicked = true;
                 }
 
-                // 4. Fallback 1: Native Shift+N KeyboardEvent (Universal YouTube Music shortcut)
+                // 4. Fallback 1: Player API (direct invocation)
+                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                if (p && typeof p.nextVideo === 'function') {
+                    try { p.nextVideo(); } catch(e) {}
+                }
+
+                // 5. Fallback 2: Native Shift+N KeyboardEvent (Universal YouTube Music shortcut)
                 if (!clicked) {
                     var shiftN = new KeyboardEvent('keydown', {
                         key: 'N',
@@ -963,38 +1014,35 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     }
                 }
 
-                // 5. Fallback 2: Player API
-                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
-                if (!clicked && p && typeof p.nextVideo === 'function') {
-                    try { p.nextVideo(); } catch(e) {}
-                }
-
                 // 6. Fallback 3: DOM Queue item fallback
-                if (!clicked) {
-                    var queueItems = document.querySelectorAll('ytmusic-player-queue-item');
-                    if (queueItems && queueItems.length > 1) {
-                        for (var qi = 0; qi < queueItems.length - 1; qi++) {
-                            var item = queueItems[qi];
-                            if (item.hasAttribute('selected') || item.classList.contains('selected') || item.getAttribute('play-state') === 'playing') {
-                                var nextItem = queueItems[qi + 1];
-                                var playTarget = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
-                                playTarget.click();
-                                break;
-                            }
+                var queueItems = document.querySelectorAll('ytmusic-player-queue-item');
+                if (queueItems && queueItems.length > 1) {
+                    for (var qi = 0; qi < queueItems.length - 1; qi++) {
+                        var item = queueItems[qi];
+                        if (item.hasAttribute('selected') || item.classList.contains('selected') || item.getAttribute('play-state') === 'playing') {
+                            var nextItem = queueItems[qi + 1];
+                            var playTarget = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
+                            var innerTarget = playTarget.querySelector('button, #button');
+                            (innerTarget || playTarget).click();
+                            nextItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                            break;
                         }
                     }
                 }
 
-                // 7. Ensure video playback
+                // 7. Ensure active video playback with WebKit unblocking
                 var v = document.querySelector('video');
-                if (v && v.paused) {
+                if (v) {
                     var wasMuted = v.muted;
-                    v.play().catch(function() {
-                        v.muted = true;
-                        v.play().then(function() {
-                            setTimeout(function() { v.muted = wasMuted; }, 150);
-                        }).catch(function(){});
-                    });
+                    var playPromise = v.play();
+                    if (playPromise !== undefined) {
+                        playPromise.catch(function() {
+                            v.muted = true;
+                            v.play().then(function() {
+                                setTimeout(function() { v.muted = wasMuted; }, 150);
+                            }).catch(function(){});
+                        });
+                    }
                 }
             } catch(e) {}
             if (typeof window.morphSendUpdate === 'function') {
@@ -1312,29 +1360,77 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
-    public func playQueueIndex(_ index: Int) {
+    public func playQueueIndex(_ index: Int, videoId: String? = nil, title: String? = nil, artist: String? = nil) {
+        let vidArg = videoId.map { "'\($0.replacingOccurrences(of: "'", with: "\\'"))'" } ?? "null"
+        let titleArg = title.map { "'\($0.replacingOccurrences(of: "'", with: "\\'"))'" } ?? "null"
+        let artistArg = artist.map { "'\($0.replacingOccurrences(of: "'", with: "\\'"))'" } ?? "null"
+        
         let script = """
         (function() {
+            var targetIdx = \(index);
+            var targetVid = \(vidArg);
+            var targetTitle = \(titleArg);
+            var targetArtist = \(artistArg);
+            
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            var played = false;
+            
+            // 1. Try movie_player API playVideoAt
             if (p && typeof p.playVideoAt === 'function') {
                 try {
                     p.playVideoAt(\(index));
-                    if (typeof window.morphSendUpdate === 'function') {
-                        setTimeout(window.morphSendUpdate, 250);
-                    }
-                    return;
+                    played = true;
                 } catch(e) {}
             }
+            
+            // 2. DOM Queue Item fallback or targeted matching
             var items = document.querySelectorAll('ytmusic-player-queue-item, ytmusic-player-queue #contents ytmusic-player-queue-item');
-            if (items && items.length > \(index)) {
-                var target = items[\(index)];
-                var playBtn = target.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || target;
-                var inner = playBtn.querySelector('button, #button');
-                (inner || playBtn).click();
-                target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            if (items && items.length > 0) {
+                var targetItem = null;
+                // If title or videoId provided, search for matching DOM element
+                if (targetTitle) {
+                    var normTarget = targetTitle.toLowerCase();
+                    for (var i = 0; i < items.length; i++) {
+                        var it = items[i];
+                        var tEl = it.querySelector('.song-title') || it.querySelector('.title') || it.querySelector('yt-formatted-string.song-title');
+                        var itTitle = (tEl ? (tEl.innerText || tEl.textContent || '') : '').toLowerCase();
+                        if (itTitle && (itTitle === normTarget || itTitle.indexOf(normTarget) !== -1 || normTarget.indexOf(itTitle) !== -1)) {
+                            targetItem = it;
+                            break;
+                        }
+                    }
+                }
+                if (!targetItem && targetIdx >= 0 && targetIdx < items.length) {
+                    targetItem = items[targetIdx];
+                }
+                if (targetItem) {
+                    var playBtn = targetItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || targetItem;
+                    var inner = playBtn.querySelector('button, #button');
+                    (inner || playBtn).click();
+                    targetItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    played = true;
+                }
+            }
+            
+            // 3. WebKit Autoplay Unblocker & Watchdog Kickoff
+            var v = document.querySelector('video');
+            if (v) {
+                var wasMuted = v.muted;
+                var promise = v.play();
+                if (promise !== undefined) {
+                    promise.catch(function() {
+                        v.muted = true;
+                        v.play().then(function() {
+                            setTimeout(function() { v.muted = wasMuted; }, 150);
+                        }).catch(function(){});
+                    });
+                }
+            }
+            if (typeof startTransitionWatchdog === 'function') {
+                startTransitionWatchdog();
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 350);
+                setTimeout(window.morphSendUpdate, 250);
             }
         })();
         """
@@ -1560,7 +1656,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     // MARK: Direct playback by video id
-    public func play(videoId: String, listId: String? = nil) {
+    public func play(videoId: String, listId: String? = nil, fallbackToRadio: Bool = true) {
         guard !MorphEnvironment.isTestingEnvironment else { return }
         let vid = videoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !vid.isEmpty else { return }
@@ -1571,9 +1667,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             cleanList = String(l.dropFirst(2))
         }
         
-        // Continuous Playback Guarantee: If no playlist is provided, default to the song's Radio list (RDAMVM<videoId>)
-        // YouTube Music uses RDAMVM to automatically generate an endless autoplay queue of related songs.
-        if cleanList == nil || cleanList?.isEmpty == true {
+        // Continuous Playback Guarantee: If no playlist is provided and fallbackToRadio is true, default to song's Radio (RDAMVM<videoId>)
+        if (cleanList == nil || cleanList?.isEmpty == true) && fallbackToRadio {
             cleanList = "RDAMVM\(vid)"
         }
         
@@ -1584,18 +1679,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var vid = '\(vid)';
             var listId = \(listArg);
             
-            // 1. Trigger Polymer client-side link navigation so YouTube Music's SPA router,
-            // player bar, queue, and mediaSession update together seamlessly.
-            try {
-                var watchPath = '/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
-                var link = document.createElement('a');
-                link.href = watchPath;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-            } catch(eNav) {}
-            
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+            var played = false;
             if (p) {
                 try {
                     if (typeof p.loadVideoById === 'function') {
@@ -1608,27 +1693,44 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         } else {
                             p.loadVideoById(vid);
                         }
+                        played = true;
                     } else if (typeof p.loadVideoByPlayerVars === 'function') {
                         p.loadVideoByPlayerVars({ videoId: vid, list: listId });
+                        played = true;
                     }
                     if (typeof p.playVideo === 'function') {
                         p.playVideo();
                     }
                     var v = document.querySelector('video');
-                    if (v && v.paused) {
+                    if (v) {
                         var wasMuted = v.muted;
-                        v.play().catch(function() {
-                            v.muted = true;
-                            v.play().then(function() {
-                                setTimeout(function() { v.muted = wasMuted; }, 150);
-                            }).catch(function(){});
-                        });
+                        var promise = v.play();
+                        if (promise !== undefined) {
+                            promise.catch(function() {
+                                v.muted = true;
+                                v.play().then(function() {
+                                    setTimeout(function() { v.muted = wasMuted; }, 150);
+                                }).catch(function(){});
+                            });
+                        }
                     }
                     if (typeof window.morphSendUpdate === 'function') {
                         setTimeout(window.morphSendUpdate, 250);
                     }
                     return true;
                 } catch(e) {}
+            }
+            
+            // 2. Fallback: Trigger Polymer client-side link navigation if movie_player API is not yet loaded
+            if (!played) {
+                try {
+                    var watchPath = '/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
+                    var link = document.createElement('a');
+                    link.href = watchPath;
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                } catch(eNav) {}
             }
             // Fallback inside page: navigate to absolute canonical URL (never relative, which throws SyntaxError in WebKit)
             var target = 'https://music.youtube.com/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
@@ -2234,13 +2336,28 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var playerEl = document.getElementById('movie_player') || document.querySelector('#movie_player');
                 
                 var isPlaying = false;
-                if (navigator.mediaSession && navigator.mediaSession.playbackState) {
-                    isPlaying = (navigator.mediaSession.playbackState === 'playing');
+                if (videoEl) {
+                    // Direct truth from video element: playing iff not paused, not ended, has frames (readyState >= 2), and not seeking
+                    isPlaying = (!videoEl.paused && !videoEl.ended && videoEl.readyState >= 2 && !videoEl.seeking);
                 } else if (playerEl && typeof playerEl.getPlayerState === 'function') {
                     var s = playerEl.getPlayerState();
-                    isPlaying = (s === 1 || s === 3);
-                } else if (videoEl) {
-                    isPlaying = (!videoEl.paused && !videoEl.ended);
+                    isPlaying = (s === 1); // State 1 is Playing. State 3 is Buffering, not playing!
+                } else if (navigator.mediaSession && navigator.mediaSession.playbackState) {
+                    isPlaying = (navigator.mediaSession.playbackState === 'playing');
+                }
+                
+                if (title && title !== 'YouTube Music') {
+                    if (_morphLastKnownTitle && title !== _morphLastKnownTitle) {
+                        if (_morphWasPlayingBeforeTransition || _morphTransitionPending) {
+                            startTransitionWatchdog();
+                            ensureActivePlayback();
+                        }
+                    }
+                    _morphLastKnownTitle = title;
+                }
+                if (isPlaying && (videoEl ? videoEl.currentTime > 0 : true)) {
+                    _morphWasPlayingBeforeTransition = true;
+                    _morphTransitionPending = false;
                 }
                 
                 var currentTime = videoEl ? videoEl.currentTime : (playerEl && typeof playerEl.getCurrentTime === 'function' ? playerEl.getCurrentTime() : 0);
@@ -2502,7 +2619,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var _morphLastSendTime = 0;
             var _morphSendPendingTimeout = null;
             
-            window.morphSendUpdate = function(force) {
+            window.morphSendUpdate = function(force, isEnded) {
                 try {
                     var now = Date.now();
                     if (!force && (now - _morphLastSendTime) < 350) {
@@ -2520,6 +2637,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     }
                     _morphLastSendTime = now;
                     var data = getTrackInfo();
+                    if (isEnded) {
+                        data.isEnded = true;
+                    }
                     window.webkit.messageHandlers.\(kHandlerName).postMessage(data);
                 } catch(e) {}
             };
@@ -2555,6 +2675,57 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 } catch(e) {}
             }
 
+            var _morphLastKnownTitle = '';
+            var _morphWasPlayingBeforeTransition = false;
+            var _morphTransitionPending = false;
+            var _morphTransitionTimer = null;
+
+            function ensureActivePlayback() {
+                try {
+                    dismissModalsAndEnableAutoplay();
+                    var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                    var v = document.querySelector('video');
+                    if (p && typeof p.getPlayerState === 'function') {
+                        var state = p.getPlayerState();
+                        // State -1: unstarted, 2: paused, 5: cued
+                        if ((state === -1 || state === 2 || state === 5) && typeof p.playVideo === 'function') {
+                            try { p.playVideo(); } catch(eP) {}
+                        }
+                    }
+                    if (v && v.paused && !v.ended) {
+                        var wasMuted = v.muted;
+                        var promise = v.play();
+                        if (promise !== undefined) {
+                            promise.catch(function() {
+                                v.muted = true;
+                                v.play().then(function() {
+                                    setTimeout(function() { v.muted = wasMuted; }, 150);
+                                }).catch(function(){});
+                            });
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            function startTransitionWatchdog() {
+                _morphTransitionPending = true;
+                if (_morphTransitionTimer) clearTimeout(_morphTransitionTimer);
+                [100, 300, 700, 1300, 2000].forEach(function(d) {
+                    setTimeout(function() {
+                        if (_morphTransitionPending) {
+                            ensureActivePlayback();
+                            var v = document.querySelector('video');
+                            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                            var isNowPlaying = (v && !v.paused && !v.ended && v.currentTime > 0) || (p && typeof p.getPlayerState === 'function' && p.getPlayerState() === 1);
+                            if (isNowPlaying) {
+                                _morphTransitionPending = false;
+                                _morphWasPlayingBeforeTransition = true;
+                            }
+                        }
+                    }, d);
+                });
+            }
+
             function triggerNextVideo() {
                 try {
                     dismissModalsAndEnableAutoplay();
@@ -2564,7 +2735,20 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     if (window._morphTargetRepeatMode === 'one' || (v && v.loop)) {
                         if (v) {
                             v.currentTime = 0;
-                            v.play();
+                            var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                            if (p && typeof p.seekTo === 'function') {
+                                p.seekTo(0, true);
+                            }
+                            var wasMuted = v.muted;
+                            var promise = v.play();
+                            if (promise !== undefined) {
+                                promise.catch(function() {
+                                    v.muted = true;
+                                    v.play().then(function() {
+                                        setTimeout(function() { v.muted = wasMuted; }, 100);
+                                    }).catch(function(){});
+                                });
+                            }
                         }
                         return;
                     }
@@ -2614,6 +2798,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     if (!advanced && btn && (!btn.disabled && !btn.hasAttribute('disabled'))) {
                         var inner = btn.querySelector('button, #button');
                         (inner || btn).click();
+                        btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                         advanced = true;
                     }
 
@@ -2638,14 +2823,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                     }
 
-                    // Fallback 2: Start first playable recommendation or up-next track ONLY if not repeating all/one
-                    if (!advanced && window._morphTargetRepeatMode !== 'all' && window._morphTargetRepeatMode !== 'one') {
-                        var recPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-shelf-renderer #play-button');
-                        if (recPlay) {
-                            var innerR = recPlay.querySelector('button, #button');
-                            (innerR || recPlay).click();
-                        }
-                    }
+                    // Never click random shelf items or recommendations (prevents jumping to random songs!)
+                    ensureActivePlayback();
                 } catch(e) {}
             }
             
@@ -2656,29 +2835,58 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     if (window._morphTargetRepeatMode === 'one') {
                         v.loop = true;
                     }
-                    ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange'].forEach(function(evt) {
+                    ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange', 'loadedmetadata', 'canplay'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
                             dismissModalsAndEnableAutoplay();
+                            if ((evt === 'loadedmetadata' || evt === 'canplay') && _morphTransitionPending) {
+                                ensureActivePlayback();
+                            }
                             window.morphSendUpdate(evt === 'play' || evt === 'pause' || evt === 'ended');
                         });
                     });
                     
                     // Auto-advance or seamless repeat when current track ends
                     v.addEventListener('ended', function() {
-                        window.morphSendUpdate(true);
+                        window.morphSendUpdate(true, true);
                         if (window._morphTargetRepeatMode === 'one' || v.loop) {
                             try {
                                 v.currentTime = 0;
-                                v.play();
+                                var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                                if (p && typeof p.seekTo === 'function') {
+                                    p.seekTo(0, true);
+                                }
+                                var wasMuted = v.muted;
+                                var promise = v.play();
+                                if (promise !== undefined) {
+                                    promise.catch(function() {
+                                        v.muted = true;
+                                        v.play().then(function() {
+                                            setTimeout(function() { v.muted = wasMuted; }, 100);
+                                        }).catch(function(){});
+                                    });
+                                }
                             } catch(e) {}
                             return;
                         }
-                        // Allow YouTube Music's native queue engine to advance naturally without cutting off tracks
+                        
+                        _morphWasPlayingBeforeTransition = true;
+                        startTransitionWatchdog();
+                        
+                        // If YouTube Music native player has not begun advancing after 280ms, gently nudge forward
+                        setTimeout(function() {
+                            var vNow = document.querySelector('video');
+                            if (vNow && vNow.ended) {
+                                triggerNextVideo();
+                            }
+                        }, 280);
                     });
                     
                     // Continuous playback: dismiss any "Still watching?" modals and keep autoplay active
                     v.addEventListener('timeupdate', function() {
                         dismissModalsAndEnableAutoplay();
+                        if (_morphTransitionPending) {
+                            ensureActivePlayback();
+                        }
                     });
                 }
             }
@@ -2686,6 +2894,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var _morphMutationTimeout = null;
             var observer = new MutationObserver(function() {
                 attachVideoListeners();
+                if (_morphTransitionPending) {
+                    ensureActivePlayback();
+                }
                 if (!_morphMutationTimeout) {
                     _morphMutationTimeout = setTimeout(function() {
                         _morphMutationTimeout = null;
@@ -2706,6 +2917,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             
             setInterval(function() {
                 attachVideoListeners();
+                dismissModalsAndEnableAutoplay();
+                if (_morphTransitionPending) {
+                    ensureActivePlayback();
+                }
                 window.morphSendUpdate(false);
             }, 1000);
         })();
