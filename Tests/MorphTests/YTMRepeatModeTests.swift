@@ -212,4 +212,168 @@ final class YTMRepeatModeTests: XCTestCase {
         XCTAssertEqual(notchModel.media.repeatMode, .off)
         XCTAssertEqual(shortcuts.lastTriggeredShortcut, "⌘R Repeat Off")
     }
+    
+    func testHandleTrackEndedInRepeatOneModeLoopsCurrentTrackWithoutAdvancing() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        let t1 = YTMPlaylistItem(id: "1", title: "Original Song", artist: "Artist 1", duration: "3:45", isPlaying: true)
+        let t2 = YTMPlaylistItem(id: "2", title: "Next In Queue", artist: "Artist 2", duration: "4:00", isPlaying: false)
+        let playlist = YTMPlaylist(id: "p1", title: "Album", subtitle: "", tracks: [t1, t2])
+        media.selectedPlaylist = playlist
+        media.trackTitle = "Original Song"
+        media.currentTime = 225.0
+        media.duration = 225.0
+        media.isPlaying = true
+        
+        // Activate Loop Current Track
+        media.setRepeatMode(.one)
+        XCTAssertEqual(media.repeatMode, .one)
+        
+        // Track finishes: trigger track completion
+        media.handleTrackEnded(force: true)
+        
+        // Must stay on original song and rewind to 0
+        XCTAssertEqual(media.trackTitle, "Original Song", "Track title must remain the same in Repeat One mode")
+        XCTAssertEqual(media.currentTime, 0.0, "Current time must reset to 0 in Repeat One mode")
+        XCTAssertTrue(media.isPlaying)
+    }
+    
+    func testToggleShuffleAndSetShuffle() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        XCTAssertFalse(media.isShuffle)
+        XCTAssertFalse(media.showShuffleHUD)
+        
+        media.toggleShuffle()
+        XCTAssertTrue(media.isShuffle)
+        XCTAssertTrue(media.showShuffleHUD, "HUD must trigger when shuffle is toggled on")
+        
+        media.toggleShuffle()
+        XCTAssertFalse(media.isShuffle)
+        XCTAssertTrue(media.showShuffleHUD, "HUD must trigger when shuffle is toggled off")
+        
+        media.setShuffle(true)
+        XCTAssertTrue(media.isShuffle)
+        XCTAssertTrue(media.showShuffleHUD)
+    }
+    
+    func testOptimisticLockoutPreventsTransientEngineShuffleFlicker() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        XCTAssertFalse(media.isShuffle)
+        
+        media.setShuffle(true)
+        XCTAssertTrue(media.isShuffle)
+        
+        // Simulate engine sending back stale isShuffle: false within lockout window
+        engine.trackData = YTMTrackData(
+            title: "Testing Song",
+            artist: "Testing Artist",
+            albumArtURL: "",
+            isPlaying: true,
+            currentTime: 10,
+            duration: 200,
+            volume: 0.5,
+            isMuted: false,
+            isLiked: false,
+            isDisliked: false,
+            isShuffle: false,
+            repeatMode: .off,
+            queue: []
+        )
+        
+        // media.isShuffle should remain true due to optimistic lockout
+        XCTAssertTrue(media.isShuffle, "Morph UI must not flicker to stale engine shuffle state during optimistic lockout")
+    }
+    
+    func testRandomNextPicksRandomTrackInPlaylist() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        var tracks: [YTMPlaylistItem] = []
+        for i in 1...10 {
+            tracks.append(YTMPlaylistItem(id: "\(i)", title: "Track \(i)", artist: "Artist", duration: "3:00", isPlaying: i == 1))
+        }
+        let playlist = YTMPlaylist(id: "p_test", title: "Big Playlist", subtitle: "", tracks: tracks)
+        media.selectedPlaylist = playlist
+        media.trackTitle = "Track 1"
+        media.isPlaying = true
+        
+        // Enable Random Next (Shuffle Mode)
+        media.setShuffle(true)
+        
+        // Call nextTrack multiple times and verify it selects tracks at random
+        var playedTrackTitles: Set<String> = []
+        for _ in 0..<15 {
+            media.nextTrack()
+            playedTrackTitles.insert(media.trackTitle)
+        }
+        
+        // With 10 tracks and 15 calls in shuffle mode, multiple distinct tracks must have been played
+        XCTAssertGreaterThan(playedTrackTitles.count, 1, "Random Next must select various random tracks from playlist")
+        XCTAssertTrue(media.isPlaying)
+    }
+    
+    func testRandomNextPicksRandomTrackInQueue() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        var queue: [YTMPlaylistItem] = []
+        for i in 1...10 {
+            queue.append(YTMPlaylistItem(id: "\(i)", title: "Queue Track \(i)", artist: "Artist", duration: "3:00", isPlaying: i == 1))
+        }
+        media.playlist = queue
+        media.selectedPlaylist = nil
+        media.trackTitle = "Queue Track 1"
+        media.isPlaying = true
+        
+        // Enable Random Next (Shuffle Mode)
+        media.setShuffle(true)
+        
+        var playedTitles: Set<String> = []
+        for _ in 0..<15 {
+            media.nextTrack()
+            playedTitles.insert(media.trackTitle)
+        }
+        
+        XCTAssertGreaterThan(playedTitles.count, 1, "Random Next must select various random tracks from queue")
+        XCTAssertTrue(media.isPlaying)
+    }
+    
+    func testRandomNextPreviousTrackTraversesPlaybackHistory() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        let t1 = YTMPlaylistItem(id: "1", title: "Song 1", artist: "Artist", duration: "3:00", isPlaying: true)
+        let t2 = YTMPlaylistItem(id: "2", title: "Song 2", artist: "Artist", duration: "3:00", isPlaying: false)
+        let t3 = YTMPlaylistItem(id: "3", title: "Song 3", artist: "Artist", duration: "3:00", isPlaying: false)
+        let playlist = YTMPlaylist(id: "p_hist", title: "History Test", subtitle: "", tracks: [t1, t2, t3])
+        media.selectedPlaylist = playlist
+        media.trackTitle = "Song 1"
+        media.isPlaying = true
+        
+        // Turn on shuffle
+        media.setShuffle(true)
+        
+        // Advance to a random next track
+        media.nextTrack()
+        let secondTrackTitle = media.trackTitle
+        XCTAssertNotEqual(secondTrackTitle, "Song 1")
+        
+        // Now hit previousTrack (currentTime <= 3.0)
+        media.currentTime = 1.0
+        media.previousTrack()
+        
+        // Should return to Song 1 via playbackHistory
+        XCTAssertEqual(media.trackTitle, "Song 1", "previousTrack must return to previous track from history in shuffle mode")
+    }
 }

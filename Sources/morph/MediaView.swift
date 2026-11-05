@@ -408,7 +408,9 @@ public struct MediaView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(isSearching ? "Close Search" : "Search YouTube Music Songs")
+            .help(isSearching ? "Close Search (Esc)" : "Search YouTube Music Songs (/)")
+            .accessibilityLabel(isSearching ? "Close Search" : "Search YouTube Music Songs")
+            .accessibilityHint("Shortcut: Slash (/) to search, Escape to dismiss.")
             
             Button(action: {
                 media.toggleLike()
@@ -421,7 +423,9 @@ public struct MediaView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(media.isLiked ? "Liked (Click to unlike)" : "Like Track (⌘L)")
+            .help(media.isLiked ? "Liked (Click to unlike, + or ⌘L)" : "Like Track (+ or ⌘L)")
+            .accessibilityLabel(media.isLiked ? "Remove Like" : "Like Track")
+            .accessibilityHint("Shortcut: Plus (+) or Command+L to favorite.")
             
             Button(action: {
                 media.toggleDislike()
@@ -434,7 +438,9 @@ public struct MediaView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(media.isDisliked ? "Disliked" : "Dislike Track")
+            .help(media.isDisliked ? "Disliked (Click to remove, -)" : "Dislike Track (-)")
+            .accessibilityLabel(media.isDisliked ? "Remove Dislike" : "Dislike Track")
+            .accessibilityHint("Shortcut: Minus (-).")
             
             if !media.isSignedIn {
                 Button(action: {
@@ -558,17 +564,30 @@ public struct MediaView: View {
             Spacer(minLength: 0)
             
             Button(action: {
-                media.toggleShuffle()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    media.toggleShuffle()
+                }
             }) {
-                Image(systemName: "shuffle")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundColor(media.isShuffle ? theme.textPrimary : theme.textTertiary)
-                    .frame(width: 19, height: 19)
-                    .background(media.isShuffle ? theme.cardBackgroundElevated : theme.cardBackground)
-                    .clipShape(Circle())
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundColor(media.isShuffle ? theme.textPrimary : theme.textTertiary)
+                    
+                    if media.isShuffle {
+                        Circle()
+                            .fill(theme.focusAccent)
+                            .frame(width: 3.5, height: 3.5)
+                            .offset(x: 1, y: 1)
+                    }
+                }
+                .frame(width: 19, height: 19)
+                .background(media.isShuffle ? theme.cardBackgroundElevated : theme.cardBackground)
+                .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help(media.isShuffle ? "Shuffle On" : "Shuffle Off")
+            .help(media.isShuffle ? "Random Next On / Shuffle (S)" : "Random Next Off / Shuffle (S)")
+            .accessibilityLabel("Shuffle and Random Next")
+            .accessibilityHint("Shortcut: S. Toggles random shuffle playback.")
             
             Button(action: {
                 media.previousTrack()
@@ -581,7 +600,9 @@ public struct MediaView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Previous Track (⌘[ or ⌘←)")
+            .help("Previous Track (F7, ⇧P, ⌘[, ⌘←)")
+            .accessibilityLabel("Previous Track")
+            .accessibilityHint("Shortcut: F7, Shift+P, Command+[, or Command+Left Arrow. Returns to the previous track.")
             
             Button(action: {
                 media.togglePlay()
@@ -595,7 +616,9 @@ public struct MediaView: View {
                     .shadow(color: theme.isDark ? Color.white.opacity(0.25) : Color.black.opacity(0.15), radius: 3, x: 0, y: 1)
             }
             .buttonStyle(.plain)
-            .help(media.isPlaying ? "Pause Music (⌘⏎)" : "Play Music (⌘⏎)")
+            .help(media.isPlaying ? "Pause Music (F8, Space, K, ⌘⏎)" : "Play Music (F8, Space, K, ⌘⏎)")
+            .accessibilityLabel(media.isPlaying ? "Pause Music" : "Play Music")
+            .accessibilityHint("Shortcut: F8, Space, K, or Command+Return. Toggles music playback.")
             
             Button(action: {
                 media.nextTrack()
@@ -608,7 +631,9 @@ public struct MediaView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Next Track (⌘] or ⌘→)")
+            .help(media.isShuffle ? "Random Next Track (F9, ⇧N, ⌘], ⌘→)" : "Next Track (F9, ⇧N, ⌘], ⌘→)")
+            .accessibilityLabel("Next Track")
+            .accessibilityHint("Shortcut: F9, Shift+N, Command+], or Command+Right Arrow. Skips to next track.")
             
             Button(action: {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
@@ -632,7 +657,9 @@ public struct MediaView: View {
                 .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Loop: \(media.repeatMode.hudTitle) (Click to cycle, right-click to choose)")
+            .help("Loop: \(media.repeatMode.hudTitle) (R, ⌘⇧R - Click to cycle, right-click to choose)")
+            .accessibilityLabel("Loop Mode: \(media.repeatMode.hudTitle)")
+            .accessibilityHint("Shortcut: R or Command+Shift+R. Cycles between loop off, loop playlist, and loop single track.")
             .contextMenu {
                 Button(action: { media.setRepeatMode(.off) }) {
                     Label("Loop Off", systemImage: media.repeatMode == .off ? "checkmark" : "")

@@ -1233,9 +1233,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         evaluate(script)
     }
     
-    public func toggleShuffle() {
+    public func setShuffle(_ enable: Bool) {
+        trackData.isShuffle = enable
         let script = """
         (function() {
+            window._morphTargetShuffle = \(enable);
             var btn = document.querySelector('ytmusic-player-bar .shuffle') || 
                       document.querySelector('#right-controls .shuffle') || 
                       document.querySelector('.shuffle.ytmusic-player-bar') ||
@@ -1243,18 +1245,28 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                       document.querySelector('ytmusic-player-bar [aria-label*="Shuffle" i]') ||
                       document.querySelector('ytmusic-player-bar [aria-label*="xáo trộn" i]');
             if (btn) {
-                btn.click();
-                if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
-                    var inner = btn.querySelector('button, #button');
-                    if (inner) inner.click();
+                var inner = btn.querySelector('button, #button') || (btn.shadowRoot && btn.shadowRoot.querySelector('button, #button')) || btn;
+                var sTitle = (btn.getAttribute('title') || btn.getAttribute('aria-label') || inner.getAttribute('aria-label') || '').toLowerCase();
+                var currentPressed = btn.getAttribute('aria-pressed') === 'true' || 
+                                     inner.getAttribute('aria-pressed') === 'true' || 
+                                     btn.classList.contains('active') ||
+                                     sTitle.indexOf('on') !== -1 || sTitle.indexOf('bật') !== -1;
+                var target = \(enable);
+                if (currentPressed !== target) {
+                    (inner || btn).click();
+                    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                 }
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 250);
+                setTimeout(window.morphSendUpdate, 200);
             }
         })();
         """
         evaluate(script)
+    }
+
+    public func toggleShuffle() {
+        setShuffle(!trackData.isShuffle)
     }
     
     public func setRepeatMode(_ mode: YTMRepeatMode) {
@@ -1273,30 +1285,47 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             document.querySelector('ytmusic-player-bar [aria-label*="Repeat" i]') ||
                             document.querySelector('ytmusic-player-bar [aria-label*="lặp lại" i]');
             if (repeatBtn) {
+                var inner = repeatBtn.querySelector('button, #button') || (repeatBtn.shadowRoot && repeatBtn.shadowRoot.querySelector('button, #button')) || repeatBtn;
                 function currentYTMMode() {
-                    var inner = repeatBtn.querySelector('button') || repeatBtn;
-                    var rText = ((repeatBtn.getAttribute('aria-label') || repeatBtn.getAttribute('title') || '') + ' ' + 
-                                 (inner.getAttribute('aria-label') || inner.getAttribute('title') || '') + ' ' +
+                    var rText = ((repeatBtn.getAttribute('aria-label') || '') + ' ' + 
+                                 (repeatBtn.getAttribute('title') || '') + ' ' + 
+                                 (inner.getAttribute('aria-label') || '') + ' ' + 
+                                 (inner.getAttribute('title') || '') + ' ' +
                                  (repeatBtn.innerText || '')).toLowerCase();
-                    var rPressed = repeatBtn.getAttribute('aria-pressed') === 'true' || inner.getAttribute('aria-pressed') === 'true';
+                    var rPressed = repeatBtn.getAttribute('aria-pressed') === 'true' || 
+                                   inner.getAttribute('aria-pressed') === 'true' ||
+                                   repeatBtn.classList.contains('active');
                     if (rText.indexOf('one') !== -1 || rText.indexOf('1') !== -1 || rText.indexOf('một') !== -1) {
                         return 'one';
-                    } else if (rText.indexOf('all') !== -1 || rText.indexOf('tất cả') !== -1 || rPressed) {
+                    } else if (rText.indexOf('all') !== -1 || rText.indexOf('tất cả') !== -1 || (rPressed && rText.indexOf('off') === -1)) {
                         return 'all';
                     } else {
                         return 'off';
                     }
                 }
                 var target = '\(mode.rawValue)';
-                var attempts = 0;
-                while (currentYTMMode() !== target && attempts < 4) {
-                    var inner = repeatBtn.querySelector('button, #button');
-                    (inner || repeatBtn).click();
-                    attempts++;
+                var cur = currentYTMMode();
+                var neededClicks = 0;
+                if (cur !== target) {
+                    if (cur === 'off') {
+                        neededClicks = (target === 'all' ? 1 : 2);
+                    } else if (cur === 'all') {
+                        neededClicks = (target === 'one' ? 1 : 2);
+                    } else if (cur === 'one') {
+                        neededClicks = (target === 'off' ? 1 : 2);
+                    }
+                }
+                for (var c = 0; c < neededClicks; c++) {
+                    (function(delay) {
+                        setTimeout(function() {
+                            (inner || repeatBtn).click();
+                            repeatBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                        }, delay);
+                    })(c * 120);
                 }
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 150);
+                setTimeout(window.morphSendUpdate, 350);
             }
         })();
         """
@@ -2406,12 +2435,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                  document.querySelector('[aria-label*="xáo trộn" i]');
                 var isShuffle = false;
                 if (shuffleBtn) {
-                    var innerShuffle = shuffleBtn.querySelector('button') || shuffleBtn;
-                    var sTitle = (shuffleBtn.getAttribute('title') || shuffleBtn.getAttribute('aria-label') || '').toLowerCase();
+                    var innerShuffle = shuffleBtn.querySelector('button, #button') || (shuffleBtn.shadowRoot && shuffleBtn.shadowRoot.querySelector('button, #button')) || shuffleBtn;
+                    var sTitle = (shuffleBtn.getAttribute('title') || shuffleBtn.getAttribute('aria-label') || innerShuffle.getAttribute('aria-label') || '').toLowerCase();
                     isShuffle = (shuffleBtn.getAttribute('aria-pressed') === 'true' || 
                                  innerShuffle.getAttribute('aria-pressed') === 'true' ||
                                  shuffleBtn.classList.contains('active') ||
                                  sTitle.indexOf('on') !== -1 || sTitle.indexOf('bật') !== -1);
+                }
+                if (typeof window._morphTargetShuffle === 'boolean') {
+                    isShuffle = window._morphTargetShuffle;
+                } else {
+                    window._morphTargetShuffle = isShuffle;
                 }
                 
                 // Repeat detection
@@ -2423,14 +2457,18 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                 document.querySelector('[aria-label*="lặp lại" i]');
                 var repeatMode = 'off';
                 if (repeatBtn) {
-                    var innerRepeat = repeatBtn.querySelector('button') || repeatBtn;
-                    var rText = ((repeatBtn.getAttribute('aria-label') || repeatBtn.getAttribute('title') || '') + ' ' + 
-                                 (innerRepeat.getAttribute('aria-label') || innerRepeat.getAttribute('title') || '') + ' ' +
+                    var innerRepeat = repeatBtn.querySelector('button, #button') || (repeatBtn.shadowRoot && repeatBtn.shadowRoot.querySelector('button, #button')) || repeatBtn;
+                    var rText = ((repeatBtn.getAttribute('aria-label') || '') + ' ' + 
+                                 (repeatBtn.getAttribute('title') || '') + ' ' + 
+                                 (innerRepeat.getAttribute('aria-label') || '') + ' ' + 
+                                 (innerRepeat.getAttribute('title') || '') + ' ' + 
                                  (repeatBtn.innerText || '')).toLowerCase();
-                    var rPressed = repeatBtn.getAttribute('aria-pressed') === 'true' || innerRepeat.getAttribute('aria-pressed') === 'true';
+                    var rPressed = repeatBtn.getAttribute('aria-pressed') === 'true' || 
+                                   innerRepeat.getAttribute('aria-pressed') === 'true' ||
+                                   repeatBtn.classList.contains('active');
                     if (rText.indexOf('one') !== -1 || rText.indexOf('1') !== -1 || rText.indexOf('một') !== -1) {
                         repeatMode = 'one';
-                    } else if (rText.indexOf('all') !== -1 || rText.indexOf('tất cả') !== -1 || rPressed) {
+                    } else if (rText.indexOf('all') !== -1 || rText.indexOf('tất cả') !== -1 || (rPressed && rText.indexOf('off') === -1)) {
                         repeatMode = 'all';
                     } else {
                         repeatMode = 'off';
@@ -2739,6 +2777,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             if (p && typeof p.seekTo === 'function') {
                                 p.seekTo(0, true);
                             }
+                            if (p && typeof p.playVideo === 'function') {
+                                p.playVideo();
+                            }
                             var wasMuted = v.muted;
                             var promise = v.play();
                             if (promise !== undefined) {
@@ -2804,7 +2845,20 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
 
                     // Fallback: If player has no next video in queue, play next item in DOM queue
                     if (!advanced && queueItems && queueItems.length > 1) {
-                        if (currentQueueIdx !== -1 && currentQueueIdx < queueItems.length - 1) {
+                        if (window._morphTargetShuffle || (isShuffle && isShuffle !== 'false')) {
+                            var candIdx = Math.floor(Math.random() * queueItems.length);
+                            if (candIdx === currentQueueIdx && queueItems.length > 1) {
+                                candIdx = (candIdx + 1) % queueItems.length;
+                            }
+                            var randItem = queueItems[candIdx];
+                            if (randItem) {
+                                var playTargetRand = randItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || randItem;
+                                var innerTargetRand = playTargetRand.querySelector('button, #button');
+                                (innerTargetRand || playTargetRand).click();
+                                randItem.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                                advanced = true;
+                            }
+                        } else if (currentQueueIdx !== -1 && currentQueueIdx < queueItems.length - 1) {
                             var nextItem = queueItems[currentQueueIdx + 1];
                             if (nextItem) {
                                 var playTargetNext = nextItem.querySelector('#play-button, .play-button, ytmusic-play-button-renderer') || nextItem;
@@ -2841,19 +2895,41 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             if ((evt === 'loadedmetadata' || evt === 'canplay') && _morphTransitionPending) {
                                 ensureActivePlayback();
                             }
+                            if (evt === 'timeupdate') {
+                                if (window._morphTargetRepeatMode === 'one' || (v && v.loop)) {
+                                    if (v.duration > 0 && v.currentTime >= (v.duration - 0.35)) {
+                                        v.currentTime = 0;
+                                        var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                                        if (p && typeof p.seekTo === 'function') {
+                                            p.seekTo(0, true);
+                                        }
+                                        if (p && typeof p.playVideo === 'function') {
+                                            p.playVideo();
+                                        }
+                                        v.play();
+                                        return;
+                                    }
+                                }
+                            }
                             window.morphSendUpdate(evt === 'play' || evt === 'pause' || evt === 'ended');
                         });
                     });
                     
                     // Auto-advance or seamless repeat when current track ends
-                    v.addEventListener('ended', function() {
-                        window.morphSendUpdate(true, true);
-                        if (window._morphTargetRepeatMode === 'one' || v.loop) {
+                    v.addEventListener('ended', function(e) {
+                        if (window._morphTargetRepeatMode === 'one' || (v && v.loop)) {
+                            if (e) {
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                            }
                             try {
                                 v.currentTime = 0;
                                 var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
                                 if (p && typeof p.seekTo === 'function') {
                                     p.seekTo(0, true);
+                                }
+                                if (p && typeof p.playVideo === 'function') {
+                                    p.playVideo();
                                 }
                                 var wasMuted = v.muted;
                                 var promise = v.play();
@@ -2866,9 +2942,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                     });
                                 }
                             } catch(e) {}
+                            window.morphSendUpdate(true, false);
                             return;
                         }
                         
+                        window.morphSendUpdate(true, true);
                         _morphWasPlayingBeforeTransition = true;
                         startTransitionWatchdog();
                         
@@ -2879,7 +2957,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                 triggerNextVideo();
                             }
                         }, 280);
-                    });
+                    }, true);
                     
                     // Continuous playback: dismiss any "Still watching?" modals and keep autoplay active
                     v.addEventListener('timeupdate', function() {

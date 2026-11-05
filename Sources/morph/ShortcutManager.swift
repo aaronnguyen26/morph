@@ -35,7 +35,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
         super.init()
     }
     
-    public func configure(model: NotchModel, controller: MorphController) {
+    public func configure(model: NotchModel, controller: MorphController? = nil) {
         self.model = model
         self.controller = controller
         
@@ -152,36 +152,48 @@ public final class ShortcutManager: NSObject, ObservableObject {
         let controlsMenuItem = NSMenuItem()
         let controlsMenu = NSMenu(title: "Controls")
         
-        let playPauseItem = NSMenuItem(title: "Play / Pause Music", action: #selector(togglePlayPause), keyEquivalent: "\r")
+        let playPauseItem = NSMenuItem(title: "Play / Pause Music (F8 / Space / K / ⌘⏎)", action: #selector(togglePlayPause), keyEquivalent: "\r")
         playPauseItem.target = self
         controlsMenu.addItem(playPauseItem)
         
-        let nextTrackItem = NSMenuItem(title: "Next Track", action: #selector(nextTrack), keyEquivalent: "]")
+        let nextTrackItem = NSMenuItem(title: "Next Track (F9 / ⇧N / ⌘])", action: #selector(nextTrack), keyEquivalent: "]")
         nextTrackItem.target = self
         controlsMenu.addItem(nextTrackItem)
         
-        let prevTrackItem = NSMenuItem(title: "Previous Track", action: #selector(prevTrack), keyEquivalent: "[")
+        let prevTrackItem = NSMenuItem(title: "Previous Track (F7 / ⇧P / ⌘[)", action: #selector(prevTrack), keyEquivalent: "[")
         prevTrackItem.target = self
         controlsMenu.addItem(prevTrackItem)
         
-        let volUpItem = NSMenuItem(title: "Volume Up", action: #selector(volUp), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
+        let seekForwardItem = NSMenuItem(title: "Seek Forward 10s (L / →)", action: #selector(seekForward10), keyEquivalent: "")
+        seekForwardItem.target = self
+        controlsMenu.addItem(seekForwardItem)
+        
+        let seekBackwardItem = NSMenuItem(title: "Seek Backward 10s (J / ←)", action: #selector(seekBackward10), keyEquivalent: "")
+        seekBackwardItem.target = self
+        controlsMenu.addItem(seekBackwardItem)
+        
+        let volUpItem = NSMenuItem(title: "Volume Up (↑)", action: #selector(volUp), keyEquivalent: String(utf16CodeUnits: [unichar(NSUpArrowFunctionKey)], count: 1))
         volUpItem.target = self
         controlsMenu.addItem(volUpItem)
         
-        let volDownItem = NSMenuItem(title: "Volume Down", action: #selector(volDown), keyEquivalent: String(utf16CodeUnits: [unichar(NSDownArrowFunctionKey)], count: 1))
+        let volDownItem = NSMenuItem(title: "Volume Down (↓)", action: #selector(volDown), keyEquivalent: String(utf16CodeUnits: [unichar(NSDownArrowFunctionKey)], count: 1))
         volDownItem.target = self
         controlsMenu.addItem(volDownItem)
         
-        let likeItem = NSMenuItem(title: "Like / Favorite Track", action: #selector(toggleLike), keyEquivalent: "l")
+        let likeItem = NSMenuItem(title: "Like / Favorite Track (+ / ⌘L)", action: #selector(toggleLike), keyEquivalent: "l")
         likeItem.target = self
         controlsMenu.addItem(likeItem)
         
-        let repeatItem = NSMenuItem(title: "Toggle Repeat Mode", action: #selector(toggleRepeat), keyEquivalent: "r")
+        let repeatItem = NSMenuItem(title: "Toggle Repeat Mode (R / ⌘⇧R)", action: #selector(toggleRepeat), keyEquivalent: "r")
         repeatItem.keyEquivalentModifierMask = [.command, .shift]
         repeatItem.target = self
         controlsMenu.addItem(repeatItem)
         
-        let muteItem = NSMenuItem(title: "Mute / Unmute", action: #selector(toggleMute), keyEquivalent: "u")
+        let shuffleItem = NSMenuItem(title: "Toggle Shuffle / Random Next (S)", action: #selector(toggleShuffle), keyEquivalent: "")
+        shuffleItem.target = self
+        controlsMenu.addItem(shuffleItem)
+        
+        let muteItem = NSMenuItem(title: "Mute / Unmute (M / ⌘U)", action: #selector(toggleMute), keyEquivalent: "u")
         muteItem.target = self
         controlsMenu.addItem(muteItem)
         
@@ -254,10 +266,34 @@ public final class ShortcutManager: NSObject, ObservableObject {
         let isOpt = flags.contains(.option)
         let isCtrl = flags.contains(.control)
         
+        // F7, F8, F9 Function / Media Keys (Accessible globally across Morph)
+        let isF7 = event.keyCode == 98 || (event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) == NSF7FunctionKey } ?? false)
+        let isF8 = event.keyCode == 100 || (event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) == NSF8FunctionKey } ?? false)
+        let isF9 = event.keyCode == 101 || (event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) == NSF9FunctionKey } ?? false)
+        
+        if !isCmd && !isCtrl && !isOpt {
+            if isF7 {
+                prevTrack()
+                lastTriggeredShortcut = "F7 Previous"
+                return true
+            }
+            if isF8 {
+                togglePlayPause()
+                lastTriggeredShortcut = model.media.isPlaying ? "F8 Playing" : "F8 Paused"
+                return true
+            }
+            if isF9 {
+                nextTrack()
+                lastTriggeredShortcut = "F9 Next"
+                return true
+            }
+        }
+        
         // Check if user is typing in a text field or text editor
         let isEditingText: Bool = {
-            if let responder = NSApp.keyWindow?.firstResponder {
-                return responder is NSTextView || responder is NSTextField
+            let responder = controller?.panel.firstResponder ?? NSApp.keyWindow?.firstResponder
+            if let r = responder {
+                return r is NSTextView || r is NSTextField
             }
             return false
         }()
@@ -286,8 +322,33 @@ public final class ShortcutManager: NSObject, ObservableObject {
             }
         }
         
-        // 2. Escape: Dismiss timer popup, reset spotlight bar, dismiss command bar, close contextual feature, return to home, or collapse island
+        // 2. Escape: Dismiss search, timer popup, reset spotlight bar, dismiss command bar, close contextual feature, return to home, or collapse island
         if event.keyCode == 53 { // Escape
+            if model.selectedTab == .music {
+                if model.media.isSearchingSongs {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        model.media.isSearchingSongs = false
+                        model.media.songSearchQuery = ""
+                    }
+                    lastTriggeredShortcut = "Esc Search"
+                    return true
+                }
+                if model.media.isSearchingPlaylists {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        model.media.isSearchingPlaylists = false
+                        model.media.playlistSearchQuery = ""
+                    }
+                    lastTriggeredShortcut = "Esc Search"
+                    return true
+                }
+                if model.media.rightDeckSection == .search {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        model.media.selectRightDeckSection(.home)
+                    }
+                    lastTriggeredShortcut = "Esc Search"
+                    return true
+                }
+            }
             if model.isTimerPopupActive {
                 model.dismissTimerPopup()
                 lastTriggeredShortcut = "Esc Timer"
@@ -500,6 +561,105 @@ public final class ShortcutManager: NSObject, ObservableObject {
             }
         }
         
+        // 4. YouTube Music & Media Direct Controls (active when not typing in a text field)
+        if !isCmd && !isCtrl && !isOpt && !isEditingText && !model.isCommandBarPresented {
+            let isMusicContext: Bool = {
+                if model.selectedTab == .music { return true }
+                if model.compactHUDMode == .mediaOnly { return true }
+                if case .music = model.activeIntermediaryStage { return true }
+                return false
+            }()
+            
+            if isMusicContext {
+                // Space: Play / Pause
+                if event.keyCode == 49 {
+                    togglePlayPause()
+                    lastTriggeredShortcut = model.media.isPlaying ? "Space Playing" : "Space Paused"
+                    return true
+                }
+                
+                // Shift Shortcuts (Shift+N: Next track, Shift+P: Previous track)
+                if isShift {
+                    switch event.charactersIgnoringModifiers?.lowercased() {
+                    case "n":
+                        nextTrack()
+                        lastTriggeredShortcut = "⇧N Next"
+                        return true
+                    case "p":
+                        prevTrack()
+                        lastTriggeredShortcut = "⇧P Previous"
+                        return true
+                    default:
+                        break
+                    }
+                } else {
+                    let char = event.charactersIgnoringModifiers?.lowercased() ?? ""
+                    
+                    switch char {
+                    case "k":
+                        togglePlayPause()
+                        lastTriggeredShortcut = model.media.isPlaying ? "K Playing" : "K Paused"
+                        return true
+                    case "j":
+                        seekBackward10()
+                        return true
+                    case "l":
+                        seekForward10()
+                        return true
+                    case "m":
+                        toggleMute()
+                        return true
+                    case "r":
+                        toggleRepeat()
+                        return true
+                    case "s":
+                        toggleShuffle()
+                        return true
+                    case "[":
+                        prevTrack()
+                        return true
+                    case "]":
+                        nextTrack()
+                        return true
+                    case "/":
+                        openMusicSearch()
+                        return true
+                    case "+", "=":
+                        toggleLike()
+                        return true
+                    case "-", "_":
+                        toggleDislike()
+                        return true
+                    default:
+                        // 0-9 timeline percentage jump (0=0%, 1=10%, ..., 9=90%)
+                        if char.count == 1, let digit = Double(char), digit >= 0 && digit <= 9 {
+                            model.media.seek(to: digit / 10.0)
+                            lastTriggeredShortcut = "\(Int(digit))0% Seek"
+                            return true
+                        }
+                    }
+                    
+                    // Arrow Keys without Cmd (Left/Right seek 5s, Up/Down volume 5%)
+                    switch event.keyCode {
+                    case 123: // Left Arrow
+                        seekBackward5()
+                        return true
+                    case 124: // Right Arrow
+                        seekForward5()
+                        return true
+                    case 126: // Up Arrow
+                        volUp()
+                        return true
+                    case 125: // Down Arrow
+                        volDown()
+                        return true
+                    default:
+                        break
+                    }
+                }
+            }
+        }
+        
         return false
     }
     
@@ -508,6 +668,26 @@ public final class ShortcutManager: NSObject, ObservableObject {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isCmd = flags.contains(.command)
         let isOpt = flags.contains(.option)
+        let isCtrl = flags.contains(.control)
+        
+        let isF7 = event.keyCode == 98 || (event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) == NSF7FunctionKey } ?? false)
+        let isF8 = event.keyCode == 100 || (event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) == NSF8FunctionKey } ?? false)
+        let isF9 = event.keyCode == 101 || (event.charactersIgnoringModifiers?.unicodeScalars.first.map { Int($0.value) == NSF9FunctionKey } ?? false)
+        
+        if !isCmd && !isCtrl && !isOpt {
+            if isF7 {
+                Task { @MainActor in self.prevTrack() }
+                return
+            }
+            if isF8 {
+                Task { @MainActor in self.togglePlayPause() }
+                return
+            }
+            if isF9 {
+                Task { @MainActor in self.nextTrack() }
+                return
+            }
+        }
         
         if isCmd && isOpt {
             switch event.charactersIgnoringModifiers?.lowercased() {
@@ -736,16 +916,68 @@ public final class ShortcutManager: NSObject, ObservableObject {
     
     @objc public func volUp() {
         guard let model = model else { return }
-        let newVol = min(1.0, model.media.volume + 0.1)
+        let newVol = min(1.0, model.media.volume + 0.05)
         model.media.setVolume(newVol)
-        lastTriggeredShortcut = "⌘↑ Vol \(Int(newVol * 100))%"
+        model.media.triggerVolumeHUD()
+        lastTriggeredShortcut = "↑ Vol \(Int(newVol * 100))%"
     }
     
     @objc public func volDown() {
         guard let model = model else { return }
-        let newVol = max(0.0, model.media.volume - 0.1)
+        let newVol = max(0.0, model.media.volume - 0.05)
         model.media.setVolume(newVol)
-        lastTriggeredShortcut = "⌘↓ Vol \(Int(newVol * 100))%"
+        model.media.triggerVolumeHUD()
+        lastTriggeredShortcut = "↓ Vol \(Int(newVol * 100))%"
+    }
+    
+    @objc public func seekForward10() {
+        guard let model = model else { return }
+        model.media.seekRelative(deltaSeconds: 10)
+        lastTriggeredShortcut = "L +10s"
+    }
+    
+    @objc public func seekBackward10() {
+        guard let model = model else { return }
+        model.media.seekRelative(deltaSeconds: -10)
+        lastTriggeredShortcut = "J -10s"
+    }
+    
+    @objc public func seekForward5() {
+        guard let model = model else { return }
+        model.media.seekRelative(deltaSeconds: 5)
+        lastTriggeredShortcut = "→ +5s"
+    }
+    
+    @objc public func seekBackward5() {
+        guard let model = model else { return }
+        model.media.seekRelative(deltaSeconds: -5)
+        lastTriggeredShortcut = "← -5s"
+    }
+    
+    @objc public func toggleShuffle() {
+        guard let model = model else { return }
+        model.media.toggleShuffle()
+        model.media.triggerShuffleHUD()
+        lastTriggeredShortcut = model.media.isShuffle ? "S Random On" : "S Random Off"
+    }
+    
+    @objc public func toggleDislike() {
+        guard let model = model else { return }
+        model.media.toggleDislike()
+        lastTriggeredShortcut = model.media.isDisliked ? "- Disliked" : "- Undisliked"
+    }
+    
+    @objc public func openMusicSearch() {
+        guard let model = model else { return }
+        if model.media.selectedPlaylist != nil {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                model.media.isSearchingSongs = true
+            }
+        } else {
+            model.media.selectRightDeckSection(.search)
+        }
+        ensurePanelKey()
+        lastTriggeredShortcut = "/ Search"
     }
     
     @objc public func toggleLike() {
@@ -763,6 +995,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
     @objc public func toggleRepeat() {
         guard let model = model else { return }
         model.media.toggleRepeat()
+        model.media.triggerRepeatHUD()
         lastTriggeredShortcut = "⌘R \(model.media.repeatMode.hudTitle)"
     }
     

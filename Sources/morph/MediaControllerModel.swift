@@ -62,6 +62,11 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var showRepeatHUD: Bool = false
     private var repeatHUDWorkItem: DispatchWorkItem?
     private var repeatModeLockoutUntil: Date?
+    
+    @Published public var showShuffleHUD: Bool = false
+    private var shuffleHUDWorkItem: DispatchWorkItem?
+    private var shuffleLockoutUntil: Date?
+    private var playbackHistory: [YTMPlaylistItem] = []
     private var lastProcessedQueueIds: [String] = []
     private var lastProcessedTrackSignature: String = ""
     private var stalledPlaybackCount: Int = 0
@@ -285,7 +290,11 @@ public final class MediaControllerModel: ObservableObject {
                     }
                     self.isLiked = data.isLiked
                     self.isDisliked = data.isDisliked
-                    self.isShuffle = data.isShuffle
+                    if let lockout = self.shuffleLockoutUntil, Date() < lockout {
+                        // Preserve optimistic isShuffle state
+                    } else {
+                        self.isShuffle = data.isShuffle
+                    }
                     if let lockout = self.repeatModeLockoutUntil, Date() < lockout {
                         // Preserve optimistic repeatMode state
                     } else {
@@ -505,58 +514,94 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func nextTrack() {
-        // 1. If currently inside an active playlist (and not pl_queue), advance sequentially through the playlist!
+        // 1. If currently inside an active playlist (and not pl_queue), advance sequentially or randomly through the playlist!
         if let sel = selectedPlaylist, !sel.tracks.isEmpty, sel.id != "pl_queue" {
             let activeId = activeTrackId(in: sel.tracks)
-            if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
-                let nextIdx = currentIdx + 1
-                if nextIdx < sel.tracks.count {
-                    let nextItem = sel.tracks[nextIdx]
-                    playSongInSelectedPlaylist(nextItem)
-                    return
-                } else if repeatMode == .all {
-                    let firstItem = sel.tracks[0]
-                    playSongInSelectedPlaylist(firstItem)
-                    return
-                } else {
-                    stop()
-                    return
+            let count = sel.tracks.count
+            let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) ?? 0
+            
+            // Record current track into playback history for previousTrack navigation
+            if currentIdx < count {
+                playbackHistory.append(sel.tracks[currentIdx])
+            }
+            
+            // Random Next (Shuffle Mode)
+            if isShuffle && count > 1 {
+                var randomIdx = Int.random(in: 0..<count)
+                if randomIdx == currentIdx {
+                    randomIdx = (randomIdx + 1) % count
                 }
-            } else if let firstItem = sel.tracks.first {
+                let nextItem = sel.tracks[randomIdx]
+                playSongInSelectedPlaylist(nextItem)
+                return
+            }
+            
+            let nextIdx = currentIdx + 1
+            if nextIdx < count {
+                let nextItem = sel.tracks[nextIdx]
+                playSongInSelectedPlaylist(nextItem)
+                return
+            } else if repeatMode == .all {
+                let firstItem = sel.tracks[0]
                 playSongInSelectedPlaylist(firstItem)
+                return
+            } else {
+                stop()
                 return
             }
         }
         
-        // 2. Queue playback: if user has a populated queue, advance deterministically
+        // 2. Queue playback: if user has a populated queue, advance sequentially or randomly
         if !playlist.isEmpty {
             let activeId = activeTrackId(in: playlist)
-            if let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
-                let nextIdx = currentIdx + 1
-                if nextIdx < playlist.count {
-                    let nextItem = playlist[nextIdx]
-                    if isDirectEngineActive {
-                        markPlaying(nextItem)
-                        let qIdx = Int(nextItem.id) ?? nextIdx
-                        engine.playQueueIndex(qIdx, videoId: nextItem.videoId, title: nextItem.title, artist: nextItem.artist)
-                    } else {
-                        playQueueTrack(nextItem)
-                    }
-                    return
-                } else if repeatMode == .all {
-                    let firstItem = playlist[0]
-                    if isDirectEngineActive {
-                        markPlaying(firstItem)
-                        let qIdx = Int(firstItem.id) ?? 0
-                        engine.playQueueIndex(qIdx, videoId: firstItem.videoId, title: firstItem.title, artist: firstItem.artist)
-                    } else {
-                        playQueueTrack(firstItem)
-                    }
-                    return
-                } else {
-                    stop()
-                    return
+            let count = playlist.count
+            let currentIdx = playlist.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) ?? 0
+            
+            if currentIdx < count {
+                playbackHistory.append(playlist[currentIdx])
+            }
+            
+            // Random Next (Shuffle Mode)
+            if isShuffle && count > 1 {
+                var randomIdx = Int.random(in: 0..<count)
+                if randomIdx == currentIdx {
+                    randomIdx = (randomIdx + 1) % count
                 }
+                let nextItem = playlist[randomIdx]
+                if isDirectEngineActive {
+                    markPlaying(nextItem)
+                    let qIdx = Int(nextItem.id) ?? randomIdx
+                    engine.playQueueIndex(qIdx, videoId: nextItem.videoId, title: nextItem.title, artist: nextItem.artist)
+                } else {
+                    playQueueTrack(nextItem)
+                }
+                return
+            }
+            
+            let nextIdx = currentIdx + 1
+            if nextIdx < count {
+                let nextItem = playlist[nextIdx]
+                if isDirectEngineActive {
+                    markPlaying(nextItem)
+                    let qIdx = Int(nextItem.id) ?? nextIdx
+                    engine.playQueueIndex(qIdx, videoId: nextItem.videoId, title: nextItem.title, artist: nextItem.artist)
+                } else {
+                    playQueueTrack(nextItem)
+                }
+                return
+            } else if repeatMode == .all {
+                let firstItem = playlist[0]
+                if isDirectEngineActive {
+                    markPlaying(firstItem)
+                    let qIdx = Int(firstItem.id) ?? 0
+                    engine.playQueueIndex(qIdx, videoId: firstItem.videoId, title: firstItem.title, artist: firstItem.artist)
+                } else {
+                    playQueueTrack(firstItem)
+                }
+                return
+            } else {
+                stop()
+                return
             }
         }
 
@@ -578,6 +623,24 @@ public final class MediaControllerModel: ObservableObject {
             lastSeekToZeroTime = now
             seek(to: 0.0)
             return
+        }
+        
+        // If shuffle is active and history exists, go back to previously played track
+        if isShuffle && !playbackHistory.isEmpty {
+            let lastTrack = playbackHistory.removeLast()
+            if let sel = selectedPlaylist, sel.tracks.contains(where: { $0.id == lastTrack.id }) {
+                playSongInSelectedPlaylist(lastTrack)
+                return
+            } else if playlist.contains(where: { $0.id == lastTrack.id }) {
+                markPlaying(lastTrack)
+                if isDirectEngineActive {
+                    let qIdx = Int(lastTrack.id) ?? 0
+                    engine.playQueueIndex(qIdx, videoId: lastTrack.videoId, title: lastTrack.title, artist: lastTrack.artist)
+                } else {
+                    playQueueTrack(lastTrack)
+                }
+                return
+            }
         }
         
         // Continuous Playback / Direct Queue Backward Advance:
@@ -663,6 +726,20 @@ public final class MediaControllerModel: ObservableObject {
         executeBrowserSeek(to: currentTime)
     }
     
+    public func seek(toSeconds seconds: Double) {
+        guard duration > 0 else {
+            currentTime = max(0, seconds)
+            return
+        }
+        let clamped = max(0, min(duration, seconds))
+        seek(to: clamped / duration)
+    }
+    
+    public func seekRelative(deltaSeconds: Double) {
+        guard duration > 0 else { return }
+        seek(toSeconds: currentTime + deltaSeconds)
+    }
+    
     public func triggerVolumeHUD() {
         showVolumeHUD = true
         volumeHUDWorkItem?.cancel()
@@ -684,6 +761,18 @@ public final class MediaControllerModel: ObservableObject {
             }
         }
         repeatHUDWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+    }
+    
+    public func triggerShuffleHUD() {
+        showShuffleHUD = true
+        shuffleHUDWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.showShuffleHUD = false
+            }
+        }
+        shuffleHUDWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
     }
     
@@ -965,6 +1054,10 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     /// Switches the right deck tab, clearing any container opened in another tab so each tab shows only its own content.
+    public func selectRightDeckSection(_ section: YTMRightDeckSection) {
+        switchRightDeck(to: section)
+    }
+    
     public func switchRightDeck(to section: YTMRightDeckSection) {
         switch section {
         case .home: openHubHome()
@@ -1498,14 +1591,24 @@ public final class MediaControllerModel: ObservableObject {
         engine.toggleDislike()
     }
     
+    public func setShuffle(_ enable: Bool) {
+        isShuffle = enable
+        shuffleLockoutUntil = Date().addingTimeInterval(2.5)
+        triggerShuffleHUD()
+        if isDirectEngineActive || isDirectEngineConnected {
+            engine.setShuffle(enable)
+        } else {
+            executeBrowserShuffle(enable)
+        }
+    }
+
     public func toggleShuffle() {
-        isShuffle.toggle()
-        engine.toggleShuffle()
+        setShuffle(!isShuffle)
     }
     
     public func setRepeatMode(_ newMode: YTMRepeatMode) {
         repeatMode = newMode
-        repeatModeLockoutUntil = Date().addingTimeInterval(1.5)
+        repeatModeLockoutUntil = Date().addingTimeInterval(2.5)
         triggerRepeatHUD()
         if isDirectEngineActive || isDirectEngineConnected {
             engine.setRepeatMode(newMode)
@@ -1998,6 +2101,24 @@ public final class MediaControllerModel: ObservableObject {
         runScriptAsync(script)
     }
     
+    private func executeBrowserShuffle(_ enabled: Bool) {
+        guard !isDirectEngineActive && !isTestingEnvironment else { return }
+        let script = """
+        tell application "Google Chrome"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if (URL of t) contains "music.youtube.com" then
+                        try
+                            execute t javascript "(function() { var btn = document.querySelector('ytmusic-player-bar .shuffle') || document.querySelector('#right-controls .shuffle') || document.querySelector('.shuffle'); if (btn) { var inner = btn.querySelector('button, #button') || btn; var cur = btn.getAttribute('aria-pressed') === 'true' || inner.getAttribute('aria-pressed') === 'true' || btn.classList.contains('active'); if (cur !== \(enabled)) { (inner || btn).click(); } } })();"
+                        end try
+                    end if
+                end repeat
+            end repeat
+        end tell
+        """
+        runScriptAsync(script)
+    }
+
     private func executeBrowserRepeat(_ mode: YTMRepeatMode) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
         let script = """
@@ -2006,7 +2127,7 @@ public final class MediaControllerModel: ObservableObject {
                 repeat with t in tabs of w
                     if (URL of t) contains "music.youtube.com" then
                         try
-                            execute t javascript "(function() { var v = document.querySelector('video'); if (v) { v.loop = (\(mode == .one)); } var btn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat'); if (btn) { var inner = btn.querySelector('button, #button'); (inner || btn).click(); } })();"
+                            execute t javascript "(function() { var v = document.querySelector('video'); if (v) { v.loop = (\(mode == .one)); } var btn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat'); if (btn) { var inner = btn.querySelector('button, #button') || btn; var getMode = function() { var l = ((btn.getAttribute('aria-label')||'') + ' ' + (inner.getAttribute('aria-label')||'') + ' ' + (btn.getAttribute('title')||'')).toLowerCase(); if (l.indexOf('one')!==-1 || l.indexOf('1')!==-1 || l.indexOf('một')!==-1) return 'one'; if (l.indexOf('all')!==-1 || l.indexOf('tất cả')!==-1) return 'all'; return 'off'; }; var target = '\(mode.rawValue)'; var cur = getMode(); var clicks = 0; if (cur !== target) { if (cur === 'off') clicks = (target === 'all' ? 1 : 2); else if (cur === 'all') clicks = (target === 'one' ? 1 : 2); else if (cur === 'one') clicks = (target === 'off' ? 1 : 2); } for (var i = 0; i < clicks; i++) { (function(d){ setTimeout(function(){ (inner || btn).click(); }, d); })(i * 120); } } })();"
                         end try
                     end if
                 end repeat

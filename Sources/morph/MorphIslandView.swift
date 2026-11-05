@@ -9,6 +9,17 @@ public struct MorphIslandView: View {
     var onMouseExit: () -> Void
     @State private var isNotchDragTargeted: Bool = false
     @State private var hoveredTab: MorphTab? = nil
+    
+    // Calendar Add Event State
+    @State private var isAddingGlassEvent: Bool = false
+    @State private var draftEventTitle: String = ""
+    @State private var draftEventDuration: Int = 30
+    @State private var draftEventHour: Int = 9
+    @State private var draftEventMinute: Int = 0
+    @State private var draftEventIsAllDay: Bool = false
+    @State private var draftEventHasMeet: Bool = false
+    @State private var draftEventLocation: String = ""
+    @State private var draftEventColorHex: String = GoogleCalendarColor.standardPalette.first?.hex ?? "#7986cb"
     @FocusState private var isSpotlightFocused: Bool
     @FocusState private var isPillEditFocused: Bool
     @Namespace private var navTabNamespace
@@ -775,7 +786,8 @@ public struct MorphIslandView: View {
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
-            .help("Previous Track")
+            .help("Previous Track (F7, ⇧P, ⌘[)")
+            .accessibilityLabel("Previous Track")
             
             Button(action: {
                 MorphHaptics.generic()
@@ -789,7 +801,8 @@ public struct MorphIslandView: View {
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
-            .help(model.media.isPlaying ? "Pause" : "Play")
+            .help(model.media.isPlaying ? "Pause Music (F8, Space, K, ⌘⏎)" : "Play Music (F8, Space, K, ⌘⏎)")
+            .accessibilityLabel(model.media.isPlaying ? "Pause Music" : "Play Music")
             
             Button(action: {
                 MorphHaptics.generic()
@@ -802,7 +815,8 @@ public struct MorphIslandView: View {
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
-            .help("Next Track")
+            .help("Next Track (F9, ⇧N, ⌘])")
+            .accessibilityLabel("Next Track")
             
             Button(action: {
                 MorphHaptics.generic()
@@ -2549,22 +2563,49 @@ public struct MorphIslandView: View {
                 
                 Spacer()
                 
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(calendarSubtitleText)
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .tracking(1.0)
-                        .foregroundColor(Color.white.opacity(0.50))
-                    
-                    Text(calendarNextChipText)
-                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                HStack(spacing: 8) {
+                    // Quick Action: Add Event Drawer Toggle
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                            isAddingGlassEvent.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: isAddingGlassEvent ? "xmark" : "plus")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(isAddingGlassEvent ? "Close" : "Add Event")
+                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(Color.white.opacity(0.14))
-                                .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                                .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: "#6ab7ff").opacity(0.26))
+                                .overlay(Capsule().stroke(Color(hex: "#6ab7ff").opacity(0.65), lineWidth: 0.9))
                         )
+                    }
+                    .buttonStyle(.plain)
+                    .help(isAddingGlassEvent ? "Close event composer" : "Add event to this day")
+                    
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(calendarSubtitleText)
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .tracking(1.0)
+                            .foregroundColor(Color.white.opacity(0.50))
+                        
+                        Text(calendarNextChipText)
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.14))
+                                    .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                            )
+                    }
                 }
             }
             .frame(height: 40)
@@ -2576,6 +2617,11 @@ public struct MorphIslandView: View {
                 }
             }
             .frame(height: 50)
+            
+            if isAddingGlassEvent {
+                glassAddEventCard
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             
             // Events list
             ScrollView(.vertical, showsIndicators: false) {
@@ -2593,6 +2639,10 @@ public struct MorphIslandView: View {
             .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, 4)
+        .onAppear {
+            model.glassSelectedDayIndex = model.glassTodayDayIndex
+            model.calendar.goToToday()
+        }
     }
     
     private func weekDayButton(index: Int) -> some View {
@@ -2650,17 +2700,42 @@ public struct MorphIslandView: View {
             return "\(f.string(from: event.startTime))"
         }()
         
-        return HStack(spacing: 10) {
+        let labelName: String? = {
+            if let cName = event.calendarName, !cName.isEmpty, cName.lowercased() != "primary" {
+                return cName
+            }
+            if let hex = event.colorHex {
+                return GoogleCalendarColor.labelName(for: hex)
+            }
+            return nil
+        }()
+        
+        return HStack(spacing: 8) {
             Circle()
                 .fill(Color(hex: colorHex))
                 .frame(width: 8, height: 8)
-                .shadow(color: Color(hex: colorHex).opacity(0.6), radius: 3)
+                .shadow(color: Color(hex: colorHex).opacity(0.8), radius: 3)
             
-            VStack(alignment: .leading, spacing: 1) {
-                Text(event.title.isEmpty ? "Untitled Event" : event.title)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1.5) {
+                HStack(spacing: 5) {
+                    Text(event.title.isEmpty ? "Untitled Event" : event.title)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    if let label = labelName {
+                        Text(label)
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                            .foregroundColor(Color(hex: colorHex))
+                            .padding(.horizontal, 5.5)
+                            .padding(.vertical, 1.5)
+                            .background(
+                                Capsule()
+                                    .fill(Color(hex: colorHex).opacity(0.20))
+                                    .overlay(Capsule().stroke(Color(hex: colorHex).opacity(0.55), lineWidth: 0.75))
+                            )
+                    }
+                }
                 
                 Text(location)
                     .font(.system(size: 11, weight: .regular, design: .rounded))
@@ -2675,18 +2750,279 @@ public struct MorphIslandView: View {
                 .foregroundColor(Color.white.opacity(0.80))
         }
         .padding(.horizontal, 12)
-        .frame(height: 40)
+        .frame(height: 42)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(isNext ? Color.white.opacity(0.18) : Color.white.opacity(0.09))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(
-                            isNext ? Color(hex: "#6ab7ff").opacity(0.70) : Color.white.opacity(0.18),
+                            event.colorHex != nil
+                                ? Color(hex: colorHex).opacity(0.65)
+                                : (isNext ? Color(hex: "#6ab7ff").opacity(0.70) : Color.white.opacity(0.18)),
                             lineWidth: 1
                         )
                 )
         )
+    }
+    
+    private var glassAddEventCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            glassAddEventTitleRow
+            glassAddEventTimeRow
+            glassAddEventPaletteRow
+            glassAddEventActionRow
+        }
+        .padding(9)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(Color.white.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(Color.white.opacity(0.24), lineWidth: 0.9)
+                )
+        )
+    }
+    
+    private var glassAddEventTitleRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pencil")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color.white.opacity(0.55))
+            
+            TextField("Event title...", text: $draftEventTitle)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                .foregroundColor(.white)
+                .onSubmit {
+                    submitGlassEvent()
+                }
+            
+            if !draftEventTitle.isEmpty {
+                Button(action: { draftEventTitle = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.white.opacity(0.45))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.20), lineWidth: 0.8)
+                )
+        )
+    }
+    
+    private var glassAddEventTimeRow: some View {
+        HStack(spacing: 7) {
+            // All Day toggle
+            Button(action: {
+                MorphHaptics.levelChange()
+                draftEventIsAllDay.toggle()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: draftEventIsAllDay ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("All-Day")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(draftEventIsAllDay ? Color(hex: "#6ab7ff") : Color.white.opacity(0.70))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(draftEventIsAllDay ? Color(hex: "#6ab7ff").opacity(0.22) : Color.white.opacity(0.08))
+                        .overlay(Capsule().stroke(draftEventIsAllDay ? Color(hex: "#6ab7ff").opacity(0.5) : Color.white.opacity(0.18), lineWidth: 0.8))
+                )
+            }
+            .buttonStyle(.plain)
+            
+            if !draftEventIsAllDay {
+                // Time selector
+                HStack(spacing: 3) {
+                    Button(action: {
+                        draftEventHour = (draftEventHour - 1 + 24) % 24
+                    }) {
+                        Image(systemName: "minus")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                    
+                    let displayHour = (draftEventHour % 12 == 0) ? 12 : (draftEventHour % 12)
+                    let ampm = draftEventHour >= 12 ? "PM" : "AM"
+                    Text(String(format: "%d:%02d %@", displayHour, draftEventMinute, ampm))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                    
+                    Button(action: {
+                        draftEventHour = (draftEventHour + 1) % 24
+                    }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                )
+                
+                // Duration chips
+                HStack(spacing: 3) {
+                    ForEach([15, 30, 60], id: \.self) { d in
+                        Button(action: { draftEventDuration = d }) {
+                            Text("\(d)m")
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundColor(draftEventDuration == d ? Color.white : Color.white.opacity(0.55))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(draftEventDuration == d ? Color(hex: "#6ab7ff").opacity(0.4) : Color.white.opacity(0.06))
+                                        .overlay(Capsule().stroke(draftEventDuration == d ? Color(hex: "#6ab7ff").opacity(0.8) : Color.clear, lineWidth: 0.8))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                // Google Meet toggle
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    draftEventHasMeet.toggle()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: draftEventHasMeet ? "video.fill" : "video")
+                            .font(.system(size: 8.5))
+                        Text("Meet")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundColor(draftEventHasMeet ? Color(hex: "#6ab7ff") : Color.white.opacity(0.65))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(draftEventHasMeet ? Color(hex: "#6ab7ff").opacity(0.22) : Color.white.opacity(0.08))
+                            .overlay(Capsule().stroke(draftEventHasMeet ? Color(hex: "#6ab7ff").opacity(0.5) : Color.white.opacity(0.18), lineWidth: 0.8))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+    
+    private var glassAddEventPaletteRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text("Label:")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.6))
+                
+                if let labelName = GoogleCalendarColor.labelName(for: draftEventColorHex) {
+                    Text(labelName)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(hex: draftEventColorHex))
+                }
+            }
+            
+            HStack(spacing: 4.5) {
+                ForEach(GoogleCalendarColor.standardPalette, id: \.id) { item in
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        draftEventColorHex = item.hex
+                    }) {
+                        Circle()
+                            .fill(Color(hex: item.hex))
+                            .frame(width: 13, height: 13)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: draftEventColorHex.lowercased() == item.hex.lowercased() ? 1.8 : 0)
+                            )
+                            .shadow(color: draftEventColorHex.lowercased() == item.hex.lowercased() ? Color(hex: item.hex).opacity(0.9) : Color.clear, radius: 2.5)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                }
+            }
+        }
+    }
+    
+    private var glassAddEventActionRow: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            
+            Button(action: {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                    isAddingGlassEvent = false
+                }
+            }) {
+                Text("Cancel")
+                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3.5)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            
+            Button(action: {
+                submitGlassEvent()
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 8.5, weight: .bold))
+                    Text("Add Event")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .fill(draftEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.12) : Color(hex: "#6ab7ff"))
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(draftEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+    
+    private func submitGlassEvent() {
+        let trimmed = draftEventTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        
+        let cal = Calendar.current
+        var comp = cal.dateComponents([.year, .month, .day], from: model.glassSelectedDate)
+        comp.hour = draftEventHour
+        comp.minute = draftEventMinute
+        let startDate = cal.date(from: comp) ?? model.glassSelectedDate
+        
+        model.calendar.addQuickEvent(
+            title: trimmed,
+            startTime: startDate,
+            durationMinutes: draftEventDuration,
+            isAllDay: draftEventIsAllDay,
+            hasMeetLink: draftEventHasMeet,
+            location: draftEventLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : draftEventLocation,
+            colorHex: draftEventColorHex
+        )
+        
+        MorphHaptics.levelChange()
+        draftEventTitle = ""
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+            isAddingGlassEvent = false
+        }
     }
     
     private var calendarEmptyOrSignInCard: some View {
@@ -4764,6 +5100,21 @@ private struct CompactMediaWingRight: View {
                 .background(media.repeatMode == .off ? Color.white.opacity(0.12) : Color.white.opacity(0.22))
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
+            } else if media.showShuffleHUD {
+                // Sleek Notch Shuffle / Random Next HUD Pill
+                HStack(spacing: 3.5) {
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(media.isShuffle ? Color.white : Color.white.opacity(0.5))
+                    Text(media.isShuffle ? "Random Next On" : "Random Next Off")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.95))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(media.isShuffle ? Color.white.opacity(0.22) : Color.white.opacity(0.12))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
             } else {
                 // Live Synchronous Equalizer
                 HStack(alignment: .bottom, spacing: 2) {
@@ -4795,7 +5146,8 @@ private struct CompactMediaWingRight: View {
                     .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
             }
             .buttonStyle(.plain)
-            .help(media.isPlaying ? "Pause Music (⌘⏎)" : "Play Music (⌘⏎)")
+            .help(media.isPlaying ? "Pause Music (F8, Space, ⌘⏎)" : "Play Music (F8, Space, ⌘⏎)")
+            .accessibilityLabel(media.isPlaying ? "Pause Music" : "Play Music")
             
             Button(action: {
                 media.nextTrack()
@@ -4809,7 +5161,8 @@ private struct CompactMediaWingRight: View {
                     .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 0.5))
             }
             .buttonStyle(.plain)
-            .help("Next Track (⌘])")
+            .help("Next Track (F9, ⌘])")
+            .accessibilityLabel("Next Track")
             
             Button(action: {
                 model.syncExpandedFeatureWithActiveContext()
@@ -4930,6 +5283,20 @@ private struct CompactDualWingRight: View {
                 .background(media.repeatMode == .off ? Color.white.opacity(0.12) : Color.white.opacity(0.22))
                 .clipShape(Capsule())
                 .transition(.scale.combined(with: .opacity))
+            } else if media.showShuffleHUD {
+                HStack(spacing: 3) {
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundColor(media.isShuffle ? Color.white : Color.white.opacity(0.5))
+                    Text(media.isShuffle ? "Random Next On" : "Random Next Off")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.95))
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(media.isShuffle ? Color.white.opacity(0.22) : Color.white.opacity(0.12))
+                .clipShape(Capsule())
+                .transition(.scale.combined(with: .opacity))
             } else {
                 Button(action: {
                     model.openFeature(.music)
@@ -4967,7 +5334,8 @@ private struct CompactDualWingRight: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Pause/Play Music (⌘⏎)")
+            .help(media.isPlaying ? "Pause Music (F8, Space, ⌘⏎)" : "Play Music (F8, Space, ⌘⏎)")
+            .accessibilityLabel(media.isPlaying ? "Pause Music" : "Play Music")
             
             Button(action: {
                 media.nextTrack()
@@ -4980,7 +5348,8 @@ private struct CompactDualWingRight: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .help("Next Track (⌘])")
+            .help("Next Track (F9, ⌘])")
+            .accessibilityLabel("Next Track")
             
             Button(action: {
                 model.syncExpandedFeatureWithActiveContext()
@@ -5211,7 +5580,7 @@ public struct MorphCommandBarView: View {
                 title: "Play / Pause Music",
                 subtitle: model.media.trackTitle.isEmpty ? "Toggle media playback" : "\(model.media.isPlaying ? "Pause" : "Play") \(model.media.trackTitle)",
                 iconName: model.media.isPlaying ? "pause.fill" : "play.fill",
-                shortcutBadge: "⌘⏎",
+                shortcutBadge: "F8 / ⌘⏎",
                 action: {
                     model.media.togglePlay()
                     model.isCommandBarPresented = false
@@ -5222,7 +5591,7 @@ public struct MorphCommandBarView: View {
                 title: "Next Track",
                 subtitle: "Skip to the next song in queue",
                 iconName: "forward.fill",
-                shortcutBadge: "⌘]",
+                shortcutBadge: "F9 / ⌘]",
                 action: {
                     model.media.nextTrack()
                     model.isCommandBarPresented = false
@@ -5233,7 +5602,7 @@ public struct MorphCommandBarView: View {
                 title: "Previous Track",
                 subtitle: "Return to the previous song",
                 iconName: "backward.fill",
-                shortcutBadge: "⌘[",
+                shortcutBadge: "F7 / ⌘[",
                 action: {
                     model.media.previousTrack()
                     model.isCommandBarPresented = false
