@@ -1783,12 +1783,25 @@ public struct MorphIslandView: View {
                 .fill(Color.white.opacity(0.22))
                 .frame(width: 1, height: 18)
             
-            // 5 Tabs: Timer, Calendar, Music, Notes, Forms
-            tabButton(state: .timer, icon: "timer", label: "Focus timer")
-            tabButton(state: .calendar, icon: "calendar", label: "Calendar")
-            tabButton(state: .music, icon: "music.note", label: "Music")
-            tabButton(state: .notes, icon: "doc.text", label: "Notes")
-            tabButton(state: .forms, icon: "list.bullet.clipboard", label: "Forms")
+            // Configurable Feature Tabs (filtered by user on/off preference)
+            if model.isFeatureEnabled(.timer) {
+                tabButton(state: .timer, icon: "timer", label: "Focus timer")
+            }
+            if model.isFeatureEnabled(.calendar) {
+                tabButton(state: .calendar, icon: "calendar", label: "Calendar")
+            }
+            if model.isFeatureEnabled(.music) {
+                tabButton(state: .music, icon: "music.note", label: "Music")
+            }
+            if model.isFeatureEnabled(.notes) {
+                tabButton(state: .notes, icon: "doc.text", label: "Notes")
+            }
+            if model.isFeatureEnabled(.forms) {
+                tabButton(state: .forms, icon: "list.bullet.clipboard", label: "Forms")
+            }
+            
+            // Profile & Settings Tab
+            tabButton(state: .profile, icon: "person.crop.circle", label: "Profile & Settings")
         }
         .padding(.horizontal, 8)
         .frame(height: 40)
@@ -1857,9 +1870,16 @@ public struct MorphIslandView: View {
             glassFormsView
         case .reply:
             glassReplyView
+        case .profile:
+            glassProfileView
         case .idle, .prompt:
             EmptyView()
         }
+    }
+    
+    // MARK: - Profile & Settings Panel View (460 x 380 pt, Liquid Glass)
+    private var glassProfileView: some View {
+        GlassProfileView(model: model)
     }
     
     // MARK: - Form Assistant Panel View (460 x 284 pt, Glass Island (2).html)

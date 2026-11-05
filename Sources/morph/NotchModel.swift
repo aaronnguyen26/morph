@@ -309,6 +309,67 @@ public enum GlassIslandState: String, CaseIterable, Equatable {
     case notes
     case forms
     case reply
+    case profile
+}
+
+public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
+    case timer
+    case calendar
+    case music
+    case notes
+    case forms
+    
+    public var id: String { rawValue }
+    
+    public var title: String {
+        switch self {
+        case .timer: return "Focus Timer"
+        case .calendar: return "Calendar"
+        case .music: return "Music Player"
+        case .notes: return "Notes & Scratchpad"
+        case .forms: return "Form Assistant"
+        }
+    }
+    
+    public var iconName: String {
+        switch self {
+        case .timer: return "timer"
+        case .calendar: return "calendar"
+        case .music: return "music.note"
+        case .notes: return "doc.text"
+        case .forms: return "list.bullet.clipboard"
+        }
+    }
+    
+    public var description: String {
+        switch self {
+        case .timer: return "Pomodoro sessions & time tracking"
+        case .calendar: return "Daily agenda & meeting schedules"
+        case .music: return "YouTube Music player & library"
+        case .notes: return "Quick notes & markdown scratchpad"
+        case .forms: return "Real-time form detection & autofill"
+        }
+    }
+    
+    public var state: GlassIslandState {
+        switch self {
+        case .timer: return .timer
+        case .calendar: return .calendar
+        case .music: return .music
+        case .notes: return .notes
+        case .forms: return .forms
+        }
+    }
+    
+    public var tintColorHex: String {
+        switch self {
+        case .timer: return "#ff9a7a"
+        case .calendar: return "#6ab7ff"
+        case .music: return "#ff7ab8"
+        case .notes: return "#ffd36a"
+        case .forms: return "#8ff0b4"
+        }
+    }
 }
 
 public enum GlassFormMode: String, CaseIterable, Equatable {
@@ -561,6 +622,41 @@ public final class NotchModel: ObservableObject {
     @Published public var selectedFormCopyId: String? = nil
     @Published public var isFormCopyDetailOpen: Bool = false
     
+    // Feature Toggles (Configurable Toolbar Feature Symbols)
+    @Published public var enabledFeatures: Set<MorphGlassFeature> = Set(MorphGlassFeature.allCases)
+    
+    public func isFeatureEnabled(_ feature: MorphGlassFeature) -> Bool {
+        return enabledFeatures.contains(feature)
+    }
+    
+    public func setFeature(_ feature: MorphGlassFeature, isEnabled: Bool) {
+        if isEnabled {
+            enabledFeatures.insert(feature)
+        } else {
+            enabledFeatures.remove(feature)
+            if glassIslandState == feature.state {
+                setGlassIslandState(.profile)
+            }
+        }
+        let array = Array(enabledFeatures.map { $0.rawValue })
+        UserDefaults.standard.set(array, forKey: "com.morph.enabled_features")
+    }
+    
+    public func toggleFeature(_ feature: MorphGlassFeature) {
+        setFeature(feature, isEnabled: !isFeatureEnabled(feature))
+    }
+    
+    public func loadEnabledFeatures() {
+        if let stored = UserDefaults.standard.stringArray(forKey: "com.morph.enabled_features") {
+            let features = stored.compactMap { MorphGlassFeature(rawValue: $0) }
+            if !features.isEmpty {
+                self.enabledFeatures = Set(features)
+                return
+            }
+        }
+        self.enabledFeatures = Set(MorphGlassFeature.allCases)
+    }
+    
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
@@ -612,6 +708,7 @@ public final class NotchModel: ObservableObject {
     }
     
     private func initGlassState() {
+        loadEnabledFeatures()
         if !media.quickPicks.isEmpty {
             syncGlassTracks(from: media.quickPicks)
         } else if !media.playlist.isEmpty {
@@ -839,7 +936,7 @@ public final class NotchModel: ObservableObject {
             } else {
                 return 176
             }
-        case .prompt, .timer, .calendar, .music, .notes, .forms, .reply:
+        case .prompt, .timer, .calendar, .music, .notes, .forms, .reply, .profile:
             return 460
         }
     }
@@ -862,6 +959,8 @@ public final class NotchModel: ObservableObject {
             return 284
         case .reply:
             return 152
+        case .profile:
+            return 380
         }
     }
     
@@ -871,7 +970,7 @@ public final class NotchModel: ObservableObject {
             return 19
         case .prompt:
             return 28
-        case .timer, .calendar, .music, .notes, .forms, .reply:
+        case .timer, .calendar, .music, .notes, .forms, .reply, .profile:
             return 34
         }
     }
@@ -892,6 +991,8 @@ public final class NotchModel: ObservableObject {
             return "#8ff0b4"
         case .reply:
             return "#b79cff"
+        case .profile:
+            return "#a78bfa"
         }
     }
     
@@ -2174,6 +2275,23 @@ public final class NotchModel: ObservableObject {
             activeContextFeature = nil
             isCommandBarPresented = false
             isExpanded = true
+            
+            if isGlassIslandEnabled {
+                switch tab {
+                case .home:
+                    setGlassIslandState(.prompt)
+                case .timer:
+                    setGlassIslandState(.timer)
+                case .music:
+                    setGlassIslandState(.music)
+                case .notes:
+                    setGlassIslandState(.notes)
+                case .calendar:
+                    setGlassIslandState(.calendar)
+                case .profile:
+                    setGlassIslandState(.profile)
+                }
+            }
         }
         if let ctrl = MorphController.shared {
             ctrl.expandPanel()

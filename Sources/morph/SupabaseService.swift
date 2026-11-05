@@ -373,7 +373,11 @@ public final class SupabaseService: ObservableObject {
         if let first = firstName { currentUser.firstName = first }
         if let last = lastName { currentUser.lastName = last }
         if let mail = email { currentUser.email = mail }
-        if let initials = avatarInitials { currentUser.avatarInitials = initials }
+        if let initials = avatarInitials {
+            currentUser.avatarInitials = initials
+        } else if firstName != nil || lastName != nil {
+            currentUser.avatarInitials = "\(currentUser.firstName.prefix(1))\(currentUser.lastName.prefix(1))".uppercased()
+        }
         if let role = targetRole { currentUser.targetRole = role }
         if let status = currentStatus { currentUser.currentStatus = status }
         if let streak = streakDays { currentUser.streakDays = streak }
