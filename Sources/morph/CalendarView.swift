@@ -11,6 +11,7 @@ public struct CalendarView: View {
     @State private var newEventIsAllDay: Bool = false
     @State private var newEventHasMeet: Bool = true
     @State private var newEventLocation: String = ""
+    @State private var newEventColorHex: String = GoogleCalendarColor.standardPalette.first?.hex ?? "#7986cb"
     @State private var selectedCalendarId: String = "primary"
     @State private var isSubmittingEvent: Bool = false
     @State private var showNotificationSettings: Bool = false
@@ -68,6 +69,128 @@ public struct CalendarView: View {
     }
     
     public var body: some View {
+        VStack(spacing: 7) {
+            // Top Control Bar: Mode Picker [ 3 Days | Week | Month ], Range Title, and Period Nav
+            calendarTopHeaderBar
+            
+            // View Mode Content
+            Group {
+                switch calendar.viewMode {
+                case .month:
+                    monthModeDeck
+                case .week:
+                    weekModeDeck
+                case .threeDay:
+                    threeDayModeDeck
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            calendar.goToToday()
+        }
+    }
+    
+    // MARK: - Top Header Bar (View Mode Selector & Period Navigation)
+    private var calendarTopHeaderBar: some View {
+        HStack(spacing: 8) {
+            // Period Range Title
+            HStack(spacing: 4) {
+                Image(systemName: calendar.viewMode.iconName)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundColor(theme.textSecondary)
+                
+                Text(formattedPeriodTitle)
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .foregroundColor(theme.textPrimary)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            // View Mode Segmented Picker [ 3 Days | Week | Month ]
+            HStack(spacing: 2) {
+                ForEach(CalendarViewMode.allCases) { mode in
+                    let isSelected = calendar.viewMode == mode
+                    Button(action: {
+                        MorphHaptics.alignment()
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                            calendar.viewMode = mode
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: mode.iconName)
+                                .font(.system(size: 6.8, weight: .semibold))
+                            Text(mode.rawValue)
+                                .font(.system(size: 7.2, weight: isSelected ? .bold : .medium))
+                        }
+                        .foregroundColor(isSelected ? theme.activePillText : theme.textSecondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2.5)
+                        .background(
+                            isSelected ? theme.activePillBackground : Color.clear
+                        )
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Switch to \(mode.rawValue) calendar view")
+                }
+            }
+            .padding(1.5)
+            .background(theme.cardBackgroundElevated)
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.7)
+            )
+            
+            Spacer()
+            
+            // Navigation Controls: Previous, Today, Next
+            HStack(spacing: 3) {
+                Button(action: { calendar.previousPeriod() }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(theme.textSecondary)
+                        .frame(width: 17, height: 17)
+                        .background(theme.cardBackgroundElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Previous period")
+                
+                Button(action: { calendar.goToToday() }) {
+                    Text("Today")
+                        .font(.system(size: 7.2, weight: .bold))
+                        .foregroundColor(theme.activePillText)
+                        .padding(.horizontal, 5.5)
+                        .padding(.vertical, 2)
+                        .background(theme.activePillBackground)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Jump to Today")
+                
+                Button(action: { calendar.nextPeriod() }) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(theme.textSecondary)
+                        .frame(width: 17, height: 17)
+                        .background(theme.cardBackgroundElevated)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Next period")
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+    }
+    
+    // MARK: - Month Mode Layout Deck
+    private var monthModeDeck: some View {
         HStack(alignment: .top, spacing: 12) {
             // Left Deck: Month Calendar & Intelligent Sync Hub (265 pt)
             leftMonthDeck
@@ -78,9 +201,6 @@ public struct CalendarView: View {
             rightAgendaDeck
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     // MARK: - Left Deck (Full Month Grid & Status Footer)
@@ -149,19 +269,30 @@ public struct CalendarView: View {
             
             Spacer(minLength: 0)
             
-            // Footer: User Email / Status, Selected Day Count & Quick Sync
+            // Footer: Add Event Button (Replacing Email Section), Selected Day Count & Quick Sync
             HStack(spacing: 4) {
-                if let email = calendar.configuredUserEmail, !email.isEmpty {
-                    Text(email)
-                        .font(.system(size: 7, weight: .medium))
-                        .foregroundColor(theme.textTertiary)
-                        .lineLimit(1)
-                } else {
-                    Text(calendar.isSignedIn ? "Google Calendar" : "Local Calendar")
-                        .font(.system(size: 7, weight: .medium))
-                        .foregroundColor(theme.textTertiary)
-                        .lineLimit(1)
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        calendar.isAddingEvent = true
+                        if selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                            selectedCalendarId = first.id
+                        }
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 7.5, weight: .bold))
+                        Text("Add Event")
+                            .font(.system(size: 7.5, weight: .bold))
+                    }
+                    .foregroundColor(theme.activePillText)
+                    .padding(.horizontal, 6.5)
+                    .padding(.vertical, 2)
+                    .background(theme.activePillBackground)
+                    .clipShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .help("Add new event to calendar")
                 
                 Spacer()
                 
@@ -400,15 +531,9 @@ public struct CalendarView: View {
                             .font(.system(size: 15))
                             .foregroundColor(theme.textTertiary)
                         
-                        if let email = calendar.configuredUserEmail, !email.isEmpty {
-                            Text(calendar.events.isEmpty ? "No events found for \(email)" : "No events scheduled for this day")
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(theme.textSecondary)
-                        } else {
-                            Text(calendar.events.isEmpty ? "No Google Calendar events loaded" : "No events scheduled for this day")
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundColor(theme.textSecondary)
-                        }
+                        Text(calendar.events.isEmpty ? "No calendar events loaded" : "No events scheduled for this day")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundColor(theme.textSecondary)
                         
                         HStack(spacing: 6) {
                             Button(action: {
@@ -521,6 +646,9 @@ public struct CalendarView: View {
             
             // Location & Google Meet Row
             addEventLocationRow
+            
+            // Color Label Selector Row
+            addEventColorPickerRow
             
             Spacer(minLength: 4)
             
@@ -860,6 +988,45 @@ public struct CalendarView: View {
         }
     }
     
+    private var addEventColorPickerRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text("Color Label:")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundColor(theme.textSecondary)
+                
+                if let name = GoogleCalendarColor.labelName(for: newEventColorHex) {
+                    Text(name)
+                        .font(.system(size: 7, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(hex: newEventColorHex))
+                }
+            }
+            
+            HStack(spacing: 5) {
+                ForEach(GoogleCalendarColor.standardPalette, id: \.id) { item in
+                    Button(action: {
+                        newEventColorHex = item.hex
+                    }) {
+                        Circle()
+                            .fill(Color(hex: item.hex))
+                            .frame(width: 13, height: 13)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: newEventColorHex.lowercased() == item.hex.lowercased() ? 1.5 : 0)
+                            )
+                            .shadow(color: newEventColorHex.lowercased() == item.hex.lowercased() ? Color(hex: item.hex).opacity(0.8) : Color.clear, radius: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.name)
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3.5)
+        .background(theme.cardBackgroundSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+    
     private var addEventActionRow: some View {
         HStack(spacing: 6) {
             Button(action: {
@@ -967,7 +1134,8 @@ public struct CalendarView: View {
             addMeetLink: newEventIsAllDay ? false : newEventHasMeet,
             description: desc,
             location: loc.isEmpty ? nil : loc,
-            targetCalendarId: selectedCalendarId
+            targetCalendarId: selectedCalendarId,
+            colorHex: newEventColorHex
         )
         
         // Reset inputs and close creation drawer after a brief feedback animation
@@ -1022,6 +1190,23 @@ public struct CalendarView: View {
                         .padding(.vertical, 1.5)
                         .background(theme.activePillBackground)
                         .clipShape(Capsule())
+                }
+                
+                if let hex = event.colorHex {
+                    let label = event.calendarName ?? GoogleCalendarColor.labelName(for: hex) ?? "Label"
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(Color(hex: hex))
+                            .frame(width: 5, height: 5)
+                        Text(label)
+                            .font(.system(size: 7, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(Color(hex: hex))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color(hex: hex).opacity(0.18))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color(hex: hex).opacity(0.45), lineWidth: 0.5))
                 }
                 
                 Spacer()
@@ -1137,7 +1322,10 @@ public struct CalendarView: View {
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay(
             Group {
-                if event.isStartingSoon {
+                if let hex = event.colorHex {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color(hex: hex).opacity(0.55), lineWidth: 0.9)
+                } else if event.isStartingSoon {
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .stroke(theme.activeBorder, lineWidth: 1.0)
                 } else {
@@ -1184,6 +1372,473 @@ public struct CalendarView: View {
             }
         }
         return days
+    }
+    
+    // MARK: - Period Title Formatting
+    private var formattedPeriodTitle: String {
+        let f = DateFormatter()
+        switch calendar.viewMode {
+        case .month:
+            f.dateFormat = "MMMM yyyy"
+            return f.string(from: calendar.displayedMonth)
+        case .week:
+            let weekDates = calendar.datesForCurrentWeek()
+            guard let first = weekDates.first, let last = weekDates.last else {
+                f.dateFormat = "MMMM yyyy"
+                return f.string(from: calendar.selectedDate)
+            }
+            f.dateFormat = "MMM d"
+            let startStr = f.string(from: first)
+            let endStr = f.string(from: last)
+            let yf = DateFormatter()
+            yf.dateFormat = "yyyy"
+            return "\(startStr) – \(endStr), \(yf.string(from: last))"
+        case .threeDay:
+            let threeDays = calendar.datesForThreeDays()
+            guard let first = threeDays.first, let last = threeDays.last else {
+                f.dateFormat = "MMM d, yyyy"
+                return f.string(from: calendar.selectedDate)
+            }
+            f.dateFormat = "MMM d"
+            let startStr = f.string(from: first)
+            let endStr = f.string(from: last)
+            let yf = DateFormatter()
+            yf.dateFormat = "yyyy"
+            return "\(startStr) – \(endStr), \(yf.string(from: last))"
+        }
+    }
+    
+    // MARK: - 3-Day View Deck
+    private var threeDayModeDeck: some View {
+        Group {
+            if calendar.isAddingEvent {
+                HStack(alignment: .top, spacing: 12) {
+                    threeDayColumnsView(isCompact: true)
+                        .frame(width: 255)
+                    fullAddEventView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                threeDayColumnsView(isCompact: false)
+            }
+        }
+    }
+    
+    private func threeDayColumnsView(isCompact: Bool) -> some View {
+        let threeDates = calendar.datesForThreeDays()
+        return HStack(alignment: .top, spacing: 8) {
+            ForEach(threeDates, id: \.self) { date in
+                threeDayColumn(date: date, isCompact: isCompact)
+            }
+        }
+    }
+    
+    private func threeDayColumn(date: Date, isCompact: Bool) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(date)
+        let isSelected = cal.isDate(date, inSameDayAs: calendar.selectedDate)
+        let dayEvents = calendar.eventsForDate(date)
+        
+        return VStack(alignment: .leading, spacing: 5) {
+            // Day Column Header Card
+            HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: 0.5) {
+                    let weekdayF: DateFormatter = {
+                        let f = DateFormatter()
+                        f.dateFormat = "EEE"
+                        return f
+                    }()
+                    let dateNumF: DateFormatter = {
+                        let f = DateFormatter()
+                        f.dateFormat = "MMM d"
+                        return f
+                    }()
+                    
+                    HStack(spacing: 3) {
+                        Text(weekdayF.string(from: date).uppercased())
+                            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(isSelected ? theme.activePillText : theme.textSecondary)
+                        
+                        if isToday {
+                            Text("TODAY")
+                                .font(.system(size: 6.5, weight: .heavy, design: .rounded))
+                                .foregroundColor(theme.activePillText)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(theme.activePillBackground)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    
+                    Text(dateNumF.string(from: date))
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        .foregroundColor(theme.textPrimary)
+                }
+                
+                Spacer()
+                
+                Text("\(dayEvents.count)")
+                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(theme.textTertiary)
+                    .padding(.horizontal, 4.5)
+                    .padding(.vertical, 1.5)
+                    .background(theme.cardBackgroundElevated)
+                    .clipShape(Capsule())
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4.5)
+            .background(
+                isSelected ? theme.activePillBackground.opacity(0.18) : theme.cardBackgroundElevated
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .onTapGesture {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                    calendar.selectedDate = date
+                }
+            }
+            
+            // Events List for this Day
+            if dayEvents.isEmpty {
+                VStack(spacing: 4) {
+                    Spacer()
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 15))
+                        .foregroundColor(theme.textTertiary.opacity(0.6))
+                    Text("No events")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(theme.textSecondary)
+                    
+                    Button(action: {
+                        calendar.selectedDate = date
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            calendar.isAddingEvent = true
+                            if selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                                selectedCalendarId = first.id
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 6.5, weight: .bold))
+                            Text("Add Event")
+                                .font(.system(size: 7, weight: .bold))
+                        }
+                        .foregroundColor(theme.activePillText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(theme.activePillBackground)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 4) {
+                        ForEach(dayEvents) { event in
+                            dayEventTile(event: event, isCompact: isCompact)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            
+            // Column Footer: Quick Add Event for this specific date
+            Button(action: {
+                calendar.selectedDate = date
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    calendar.isAddingEvent = true
+                    if selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                        selectedCalendarId = first.id
+                    }
+                }
+            }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 6.5, weight: .bold))
+                    Text("Add")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundColor(theme.textSecondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 2.5)
+                .background(theme.cardBackgroundSubtle)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Add event on \(date.formatted(date: .abbreviated, time: .omitted))")
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            Group {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(theme.activeBorder, lineWidth: 1.0)
+                } else {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.7)
+                }
+            }
+        )
+    }
+    
+    // MARK: - Week View Deck
+    private var weekModeDeck: some View {
+        Group {
+            if calendar.isAddingEvent {
+                HStack(alignment: .top, spacing: 12) {
+                    weekColumnsView(isCompact: true)
+                        .frame(width: 255)
+                    fullAddEventView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                weekColumnsView(isCompact: false)
+            }
+        }
+    }
+    
+    private func weekColumnsView(isCompact: Bool) -> some View {
+        let weekDates = calendar.datesForCurrentWeek()
+        return HStack(alignment: .top, spacing: 5) {
+            ForEach(weekDates, id: \.self) { date in
+                weekDayColumn(date: date)
+            }
+        }
+    }
+    
+    private func weekDayColumn(date: Date) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(date)
+        let isSelected = cal.isDate(date, inSameDayAs: calendar.selectedDate)
+        let dayEvents = calendar.eventsForDate(date)
+        
+        return VStack(alignment: .leading, spacing: 4) {
+            // Week Day Header Card
+            VStack(spacing: 1) {
+                let weekdayF: DateFormatter = {
+                    let f = DateFormatter()
+                    f.dateFormat = "EEE"
+                    return f
+                }()
+                Text(weekdayF.string(from: date).uppercased())
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundColor(isToday ? theme.focusAccent : (isSelected ? theme.activePillText : theme.textSecondary))
+                
+                Text("\(cal.component(.day, from: date))")
+                    .font(.system(size: 9.5, weight: (isToday || isSelected) ? .heavy : .bold, design: .rounded))
+                    .foregroundColor(isToday ? theme.focusAccent : (isSelected ? theme.activePillText : theme.textPrimary))
+                
+                if isToday {
+                    Circle()
+                        .fill(theme.focusAccent)
+                        .frame(width: 3, height: 3)
+                } else if !dayEvents.isEmpty {
+                    Circle()
+                        .fill(isSelected ? theme.activePillText : theme.textSecondary)
+                        .frame(width: 2.5, height: 2.5)
+                } else {
+                    Color.clear.frame(width: 2.5, height: 2.5)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3.5)
+            .background(
+                isSelected ? theme.activePillBackground.opacity(0.2) : theme.cardBackgroundElevated
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(isToday ? theme.focusAccent.opacity(0.8) : Color.clear, lineWidth: 0.8)
+            )
+            .onTapGesture {
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                    calendar.selectedDate = date
+                }
+            }
+            
+            // Week Day Events List
+            if dayEvents.isEmpty {
+                VStack(spacing: 3) {
+                    Spacer()
+                    Text("—")
+                        .font(.system(size: 9, weight: .regular))
+                        .foregroundColor(theme.textTertiary.opacity(0.4))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 3) {
+                        ForEach(dayEvents) { event in
+                            weekEventChip(event: event)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            
+            // Bottom Add Event Trigger for this day
+            Button(action: {
+                calendar.selectedDate = date
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    calendar.isAddingEvent = true
+                    if selectedCalendarId == "primary", let first = calendar.apiBridge.availableCalendars.first(where: { $0.isPrimary }) {
+                        selectedCalendarId = first.id
+                    }
+                }
+            }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundColor(theme.textTertiary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 13)
+                    .background(theme.cardBackgroundSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .help("Add event to \(date.formatted(date: .abbreviated, time: .omitted))")
+        }
+        .padding(4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.liquidGlassCard)
+                .background(.ultraThinMaterial)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            Group {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(theme.activeBorder, lineWidth: 1.0)
+                } else {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.6)
+                }
+            }
+        )
+    }
+    
+    // MARK: - Reusable Day Event Tile (for 3-Day View)
+    private func dayEventTile(event: CalendarEvent, isCompact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 3.5) {
+                // Time pill
+                Text(event.isAllDay ? "All-Day" : event.formattedTimeRange)
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundColor(theme.textPrimary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1.5)
+                    .background(theme.cardBackgroundElevated)
+                    .clipShape(Capsule())
+                
+                if let hex = event.colorHex {
+                    Circle()
+                        .fill(Color(hex: hex))
+                        .frame(width: 5, height: 5)
+                }
+                
+                Spacer()
+                
+                if let callURL = resolvedMeetingURL(for: event) {
+                    let service = MeetingService.detect(url: callURL)
+                    Button(action: { triggerTakeCall(event: event) }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: service.iconName)
+                                .font(.system(size: 5.5))
+                            Text("Join")
+                                .font(.system(size: 6.5, weight: .bold))
+                        }
+                        .foregroundColor(theme.activePillText)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(theme.activePillBackground)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Join meeting")
+                }
+            }
+            
+            Text(event.title)
+                .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                .foregroundColor(theme.textPrimary)
+                .lineLimit(1)
+            
+            if !isCompact, let loc = event.location, !loc.isEmpty {
+                HStack(spacing: 2) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 6))
+                    Text(loc)
+                        .font(.system(size: 6.8))
+                }
+                .foregroundColor(theme.textTertiary)
+                .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3.5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(theme.cardBackgroundElevated)
+        )
+        .overlay(
+            Group {
+                if let hex = event.colorHex {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Color(hex: hex).opacity(0.6), lineWidth: 0.6)
+                } else {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(theme.liquidGlassSpecularBorder, lineWidth: 0.6)
+                }
+            }
+        )
+    }
+    
+    // MARK: - Reusable Week Event Chip (for 7-Day View)
+    private func weekEventChip(event: CalendarEvent) -> some View {
+        HStack(spacing: 3) {
+            Circle()
+                .fill(event.colorHex.map { Color(hex: $0) } ?? theme.focusAccent)
+                .frame(width: 4, height: 4)
+            
+            VStack(alignment: .leading, spacing: 0.5) {
+                Text(event.title)
+                    .font(.system(size: 7, weight: .semibold, design: .rounded))
+                    .foregroundColor(theme.textPrimary)
+                    .lineLimit(1)
+                
+                if !event.isAllDay {
+                    Text(event.formattedStartTime)
+                        .font(.system(size: 6, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2.5)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(theme.cardBackgroundSubtle)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .stroke(event.colorHex.map { Color(hex: $0).opacity(0.4) } ?? Color.clear, lineWidth: 0.5)
+        )
     }
 }
 

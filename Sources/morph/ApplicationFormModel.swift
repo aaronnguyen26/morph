@@ -7216,7 +7216,7 @@ public final class ApplicationFormModel: ObservableObject {
                 didUpdate = true
             }
             if let fid = activeSession?.fields[idx].id { browserCapturedFieldIDs.insert(fid) }
-        } else if !hasLoadedSchema {
+        } else if !hasLoadedSchema && (!cleanVal.isEmpty || (options != nil && !options!.isEmpty) || (detectedType != nil && !detectedType!.isEmpty)) {
             // Dynamic field addition when a question is extracted from the web area
             let alreadyExists = session.fields.contains(where: {
                 Self.normalizeFieldLabel($0.label) == Self.normalizeFieldLabel(cleanLbl)
@@ -7231,7 +7231,7 @@ public final class ApplicationFormModel: ObservableObject {
                     browserCapturedFieldIDs.insert(newField.id)
                 }
                 lastAutoCapturedAt = Date()
-                didUpdate = true
+                didUpdate = !cleanVal.isEmpty
             }
         }
         

@@ -254,7 +254,7 @@ final class GlassIslandHTMLTests: XCTestCase {
         model.setGlassIslandState(.prompt)
         model.submitGlassIslandPrompt("what is on today")
         XCTAssertEqual(model.glassIslandState, .calendar)
-        XCTAssertEqual(model.glassSelectedDayIndex, 0)
+        XCTAssertEqual(model.glassSelectedDayIndex, model.glassTodayDayIndex)
         
         model.submitGlassIslandPrompt("calendar")
         XCTAssertEqual(model.glassIslandState, .calendar)

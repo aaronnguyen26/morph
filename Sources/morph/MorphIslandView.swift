@@ -2524,10 +2524,7 @@ public struct MorphIslandView: View {
     }
     
     private var calendarSubtitleText: String {
-        if let email = model.calendar.configuredUserEmail, !email.isEmpty {
-            return email.uppercased()
-        }
-        return model.calendar.isSignedIn ? "CALENDAR" : "CONNECT CALENDAR"
+        return model.calendar.isSignedIn ? "GOOGLE CALENDAR" : "LOCAL CALENDAR"
     }
     
     private var calendarNextChipText: String {
@@ -2582,8 +2579,8 @@ public struct MorphIslandView: View {
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: "#6ab7ff").opacity(0.26))
-                                .overlay(Capsule().stroke(Color(hex: "#6ab7ff").opacity(0.65), lineWidth: 0.9))
+                                .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: model.featureTintColorHex(.calendar)).opacity(0.26))
+                                .overlay(Capsule().stroke(Color(hex: model.featureTintColorHex(.calendar)).opacity(0.65), lineWidth: 0.9))
                         )
                     }
                     .buttonStyle(.plain)

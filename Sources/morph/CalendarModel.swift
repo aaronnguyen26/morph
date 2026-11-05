@@ -3,6 +3,22 @@ import Combine
 import SwiftUI
 import UserNotifications
 
+public enum CalendarViewMode: String, CaseIterable, Identifiable, Codable {
+    case threeDay = "3 Days"
+    case week = "Week"
+    case month = "Month"
+    
+    public var id: String { rawValue }
+    
+    public var iconName: String {
+        switch self {
+        case .threeDay: return "calendar.day.timeline.leading"
+        case .week: return "calendar.badge.clock"
+        case .month: return "calendar"
+        }
+    }
+}
+
 @MainActor
 public final class CalendarModel: ObservableObject {
     @Published public var selectedDate: Date = Date() {
@@ -14,6 +30,11 @@ public final class CalendarModel: ObservableObject {
         }
     }
     @Published public var displayedMonth: Date = Date()
+    @Published public var viewMode: CalendarViewMode = .month {
+        didSet {
+            UserDefaults.standard.set(viewMode.rawValue, forKey: "com.morph.calendar_view_mode")
+        }
+    }
     @Published public var events: [CalendarEvent] = []
     @Published public var isSyncing: Bool = false
     @Published public var activeAlertEvent: CalendarEvent?
@@ -102,6 +123,12 @@ public final class CalendarModel: ObservableObject {
             self.isMacCalendarSyncEnabled = UserDefaults.standard.bool(forKey: "com.morph.calendar.enable_mac_calendar")
         } else {
             self.isMacCalendarSyncEnabled = false
+        }
+        
+        if UserDefaults.standard.object(forKey: "com.morph.calendar_view_mode") != nil,
+           let savedMode = UserDefaults.standard.string(forKey: "com.morph.calendar_view_mode"),
+           let mode = CalendarViewMode(rawValue: savedMode) {
+            self.viewMode = mode
         }
         
         setupEngineObservers()
@@ -516,6 +543,77 @@ public final class CalendarModel: ObservableObject {
         }
     }
     
+    // MARK: - Multi-Day & View Mode Navigation Helpers
+    public func datesForThreeDays(startingFrom baseDate: Date? = nil) -> [Date] {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: baseDate ?? selectedDate)
+        return (0..<3).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
+    }
+    
+    public func eventsForThreeDays(startingFrom baseDate: Date? = nil) -> [Date: [CalendarEvent]] {
+        var map: [Date: [CalendarEvent]] = [:]
+        for day in datesForThreeDays(startingFrom: baseDate) {
+            map[day] = eventsForDate(day)
+        }
+        return map
+    }
+    
+    public func datesForCurrentWeek(containing baseDate: Date? = nil) -> [Date] {
+        let cal = Calendar.current
+        let target = baseDate ?? selectedDate
+        let weekday = cal.component(.weekday, from: target) // 1 = Sunday, 2 = Monday, ...
+        // We align Monday as the first day of the week
+        let daysToSubtract = (weekday == 1) ? 6 : (weekday - 2)
+        guard let monday = cal.date(byAdding: .day, value: -daysToSubtract, to: cal.startOfDay(for: target)) else {
+            return [target]
+        }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+    }
+    
+    public func eventsForCurrentWeek(containing baseDate: Date? = nil) -> [Date: [CalendarEvent]] {
+        var map: [Date: [CalendarEvent]] = [:]
+        for day in datesForCurrentWeek(containing: baseDate) {
+            map[day] = eventsForDate(day)
+        }
+        return map
+    }
+    
+    public func nextPeriod() {
+        let cal = Calendar.current
+        switch viewMode {
+        case .threeDay:
+            if let next = cal.date(byAdding: .day, value: 3, to: selectedDate) {
+                selectedDate = next
+                displayedMonth = next
+            }
+        case .week:
+            if let next = cal.date(byAdding: .day, value: 7, to: selectedDate) {
+                selectedDate = next
+                displayedMonth = next
+            }
+        case .month:
+            nextMonth()
+        }
+    }
+    
+    public func previousPeriod() {
+        let cal = Calendar.current
+        switch viewMode {
+        case .threeDay:
+            if let prev = cal.date(byAdding: .day, value: -3, to: selectedDate) {
+                selectedDate = prev
+                displayedMonth = prev
+            }
+        case .week:
+            if let prev = cal.date(byAdding: .day, value: -7, to: selectedDate) {
+                selectedDate = prev
+                displayedMonth = prev
+            }
+        case .month:
+            previousMonth()
+        }
+    }
+    
     public func goToToday() {
         displayedMonth = Date()
         selectedDate = Date()
@@ -657,7 +755,8 @@ public final class CalendarModel: ObservableObject {
         addMeetLink: Bool = false,
         description: String? = nil,
         location: String? = nil,
-        targetCalendarId: String? = nil
+        targetCalendarId: String? = nil,
+        colorHex: String? = nil
     ) {
         let cal = Calendar.current
         let now = Date()
@@ -704,7 +803,8 @@ public final class CalendarModel: ObservableObject {
             endTime: end,
             isAllDay: isAllDay,
             meetLink: initialMeet,
-            location: eventLoc
+            location: eventLoc,
+            colorHex: colorHex
         )
         if !events.contains(where: { $0.id == localEvent.id }) {
             events.append(localEvent)
@@ -723,7 +823,8 @@ public final class CalendarModel: ObservableObject {
                     description: eventDesc,
                     location: eventLoc,
                     addMeetLink: addMeetLink && !isAllDay,
-                    calendarId: targetCalendarId
+                    calendarId: targetCalendarId,
+                    colorHex: colorHex
                 ) {
                     await MainActor.run {
                         // Replace optimistic local event with real Google Calendar event ID
@@ -758,6 +859,33 @@ public final class CalendarModel: ObservableObject {
             }
             self.evaluateUpcomingAlerts()
         }
+    }
+    
+    public func addQuickEvent(
+        title: String,
+        startTime: Date,
+        durationMinutes: Int = 30,
+        isAllDay: Bool = false,
+        hasMeetLink: Bool = false,
+        location: String? = nil,
+        colorHex: String? = nil,
+        targetCalendarId: String? = nil
+    ) {
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: startTime)
+        let minute = cal.component(.minute, from: startTime)
+        self.selectedDate = startTime
+        self.addQuickEvent(
+            title: title,
+            durationMinutes: durationMinutes,
+            startHour: hour,
+            startMinute: minute,
+            isAllDay: isAllDay,
+            addMeetLink: hasMeetLink,
+            location: location,
+            targetCalendarId: targetCalendarId,
+            colorHex: colorHex
+        )
     }
     
     public func deleteEvent(id: String) {

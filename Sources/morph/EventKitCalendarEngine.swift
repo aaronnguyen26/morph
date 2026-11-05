@@ -145,6 +145,14 @@ public final class EventKitCalendarEngine: ObservableObject {
                 return nil
             } ?? []
             
+            var ekColorHex: String? = nil
+            if let cgColor = ek.calendar.cgColor, let comps = cgColor.components, comps.count >= 3 {
+                let r = Int(comps[0] * 255.0)
+                let g = Int(comps[1] * 255.0)
+                let b = Int(comps[2] * 255.0)
+                ekColorHex = String(format: "#%02X%02X%02X", r, g, b)
+            }
+            
             let event = CalendarEvent(
                 id: ek.eventIdentifier ?? UUID().uuidString,
                 title: title,
@@ -154,7 +162,9 @@ public final class EventKitCalendarEngine: ObservableObject {
                 isAllDay: isAllDay,
                 meetLink: meetLink,
                 location: loc ?? (meetLink != nil ? "Google Meet" : nil),
-                attendees: attendees
+                attendees: attendees,
+                colorHex: ekColorHex,
+                calendarName: ek.calendar.title
             )
             parsed.append(event)
         }

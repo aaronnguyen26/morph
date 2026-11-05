@@ -6,12 +6,14 @@ public struct GoogleCalendarInfo: Identifiable, Hashable, Equatable {
     public let summary: String
     public let isPrimary: Bool
     public let accessRole: String
+    public let colorHex: String?
     
-    public init(id: String, summary: String, isPrimary: Bool, accessRole: String) {
+    public init(id: String, summary: String, isPrimary: Bool, accessRole: String, colorHex: String? = nil) {
         self.id = id
         self.summary = summary
         self.isPrimary = isPrimary
         self.accessRole = accessRole
+        self.colorHex = colorHex
     }
 }
 
@@ -130,7 +132,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
             let summary = (c["summary"] as? String) ?? id
             let isPrimary = (c["primary"] as? Bool) ?? false
             let accessRole = (c["accessRole"] as? String) ?? "reader"
-            loadedCalendars.append(GoogleCalendarInfo(id: id, summary: summary, isPrimary: isPrimary, accessRole: accessRole))
+            let bg = c["backgroundColor"] as? String
+            loadedCalendars.append(GoogleCalendarInfo(id: id, summary: summary, isPrimary: isPrimary, accessRole: accessRole, colorHex: bg))
         }
         self.availableCalendars = loadedCalendars
 
@@ -211,6 +214,10 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
                     }
                 }
                 
+                let colorId = item["colorId"] as? String
+                let resolvedColorHex = GoogleCalendarColor.hexForColorId(colorId) 
+                    ?? (cal["backgroundColor"] as? String)
+                
                 let event = CalendarEvent(
                     id: "gcal_\(id)",
                     title: title,
@@ -220,7 +227,9 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
                     isAllDay: isAllDay,
                     meetLink: meet,
                     location: loc ?? (meet != nil ? "Google Meet" : nil),
-                    attendees: []
+                    attendees: [],
+                    colorHex: resolvedColorHex,
+                    calendarName: calSummary
                 )
                 self.eventCalendarMap[id] = calId
                 self.eventCalendarMap[event.id] = calId
@@ -256,7 +265,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
         description: String? = nil,
         location: String? = nil,
         addMeetLink: Bool = false,
-        calendarId: String? = nil
+        calendarId: String? = nil,
+        colorHex: String? = nil
     ) async -> CalendarEvent? {
         guard let token = await ensureValidAccessToken() else {
             return nil
@@ -277,6 +287,10 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
         var bodyDict: [String: Any] = [
             "summary": title
         ]
+        
+        if let hex = colorHex, let colorId = GoogleCalendarColor.standardPalette.first(where: { $0.hex.lowercased() == hex.lowercased() })?.id {
+            bodyDict["colorId"] = colorId
+        }
         
         if isAllDay {
             let dayFormatter = DateFormatter()
@@ -346,7 +360,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
                 isAllDay: isAllDay,
                 meetLink: isAllDay ? nil : meet,
                 location: location,
-                attendees: []
+                attendees: [],
+                colorHex: colorHex
             )
             
             // Ingest into local event cache

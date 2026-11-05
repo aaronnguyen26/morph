@@ -308,16 +308,16 @@ public struct GlassProfileView: View {
         }
     }
     
-    // MARK: - Section 2: Toolbar Features On/Off Toggles
+    // MARK: - Section 2: Toolbar Features On/Off Toggles & Color Customization
     private var featureTogglesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("TOOLBAR FEATURES")
+                    Text("TOOLBAR FEATURES & COLORS")
                         .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.65))
                         .tracking(1.2)
-                    Text("Toggle symbols displayed on the lengthened bar")
+                    Text("Turn features on/off and customize their theme colors")
                         .font(.system(size: 10.5, weight: .regular, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.45))
                 }
@@ -326,7 +326,7 @@ public struct GlassProfileView: View {
             .padding(.horizontal, 2)
             .padding(.top, 2)
             
-            VStack(spacing: 6) {
+            VStack(spacing: 7) {
                 ForEach(MorphGlassFeature.allCases) { feature in
                     featureToggleRow(feature: feature)
                 }
@@ -336,74 +336,163 @@ public struct GlassProfileView: View {
     
     private func featureToggleRow(feature: MorphGlassFeature) -> some View {
         let isEnabled = model.isFeatureEnabled(feature)
-        return HStack(spacing: 10) {
-            // Feature Icon Squircle
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color(hex: feature.tintColorHex).opacity(isEnabled ? 0.22 : 0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .stroke(Color(hex: feature.tintColorHex).opacity(isEnabled ? 0.50 : 0.15), lineWidth: 0.8)
-                    )
-                    .frame(width: 32, height: 32)
-                
-                Image(systemName: feature.iconName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isEnabled ? Color(hex: feature.tintColorHex) : Color.white.opacity(0.35))
-            }
-            
-            // Feature Title & Description
-            VStack(alignment: .leading, spacing: 2) {
-                Text(feature.title)
-                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                    .foregroundColor(isEnabled ? .white : Color.white.opacity(0.55))
-                
-                Text(feature.description)
-                    .font(.system(size: 10.5, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.42))
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            // Liquid Glass On/Off Switch Button
-            Button(action: {
-                MorphHaptics.levelChange()
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                    model.toggleFeature(feature)
-                }
-            }) {
-                ZStack(alignment: isEnabled ? .trailing : .leading) {
-                    Capsule()
-                        .fill(
-                            isEnabled
-                            ? LinearGradient(
-                                colors: [Color(hex: feature.tintColorHex).opacity(0.85), Color(hex: feature.tintColorHex).opacity(0.65)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                            : LinearGradient(
-                                colors: [Color.white.opacity(0.12), Color.white.opacity(0.08)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: 42, height: 24)
+        let activeColorHex = model.featureTintColorHex(feature)
+        let isCustomized = model.customFeatureColors[feature] != nil
+        
+        return VStack(alignment: .leading, spacing: 7) {
+            // Main Row: Icon, Title/Description, Active Color Pill, On/Off Switch
+            HStack(spacing: 10) {
+                // Feature Icon Squircle
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color(hex: activeColorHex).opacity(isEnabled ? 0.22 : 0.08))
                         .overlay(
-                            Capsule()
-                                .stroke(isEnabled ? Color(hex: feature.tintColorHex).opacity(0.60) : Color.white.opacity(0.20), lineWidth: 0.8)
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(Color(hex: activeColorHex).opacity(isEnabled ? 0.50 : 0.15), lineWidth: 0.8)
                         )
-                        .shadow(color: isEnabled ? Color(hex: feature.tintColorHex).opacity(0.40) : Color.clear, radius: 4)
+                        .frame(width: 32, height: 32)
                     
-                    Circle()
-                        .fill(isEnabled ? Color.white : Color.white.opacity(0.55))
-                        .frame(width: 18, height: 18)
-                        .padding(.horizontal, 3)
-                        .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
+                    Image(systemName: feature.iconName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(isEnabled ? Color(hex: activeColorHex) : Color.white.opacity(0.35))
+                }
+                
+                // Feature Title & Description
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(feature.title)
+                            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(isEnabled ? .white : Color.white.opacity(0.55))
+                        
+                        Circle()
+                            .fill(Color(hex: activeColorHex))
+                            .frame(width: 7, height: 7)
+                            .shadow(color: Color(hex: activeColorHex).opacity(0.8), radius: 3)
+                    }
+                    
+                    Text(feature.description)
+                        .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.42))
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // Liquid Glass On/Off Switch Button
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                        model.toggleFeature(feature)
+                    }
+                }) {
+                    ZStack(alignment: isEnabled ? .trailing : .leading) {
+                        Capsule()
+                            .fill(
+                                isEnabled
+                                ? LinearGradient(
+                                    colors: [Color(hex: activeColorHex).opacity(0.85), Color(hex: activeColorHex).opacity(0.65)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                : LinearGradient(
+                                    colors: [Color.white.opacity(0.12), Color.white.opacity(0.08)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: 42, height: 24)
+                            .overlay(
+                                Capsule()
+                                    .stroke(isEnabled ? Color(hex: activeColorHex).opacity(0.60) : Color.white.opacity(0.20), lineWidth: 0.8)
+                            )
+                            .shadow(color: isEnabled ? Color(hex: activeColorHex).opacity(0.40) : Color.clear, radius: 4)
+                        
+                        Circle()
+                            .fill(isEnabled ? Color.white : Color.white.opacity(0.55))
+                            .frame(width: 18, height: 18)
+                            .padding(.horizontal, 3)
+                            .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(isEnabled ? "Turn off \(feature.title) symbol" : "Turn on \(feature.title) symbol")
+            }
+            
+            // Color Customization Row: Preset Palette, ColorPicker, & Reset Button
+            HStack(spacing: 6) {
+                Text("COLOR")
+                    .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .frame(width: 36, alignment: .leading)
+                
+                // Palette Presets
+                HStack(spacing: 5) {
+                    ForEach(MorphFeatureColorPreset.standardPresets) { preset in
+                        let isSelected = activeColorHex.lowercased() == preset.hex.lowercased()
+                        Button(action: {
+                            MorphHaptics.alignment()
+                            withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                                model.setCustomFeatureColor(preset.hex, for: feature)
+                            }
+                        }) {
+                            Circle()
+                                .fill(Color(hex: preset.hex))
+                                .frame(width: 14, height: 14)
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white, lineWidth: isSelected ? 1.5 : 0)
+                                )
+                                .shadow(color: isSelected ? Color(hex: preset.hex).opacity(0.9) : Color.clear, radius: 3)
+                        }
+                        .buttonStyle(.plain)
+                        .help("\(preset.name) (\(preset.hex))")
+                    }
+                }
+                
+                // Native macOS ColorPicker for Custom RGB Spectrum Selection
+                ColorPicker(
+                    "",
+                    selection: Binding(
+                        get: { Color(hex: activeColorHex) },
+                        set: { newColor in
+                            let hex = newColor.toHex
+                            model.setCustomFeatureColor(hex, for: feature)
+                        }
+                    )
+                )
+                .labelsHidden()
+                .scaleEffect(0.75)
+                .frame(width: 20, height: 16)
+                .help("Pick custom color from palette")
+                
+                Spacer()
+                
+                // Reset Button if custom color applied
+                if isCustomized {
+                    Button(action: {
+                        MorphHaptics.generic()
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                            model.resetFeatureColor(for: feature)
+                        }
+                    }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 7))
+                            Text("Default")
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                        }
+                        .foregroundColor(Color.white.opacity(0.60))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reset to default color for \(feature.title)")
                 }
             }
-            .buttonStyle(.plain)
-            .help(isEnabled ? "Turn off \(feature.title) symbol" : "Turn on \(feature.title) symbol")
+            .padding(.leading, 42)
+            .padding(.top, 1)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -415,12 +504,5 @@ public struct GlassProfileView: View {
                         .stroke(Color.white.opacity(isEnabled ? 0.16 : 0.08), lineWidth: 0.8)
                 )
         )
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .onTapGesture {
-            MorphHaptics.levelChange()
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                model.toggleFeature(feature)
-            }
-        }
     }
 }

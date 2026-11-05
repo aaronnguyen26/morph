@@ -297,6 +297,22 @@ extension Color {
             opacity: Double(a) / 255.0
         )
     }
+    
+    public var toHex: String {
+        return NSColor(self).toHexString
+    }
+}
+
+extension NSColor {
+    public var toHexString: String {
+        guard let rgbColor = usingColorSpace(.sRGB) else {
+            return "#ffffff"
+        }
+        let r = Int(round(rgbColor.redComponent * 255.0))
+        let g = Int(round(rgbColor.greenComponent * 255.0))
+        let b = Int(round(rgbColor.blueComponent * 255.0))
+        return String(format: "#%02x%02x%02x", r, g, b)
+    }
 }
 
 // MARK: - Glass Island HTML Specification Models
@@ -370,6 +386,30 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
         case .forms: return "#8ff0b4"
         }
     }
+}
+
+public struct MorphFeatureColorPreset: Identifiable, Hashable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let hex: String
+    
+    public init(id: String, name: String, hex: String) {
+        self.id = id
+        self.name = name
+        self.hex = hex
+    }
+    
+    public static let standardPresets: [MorphFeatureColorPreset] = [
+        MorphFeatureColorPreset(id: "coral", name: "Sunset Coral", hex: "#ff9a7a"),
+        MorphFeatureColorPreset(id: "sky", name: "Electric Sky", hex: "#6ab7ff"),
+        MorphFeatureColorPreset(id: "neon_pink", name: "Neon Pink", hex: "#ff7ab8"),
+        MorphFeatureColorPreset(id: "amber", name: "Amber Gold", hex: "#ffd36a"),
+        MorphFeatureColorPreset(id: "emerald", name: "Mint Emerald", hex: "#8ff0b4"),
+        MorphFeatureColorPreset(id: "violet", name: "Cosmic Violet", hex: "#b79cff"),
+        MorphFeatureColorPreset(id: "lavender", name: "Soft Lavender", hex: "#a78bfa"),
+        MorphFeatureColorPreset(id: "cyan", name: "Cyan Teal", hex: "#22d3ee"),
+        MorphFeatureColorPreset(id: "rose", name: "Crimson Rose", hex: "#f43f5e")
+    ]
 }
 
 public enum GlassFormMode: String, CaseIterable, Equatable {
@@ -657,6 +697,48 @@ public final class NotchModel: ObservableObject {
         self.enabledFeatures = Set(MorphGlassFeature.allCases)
     }
     
+    // Feature Color Customization (Live & Persisted)
+    @Published public var customFeatureColors: [MorphGlassFeature: String] = [:]
+    
+    public func featureTintColorHex(_ feature: MorphGlassFeature) -> String {
+        return customFeatureColors[feature] ?? feature.tintColorHex
+    }
+    
+    public func setCustomFeatureColor(_ hex: String, for feature: MorphGlassFeature) {
+        var cleanHex = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanHex.hasPrefix("#") {
+            cleanHex = "#" + cleanHex
+        }
+        customFeatureColors[feature] = cleanHex
+        saveCustomFeatureColors()
+    }
+    
+    public func resetFeatureColor(for feature: MorphGlassFeature) {
+        customFeatureColors.removeValue(forKey: feature)
+        saveCustomFeatureColors()
+    }
+    
+    public func saveCustomFeatureColors() {
+        var dict: [String: String] = [:]
+        for (feat, color) in customFeatureColors {
+            dict[feat.rawValue] = color
+        }
+        UserDefaults.standard.set(dict, forKey: "com.morph.custom_feature_colors")
+    }
+    
+    public func loadCustomFeatureColors() {
+        guard let stored = UserDefaults.standard.dictionary(forKey: "com.morph.custom_feature_colors") as? [String: String] else {
+            return
+        }
+        var loaded: [MorphGlassFeature: String] = [:]
+        for (key, val) in stored {
+            if let feat = MorphGlassFeature(rawValue: key) {
+                loaded[feat] = val
+            }
+        }
+        self.customFeatureColors = loaded
+    }
+    
     @Published public var isExpanded: Bool = false
     @Published public var isHovered: Bool = false
     @Published public var isPinned: Bool = false
@@ -709,6 +791,7 @@ public final class NotchModel: ObservableObject {
     
     private func initGlassState() {
         loadEnabledFeatures()
+        loadCustomFeatureColors()
         if !media.quickPicks.isEmpty {
             syncGlassTracks(from: media.quickPicks)
         } else if !media.playlist.isEmpty {
@@ -723,6 +806,9 @@ public final class NotchModel: ObservableObject {
         } else {
             glassNotes = [GlassNote(title: "Quick Note", body: "Write your thoughts, ideas, or to-dos here. Changes save automatically.")]
         }
+        
+        glassSelectedDayIndex = glassTodayDayIndex
+        calendar.goToToday()
     }
     
     private var isTesting: Bool {
@@ -980,15 +1066,15 @@ public final class NotchModel: ObservableObject {
         case .idle, .prompt:
             return "#cfd8ff"
         case .timer:
-            return "#ff9a7a"
+            return featureTintColorHex(.timer)
         case .calendar:
-            return "#6ab7ff"
+            return featureTintColorHex(.calendar)
         case .music:
-            return "#ff7ab8"
+            return featureTintColorHex(.music)
         case .notes:
-            return "#ffd36a"
+            return featureTintColorHex(.notes)
         case .forms:
-            return "#8ff0b4"
+            return featureTintColorHex(.forms)
         case .reply:
             return "#b79cff"
         case .profile:
@@ -2276,6 +2362,11 @@ public final class NotchModel: ObservableObject {
             isCommandBarPresented = false
             isExpanded = true
             
+            if tab == .calendar {
+                glassSelectedDayIndex = glassTodayDayIndex
+                calendar.goToToday()
+            }
+            
             if isGlassIslandEnabled {
                 switch tab {
                 case .home:
@@ -2398,8 +2489,10 @@ public final class NotchModel: ObservableObject {
             }
         }
         
-        // Automatic browser sign-in prompt on first user access
+        // Automatic browser sign-in prompt on first user access and ensure today's date
         if state == .calendar {
+            self.glassSelectedDayIndex = glassTodayDayIndex
+            self.calendar.goToToday()
             promptCalendarSignInIfNeeded()
         } else if state == .music {
             promptMusicSignInIfNeeded()
@@ -2423,6 +2516,12 @@ public final class NotchModel: ObservableObject {
     }
     
     // MARK: - Glass Island Real Calendar Helpers
+    public var glassTodayDayIndex: Int {
+        let cal = Calendar.current
+        let weekday = cal.component(.weekday, from: Date())
+        return (weekday == 1) ? 6 : (weekday - 2) // Monday = 0, ..., Sunday = 6
+    }
+    
     public var glassCurrentWeekDates: [Date] {
         let cal = Calendar.current
         let today = Date()
@@ -2834,7 +2933,8 @@ public final class NotchModel: ObservableObject {
         let calPattern = #"\b(calendar|schedule|agenda|meeting|meetings|today|next up)\b"#
         if let regex = try? NSRegularExpression(pattern: calPattern, options: [.caseInsensitive]),
            regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
-            glassSelectedDayIndex = 0
+            glassSelectedDayIndex = glassTodayDayIndex
+            calendar.goToToday()
             glassPromptText = ""
             setGlassIslandState(.calendar)
             return
