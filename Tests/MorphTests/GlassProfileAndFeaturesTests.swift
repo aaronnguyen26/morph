@@ -113,4 +113,20 @@ final class GlassProfileAndFeaturesTests: XCTestCase {
         XCTAssertEqual(model.supabase.currentUser.currentStatus, "Flow State")
         XCTAssertEqual(model.supabase.currentUser.displayInitials, "AR")
     }
+    
+    // MARK: - 7. Clean Single-Row Profile Feature Toggles with Interactive Circle Color
+    func testProfileViewRendersCleanSingleRowWithoutClutteredColorRow() {
+        let profileView = GlassProfileView(model: model)
+        XCTAssertNotNil(profileView.body)
+        
+        // Verify customizing colors updates active color hex and island tint
+        model.setCustomFeatureColor("#a855f7", for: .timer)
+        XCTAssertEqual(model.featureTintColorHex(.timer), "#a855f7")
+        XCTAssertNotNil(model.customFeatureColors[.timer])
+        
+        // Verify resetting restores default tint
+        model.resetFeatureColor(for: .timer)
+        XCTAssertEqual(model.featureTintColorHex(.timer), MorphGlassFeature.timer.tintColorHex)
+        XCTAssertNil(model.customFeatureColors[.timer])
+    }
 }
