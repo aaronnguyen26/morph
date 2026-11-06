@@ -10,6 +10,7 @@ public struct GlassProfileView: View {
     @State private var draftRole: String = ""
     @State private var draftStatus: String = ""
     @State private var saveToastMessage: String? = nil
+    @State private var activeColorPickerFeature: MorphGlassFeature? = nil
     
     public init(model: NotchModel) {
         self.model = model
@@ -460,33 +461,59 @@ public struct GlassProfileView: View {
         activeColorHex: String,
         isCustomized: Bool
     ) -> some View {
-        ZStack {
-            // Visual circle with specular stroke ring and glowing drop shadow
-            Circle()
-                .fill(Color(hex: activeColorHex))
-                .frame(width: 12, height: 12)
-                .overlay(
-                    Circle()
-                        .stroke(Color.white.opacity(0.45), lineWidth: 1.0)
-                )
-                .shadow(color: Color(hex: activeColorHex).opacity(0.85), radius: 3.5)
-            
-            // Native macOS ColorPicker overlay to choose more colors
-            ColorPicker(
-                "",
-                selection: Binding(
-                    get: { Color(hex: activeColorHex) },
-                    set: { newColor in
-                        let hex = newColor.toHex
-                        model.setCustomFeatureColor(hex, for: feature)
-                    }
-                )
-            )
-            .labelsHidden()
-            .opacity(0.015)
-            .frame(width: 22, height: 22)
+        Button(action: {
+            MorphHaptics.alignment()
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                if activeColorPickerFeature == feature {
+                    activeColorPickerFeature = nil
+                } else {
+                    activeColorPickerFeature = feature
+                }
+            }
+        }) {
+            ZStack {
+                // Outer subtle halo when active or hover
+                Circle()
+                    .fill(Color(hex: activeColorHex).opacity(activeColorPickerFeature == feature ? 0.35 : 0.12))
+                    .frame(width: 18, height: 18)
+                
+                // Visual circle with specular stroke ring and glowing drop shadow
+                Circle()
+                    .fill(Color(hex: activeColorHex))
+                    .frame(width: 12, height: 12)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(activeColorPickerFeature == feature ? 0.95 : 0.50), lineWidth: 1.2)
+                    )
+                    .shadow(color: Color(hex: activeColorHex).opacity(0.85), radius: 3.5)
+            }
+            .frame(width: 24, height: 24)
+            .contentShape(Circle())
         }
-        .help("Click to choose color for \(feature.title) (currently \(activeColorHex))")
+        .buttonStyle(.plain)
+        .help("Click to open color circle for \(feature.title) (currently \(activeColorHex))")
+        .popover(
+            isPresented: Binding(
+                get: { activeColorPickerFeature == feature },
+                set: { if !$0 { activeColorPickerFeature = nil } }
+            ),
+            arrowEdge: .trailing
+        ) {
+            ColorCircleWheelPopover(
+                feature: feature,
+                activeColorHex: activeColorHex,
+                isCustomized: isCustomized,
+                onColorChange: { newHex in
+                    model.setCustomFeatureColor(newHex, for: feature)
+                },
+                onReset: {
+                    model.resetFeatureColor(for: feature)
+                },
+                onDismiss: {
+                    activeColorPickerFeature = nil
+                }
+            )
+        }
         .contextMenu {
             Text("\(feature.title) Color: \(activeColorHex.uppercased())")
             Divider()
@@ -509,5 +536,362 @@ public struct GlassProfileView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - System Color Panel Level & Live Change Bridge
+@MainActor
+public final class SystemColorPanelBridge: NSObject {
+    public static let shared = SystemColorPanelBridge()
+    private var colorCallback: ((String) -> Void)?
+    
+    public func open(initialHex: String, onColorChange: @escaping (String) -> Void) {
+        self.colorCallback = onColorChange
+        let panel = NSColorPanel.shared
+        panel.level = NSWindow.Level(Int(CGWindowLevelForKey(.popUpMenuWindow)) + 2)
+        if let color = NSColor(Color(hex: initialHex)).usingColorSpace(.sRGB) {
+            panel.color = color
+        }
+        panel.setTarget(self)
+        panel.setAction(#selector(colorDidChange(_:)))
+        NotificationCenter.default.removeObserver(self, name: NSColorPanel.colorDidChangeNotification, object: panel)
+        NotificationCenter.default.addObserver(self, selector: #selector(colorDidChange(_:)), name: NSColorPanel.colorDidChangeNotification, object: panel)
+        panel.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    
+    @objc private func colorDidChange(_ sender: Any?) {
+        let hex = NSColorPanel.shared.color.toHexString
+        colorCallback?(hex)
+    }
+}
+
+// MARK: - Interactive Color Circle Wheel Popover
+public struct ColorCircleWheelPopover: View {
+    public let feature: MorphGlassFeature
+    public let activeColorHex: String
+    public let isCustomized: Bool
+    public var onColorChange: (String) -> Void
+    public var onReset: () -> Void
+    public var onDismiss: () -> Void
+    
+    @State private var currentHex: String
+    @State private var hue: Double = 0.0
+    @State private var saturation: Double = 1.0
+    @State private var brightness: Double = 1.0
+    
+    private let wheelDiameter: CGFloat = 136.0
+    
+    public init(
+        feature: MorphGlassFeature,
+        activeColorHex: String,
+        isCustomized: Bool,
+        onColorChange: @escaping (String) -> Void,
+        onReset: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.feature = feature
+        self.activeColorHex = activeColorHex
+        self.isCustomized = isCustomized
+        self.onColorChange = onColorChange
+        self.onReset = onReset
+        self.onDismiss = onDismiss
+        _currentHex = State(initialValue: activeColorHex)
+    }
+    
+    public var body: some View {
+        VStack(spacing: 10) {
+            // Header Row: Active preview circle, Title, Hex badge
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(Color(hex: currentHex))
+                    .frame(width: 14, height: 14)
+                    .overlay(Circle().stroke(Color.white.opacity(0.60), lineWidth: 1.0))
+                    .shadow(color: Color(hex: currentHex).opacity(0.80), radius: 3)
+                
+                Text("\(feature.title) Color")
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Text(currentHex.uppercased())
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(Color(hex: currentHex))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2.5)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+            }
+            
+            // Interactive Color Circle (Wheel)
+            colorWheelView
+            
+            // Brightness / Luminance Slider
+            brightnessSliderView
+            
+            // Preset Color Circles
+            presetCirclesRow
+            
+            // Footer: macOS System Panel, Reset Default, Done
+            HStack(spacing: 8) {
+                Button(action: {
+                    openSystemColorPanel()
+                }) {
+                    HStack(spacing: 3.5) {
+                        Image(systemName: "paintpalette")
+                            .font(.system(size: 8.5))
+                        Text("System Panel")
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Open macOS system color panel with sliders, crayons, eyedropper")
+                
+                Spacer()
+                
+                if isCustomized || currentHex.lowercased() != feature.tintColorHex.lowercased() {
+                    Button(action: {
+                        MorphHaptics.generic()
+                        selectHex(feature.tintColorHex)
+                        onReset()
+                    }) {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 7.5))
+                            Text("Default")
+                                .font(.system(size: 9, weight: .medium, design: .rounded))
+                        }
+                        .foregroundColor(Color.white.opacity(0.60))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reset to default color (\(feature.tintColorHex))")
+                }
+                
+                Button(action: {
+                    onDismiss()
+                }) {
+                    Text("Done")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.14))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.6))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(width: 230)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(hex: "#131313"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1.0)
+                )
+        )
+        .onAppear {
+            syncHSB(from: activeColorHex)
+        }
+    }
+    
+    // The interactive Color Circle Wheel
+    private var colorWheelView: some View {
+        let radius = wheelDiameter / 2.0
+        let thumbPos = thumbPosition(size: wheelDiameter)
+        
+        return ZStack {
+            // 1. Angular Rainbow Hue Gradient
+            Circle()
+                .fill(
+                    AngularGradient(
+                        gradient: Gradient(colors: [
+                            Color(red: 1, green: 0, blue: 0),
+                            Color(red: 1, green: 1, blue: 0),
+                            Color(red: 0, green: 1, blue: 0),
+                            Color(red: 0, green: 1, blue: 1),
+                            Color(red: 0, green: 0, blue: 1),
+                            Color(red: 1, green: 0, blue: 1),
+                            Color(red: 1, green: 0, blue: 0)
+                        ]),
+                        center: .center
+                    )
+                )
+            
+            // 2. Radial Saturation Gradient (white center to clear edge)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        gradient: Gradient(colors: [Color.white, Color.white.opacity(0.0)]),
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: radius
+                    )
+                )
+                .blendMode(.screen)
+            
+            // 3. Specular Border Ring
+            Circle()
+                .stroke(Color.white.opacity(0.40), lineWidth: 1.2)
+            
+            // 4. Center reference dot
+            Circle()
+                .fill(Color.white.opacity(0.30))
+                .frame(width: 4, height: 4)
+            
+            // 5. Draggable Selector Thumb Circle
+            Circle()
+                .fill(Color(hex: currentHex))
+                .frame(width: 17, height: 17)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white, lineWidth: 2)
+                        .shadow(color: Color.black.opacity(0.6), radius: 2)
+                )
+                .shadow(color: Color(hex: currentHex).opacity(0.9), radius: 3)
+                .position(thumbPos)
+        }
+        .frame(width: wheelDiameter, height: wheelDiameter)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    handleDrag(at: value.location)
+                }
+        )
+    }
+    
+    // Brightness Slider
+    private var brightnessSliderView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sun.min")
+                .font(.system(size: 8))
+                .foregroundColor(Color.white.opacity(0.40))
+            
+            Slider(
+                value: Binding(
+                    get: { brightness },
+                    set: { newBrightness in
+                        brightness = newBrightness
+                        let newHex = Self.hsbToHex(hue: hue, saturation: saturation, brightness: newBrightness)
+                        currentHex = newHex
+                        onColorChange(newHex)
+                    }
+                ),
+                in: 0.1...1.0
+            )
+            .accentColor(Color(hex: currentHex))
+            
+            Image(systemName: "sun.max")
+                .font(.system(size: 9))
+                .foregroundColor(Color.white.opacity(0.70))
+        }
+    }
+    
+    // Preset Color Circles Row
+    private var presetCirclesRow: some View {
+        HStack(spacing: 5) {
+            ForEach(MorphFeatureColorPreset.standardPresets) { preset in
+                let isSelected = currentHex.lowercased() == preset.hex.lowercased()
+                Button(action: {
+                    MorphHaptics.alignment()
+                    selectHex(preset.hex)
+                }) {
+                    Circle()
+                        .fill(Color(hex: preset.hex))
+                        .frame(width: 15, height: 15)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: isSelected ? 1.8 : 0)
+                        )
+                        .shadow(color: isSelected ? Color(hex: preset.hex).opacity(0.9) : Color.clear, radius: 2.5)
+                }
+                .buttonStyle(.plain)
+                .help("\(preset.name) (\(preset.hex))")
+            }
+        }
+    }
+    
+    private func handleDrag(at point: CGPoint) {
+        let center = wheelDiameter / 2.0
+        let dx = point.x - center
+        let dy = point.y - center
+        let dist = sqrt(dx * dx + dy * dy)
+        let maxR = center - 4.0
+        let sat = max(0.0, min(1.0, Double(dist / maxR)))
+        var angle = Double(atan2(dy, dx))
+        if angle < 0 { angle += 2.0 * .pi }
+        let h = angle / (2.0 * .pi)
+        
+        self.hue = h
+        self.saturation = sat
+        let newHex = Self.hsbToHex(hue: h, saturation: sat, brightness: brightness)
+        self.currentHex = newHex
+        onColorChange(newHex)
+    }
+    
+    private func selectHex(_ hex: String) {
+        syncHSB(from: hex)
+        self.currentHex = hex
+        onColorChange(hex)
+    }
+    
+    private func thumbPosition(size: CGFloat) -> CGPoint {
+        let center = size / 2.0
+        let maxR = center - 4.0
+        let r = maxR * CGFloat(saturation)
+        let angle = CGFloat(hue * 2.0 * .pi)
+        let x = center + r * cos(angle)
+        let y = center + r * sin(angle)
+        return CGPoint(x: x, y: y)
+    }
+    
+    private func syncHSB(from hex: String) {
+        let clean = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: clean).scanHexInt64(&int)
+        let r, g, b: Double
+        switch clean.count {
+        case 6:
+            r = Double((int >> 16) & 0xFF) / 255.0
+            g = Double((int >> 8) & 0xFF) / 255.0
+            b = Double(int & 0xFF) / 255.0
+        default:
+            r = 1.0; g = 1.0; b = 1.0
+        }
+        let ns = NSColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: 1.0)
+        if let hsb = ns.usingColorSpace(.deviceRGB) {
+            self.hue = Double(hsb.hueComponent)
+            self.saturation = Double(hsb.saturationComponent)
+            self.brightness = Double(hsb.brightnessComponent)
+        }
+    }
+    
+    private func openSystemColorPanel() {
+        SystemColorPanelBridge.shared.open(initialHex: currentHex) { newHex in
+            self.selectHex(newHex)
+        }
+    }
+    
+    public static func hsbToHex(hue: Double, saturation: Double, brightness: Double) -> String {
+        let color = NSColor(calibratedHue: CGFloat(hue), saturation: CGFloat(saturation), brightness: CGFloat(brightness), alpha: 1.0)
+        guard let rgb = color.usingColorSpace(.sRGB) else { return "#ffffff" }
+        let r = Int(round(rgb.redComponent * 255.0))
+        let g = Int(round(rgb.greenComponent * 255.0))
+        let b = Int(round(rgb.blueComponent * 255.0))
+        return String(format: "#%02x%02x%02x", r, g, b)
     }
 }

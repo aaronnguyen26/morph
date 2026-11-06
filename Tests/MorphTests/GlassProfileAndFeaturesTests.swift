@@ -129,4 +129,50 @@ final class GlassProfileAndFeaturesTests: XCTestCase {
         XCTAssertEqual(model.featureTintColorHex(.timer), MorphGlassFeature.timer.tintColorHex)
         XCTAssertNil(model.customFeatureColors[.timer])
     }
+    
+    // MARK: - 8. Interactive Color Circle Wheel Popover & Color Calculations
+    func testInteractiveColorCircleWheelPopoverRendersAndCalculatesColors() {
+        var selectedHex = "#ff9a7a"
+        var didReset = false
+        var didDismiss = false
+        
+        let popover = ColorCircleWheelPopover(
+            feature: .timer,
+            activeColorHex: selectedHex,
+            isCustomized: false,
+            onColorChange: { newHex in
+                selectedHex = newHex
+            },
+            onReset: {
+                didReset = true
+            },
+            onDismiss: {
+                didDismiss = true
+            }
+        )
+        XCTAssertNotNil(popover.body)
+        
+        // Test HSB to Hex calculations
+        let redHex = ColorCircleWheelPopover.hsbToHex(hue: 0.0, saturation: 1.0, brightness: 1.0)
+        XCTAssertEqual(redHex.lowercased(), "#ff2600")
+        
+        let whiteHex = ColorCircleWheelPopover.hsbToHex(hue: 0.0, saturation: 0.0, brightness: 1.0)
+        XCTAssertEqual(whiteHex.lowercased(), "#ffffff")
+        
+        let greenHex = ColorCircleWheelPopover.hsbToHex(hue: 1.0 / 3.0, saturation: 1.0, brightness: 1.0)
+        XCTAssertEqual(greenHex.lowercased(), "#00f900")
+        
+        let blueHex = ColorCircleWheelPopover.hsbToHex(hue: 2.0 / 3.0, saturation: 1.0, brightness: 1.0)
+        XCTAssertEqual(blueHex.lowercased(), "#0433ff")
+        
+        // Test callbacks
+        popover.onColorChange("#38bdf8")
+        XCTAssertEqual(selectedHex, "#38bdf8")
+        
+        popover.onReset()
+        XCTAssertTrue(didReset)
+        
+        popover.onDismiss()
+        XCTAssertTrue(didDismiss)
+    }
 }
