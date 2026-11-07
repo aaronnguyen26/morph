@@ -116,4 +116,73 @@ final class ClickThroughAndHoverIntentTests: XCTestCase {
         let justBelowPill = NSPoint(x: uiRect.midX, y: uiRect.minY - 2)
         XCTAssertFalse(controller.isMouseInsideMorphUI(justBelowPill), "Points below the resting pill must not be captured, preserving full accessibility for tabs/controls in any app")
     }
+    
+    // MARK: - Glass Island Pass-By vs Intentional Hover Dwell Tests
+    func testGlassIslandPassByCursorMotionDoesNotOpen() {
+        let model = NotchModel()
+        model.isGlassIslandEnabled = true
+        model.setGlassIslandState(.idle)
+        
+        let controller = MorphController(model: model)
+        controller.hoverDwellDelay = 0.32
+        defer { controller.teardown() }
+        
+        let uiRect = controller.activeUIRect()
+        let insidePt1 = NSPoint(x: uiRect.midX - 40, y: uiRect.midY)
+        let insidePt2 = NSPoint(x: uiRect.midX + 40, y: uiRect.midY)
+        
+        // Fast sweep across the dynamic island (cursor passing through)
+        controller.checkMousePosition(insidePt1)
+        controller.checkMousePosition(insidePt2)
+        
+        XCTAssertEqual(model.glassIslandState, .idle, "Cursor sweeping through dynamic island must NOT expand it")
+        XCTAssertFalse(model.isHovered, "Pass-by motion must not set isHovered")
+        XCTAssertNil(controller.hoverIntentWorkItem, "Pass-by motion with displacement > 8 must cancel dwell intent")
+    }
+    
+    func testGlassIslandStationaryDwellOpensIntentionalHover() async throws {
+        let model = NotchModel()
+        model.isGlassIslandEnabled = true
+        model.setGlassIslandState(.idle)
+        
+        let controller = MorphController(model: model)
+        controller.hoverDwellDelay = 0.05 // Short dwell for test execution
+        defer { controller.teardown() }
+        
+        let uiRect = controller.activeUIRect()
+        let stationaryPt = NSPoint(x: uiRect.midX, y: uiRect.midY)
+        
+        // Cursor settles stationary inside dynamic island
+        controller.checkMousePosition(stationaryPt)
+        XCTAssertEqual(model.glassIslandState, .idle, "Must stay idle initially before dwell completes")
+        
+        // Wait for stationary dwell delay to complete
+        try await Task.sleep(nanoseconds: 80_000_000)
+        
+        XCTAssertNotEqual(model.glassIslandState, .idle, "Stationary dwell over dynamic island must intentionally expand it")
+        XCTAssertEqual(model.glassIslandState, model.contextualOpenState, "Must expand to contextual open state")
+    }
+    
+    func testGlassIslandTargetedMiniSubWidgetDwellOpensTarget() {
+        let model = NotchModel()
+        model.isGlassIslandEnabled = true
+        model.setGlassIslandState(.idle)
+        
+        let controller = MorphController(model: model)
+        controller.hoverDwellDelay = 0.0
+        defer { controller.teardown() }
+        
+        // When user hovers on miniTimerView, targetedHoverGlassState is set
+        model.targetedHoverGlassState = .timer
+        controller.handleMouseEnter()
+        XCTAssertEqual(model.glassIslandState, .timer, "Hover dwell targeted on timer mini widget must open timer")
+        XCTAssertNil(model.targetedHoverGlassState, "Targeted state must be consumed on open")
+        
+        // When user hovers on miniMusicView
+        model.setGlassIslandState(.idle)
+        model.targetedHoverGlassState = .music
+        controller.handleMouseEnter()
+        XCTAssertEqual(model.glassIslandState, .music, "Hover dwell targeted on music mini widget must open music")
+        XCTAssertNil(model.targetedHoverGlassState)
+    }
 }

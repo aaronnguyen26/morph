@@ -324,6 +324,7 @@ public enum GlassIslandState: String, CaseIterable, Equatable {
     case music
     case notes
     case forms
+    case drops
     case reply
     case profile
 }
@@ -334,6 +335,7 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
     case music
     case notes
     case forms
+    case drops
     
     public var id: String { rawValue }
     
@@ -344,6 +346,7 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
         case .music: return "Music Player"
         case .notes: return "Notes & Scratchpad"
         case .forms: return "Form Assistant"
+        case .drops: return "Drop Shelf"
         }
     }
     
@@ -354,6 +357,7 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
         case .music: return "music.note"
         case .notes: return "doc.text"
         case .forms: return "list.bullet.clipboard"
+        case .drops: return "tray.and.arrow.down"
         }
     }
     
@@ -364,6 +368,7 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
         case .music: return "YouTube Music player & library"
         case .notes: return "Quick notes & markdown scratchpad"
         case .forms: return "Real-time form detection & autofill"
+        case .drops: return "Staged files, PDFs & quick drag-and-drop"
         }
     }
     
@@ -374,6 +379,7 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
         case .music: return .music
         case .notes: return .notes
         case .forms: return .forms
+        case .drops: return .drops
         }
     }
     
@@ -384,6 +390,7 @@ public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
         case .music: return "#ff7ab8"
         case .notes: return "#ffd36a"
         case .forms: return "#8ff0b4"
+        case .drops: return "#38bdf8"
         }
     }
 }
@@ -625,14 +632,23 @@ public final class NotchModel: ObservableObject {
         return formTracker.isFormDetected
     }
     
+    public var isBackgroundDropActive: Bool {
+        guard isFeatureEnabled(.drops) else { return false }
+        return dropShelf.hasItems || dropShelf.isDraggingOverNotch
+    }
+    
     public var contextualOpenState: GlassIslandState {
         // Priority: active background tasks (timer/music) always take precedence over
         // form detection so hovering opens the thing already visible on the stealth pill.
-        // Forms are only the contextual destination when nothing else is running.
-        if isBackgroundMusicActive && isFeatureEnabled(.music) {
+        // Forms and Drop Shelf are contextual destinations when active.
+        if dropShelf.isDraggingOverNotch && isFeatureEnabled(.drops) {
+            return .drops
+        } else if isBackgroundMusicActive && isFeatureEnabled(.music) {
             return .music
         } else if isBackgroundTimerActive && isFeatureEnabled(.timer) {
             return .timer
+        } else if isBackgroundDropActive {
+            return .drops
         } else if isBackgroundFormActive {
             // isBackgroundFormActive already checks isFeatureEnabled(.forms)
             return .forms
@@ -644,6 +660,7 @@ public final class NotchModel: ObservableObject {
     }
     private var glassMusicTimer: Timer? = nil
     @Published public var hasPromptedMusicSignIn: Bool = false
+    @Published public var targetedHoverGlassState: GlassIslandState? = nil
     
     // Calendar State
     /// Index (Mon = 0 ... Sun = 6) of the selected day inside the week shown by the glass calendar.
@@ -1051,9 +1068,24 @@ public final class NotchModel: ObservableObject {
     public var glassIslandWidth: CGFloat {
         switch glassIslandState {
         case .idle:
+            if dropShelf.isDraggingOverNotch {
+                return 280
+            }
+            let hasDrops = isBackgroundDropActive
             let hasForm = isBackgroundFormActive
             let hasTimer = isGlassTimerActive && isFeatureEnabled(.timer)
             let hasMusic = isGlassMusicPlaying && isFeatureEnabled(.music)
+            if hasDrops {
+                if hasForm {
+                    return 390
+                } else if hasTimer && hasMusic {
+                    return 360
+                } else if hasTimer || hasMusic {
+                    return 300
+                } else {
+                    return 220
+                }
+            }
             if hasForm {
                 if hasTimer && hasMusic {
                     return 410
@@ -1073,7 +1105,7 @@ public final class NotchModel: ObservableObject {
             } else {
                 return 176
             }
-        case .prompt, .timer, .calendar, .music, .notes, .forms, .reply, .profile:
+        case .prompt, .timer, .calendar, .music, .notes, .forms, .drops, .reply, .profile:
             return 460
         }
     }
@@ -1094,6 +1126,8 @@ public final class NotchModel: ObservableObject {
             return 284
         case .forms:
             return 284
+        case .drops:
+            return 284
         case .reply:
             return 152
         case .profile:
@@ -1107,7 +1141,7 @@ public final class NotchModel: ObservableObject {
             return 19
         case .prompt:
             return 28
-        case .timer, .calendar, .music, .notes, .forms, .reply, .profile:
+        case .timer, .calendar, .music, .notes, .forms, .drops, .reply, .profile:
             return 34
         }
     }
@@ -1126,6 +1160,8 @@ public final class NotchModel: ObservableObject {
             return featureTintColorHex(.notes)
         case .forms:
             return featureTintColorHex(.forms)
+        case .drops:
+            return featureTintColorHex(.drops)
         case .reply:
             return "#b79cff"
         case .profile:
@@ -1218,6 +1254,16 @@ public final class NotchModel: ObservableObject {
                 subtitle: "Fill saved answers into active form",
                 icon: "pencil.and.outline",
                 actionType: "autofill"
+            )
+        }
+        
+        // 2B. Drop Shelf / Staged Files Command
+        if lower.contains("drop") || lower.contains("shelf") || lower == "files" || lower == "stash" || lower == "staged" {
+            return PromptPeekInfo(
+                title: "Open Drop Shelf",
+                subtitle: dropShelf.hasItems ? "\(dropShelf.count) staged files ready to dispatch" : "Drop files to stage & drag out",
+                icon: "tray.and.arrow.down.fill",
+                actionType: "drops"
             )
         }
         
@@ -1896,6 +1942,7 @@ public final class NotchModel: ObservableObject {
         }
         if isGlassIslandEnabled && !isGlassIslandPinned {
             self.glassIslandState = .idle
+            self.targetedHoverGlassState = nil
             self.glassPromptText = ""
             if self.glassNotesMode == .edit {
                 self.closeGlassNote()
@@ -2943,6 +2990,15 @@ public final class NotchModel: ObservableObject {
             }
             glassPromptText = ""
             setGlassIslandState(.forms)
+            return
+        }
+        
+        // 0D. Drop Shelf Routing: "drop", "drops", "shelf", "drop shelf", "stash", "staged", "files"
+        let dropPattern = #"\b(drop|drops|shelf|stash|staged|files|file shelf)\b"#
+        if let regex = try? NSRegularExpression(pattern: dropPattern, options: [.caseInsensitive]),
+           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            glassPromptText = ""
+            setGlassIslandState(.drops)
             return
         }
         

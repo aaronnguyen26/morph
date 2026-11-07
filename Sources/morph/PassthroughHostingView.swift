@@ -7,6 +7,7 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     public var onMouseExit: (() -> Void)?
     public var getActiveBounds: (() -> NSRect)?
     public var isExpanded: (() -> Bool)?
+    public var isDraggingActive: (() -> Bool)?
     
     public var onDraggingEntered: ((NSDraggingInfo) -> NSDragOperation)?
     public var onDraggingUpdated: ((NSDraggingInfo) -> NSDragOperation)?
@@ -81,6 +82,14 @@ public final class PassthroughHostingView<Content: View>: NSHostingView<Content>
     }
     
     public override func hitTest(_ point: NSPoint) -> NSView? {
+        if isDraggingActive?() == true {
+            if let activeBounds = getActiveBounds?() {
+                if activeBounds.contains(point) {
+                    return self
+                }
+            }
+            return self
+        }
         // While collapsed/idle, ALWAYS return nil so clicks pass straight through to background browser tabs
         if let expanded = isExpanded?(), !expanded {
             return nil

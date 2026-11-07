@@ -75,6 +75,39 @@ public final class NotchPanel: NSPanel {
     
     public var onKeyEquivalent: ((NSEvent) -> Bool)?
     
+    public var onDraggingEntered: ((NSDraggingInfo) -> NSDragOperation)?
+    public var onDraggingUpdated: ((NSDraggingInfo) -> NSDragOperation)?
+    public var onDraggingExited: ((NSDraggingInfo) -> Void)?
+    public var onPerformDragOperation: ((NSDraggingInfo) -> Bool)?
+    
+    // MARK: - NSDraggingDestination
+    public func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if let custom = onDraggingEntered?(sender) {
+            return custom
+        }
+        return .copy
+    }
+    
+    public func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if let custom = onDraggingUpdated?(sender) {
+            return custom
+        }
+        return .copy
+    }
+    
+    public func draggingExited(_ sender: NSDraggingInfo?) {
+        if let sender = sender {
+            onDraggingExited?(sender)
+        }
+    }
+    
+    public func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let custom = onPerformDragOperation?(sender) {
+            return custom
+        }
+        return false
+    }
+    
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let handled = onKeyEquivalent?(event), handled {
             return true

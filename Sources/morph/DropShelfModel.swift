@@ -247,6 +247,21 @@ public final class DropShelfModel: ObservableObject {
         }
     }
     
+    public func triggerShareAll(from view: NSView? = nil) {
+        guard !stagedItems.isEmpty else { return }
+        let picker = NSSharingServicePicker(items: stagedItems.map { $0.url })
+        if let targetView = view ?? NSApp.keyWindow?.contentView {
+            picker.show(relativeTo: targetView.bounds, of: targetView, preferredEdge: .minY)
+        }
+    }
+    
+    public func revealAllInFinder() {
+        guard !stagedItems.isEmpty else { return }
+        lastActionMessage = "Revealed \(stagedItems.count) files in Finder"
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(stagedItems.map { $0.url })
+    }
+    
     // MARK: - Drag Out Management
     
     public func startDragOut(for item: DropShelfItem) {

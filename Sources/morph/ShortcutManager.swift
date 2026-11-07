@@ -366,6 +366,13 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 lastTriggeredShortcut = "Esc Dismiss"
                 return true
             }
+            if model.isGlassIslandEnabled && model.glassIslandState != .idle {
+                withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                    model.setGlassIslandState(.idle)
+                }
+                lastTriggeredShortcut = "Esc Idle"
+                return true
+            }
             if model.isExpanded {
                 if let activeFeature = model.activeContextFeature {
                     if activeFeature == .dropShelf {
@@ -839,6 +846,13 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 model.isCommandBarPresented = false
             }
             lastTriggeredShortcut = "⌘W Close"
+            return
+        }
+        if model.isGlassIslandEnabled && model.glassIslandState != .idle {
+            withAnimation(MorphUniversalAnimation.stealthRetraction) {
+                model.setGlassIslandState(.idle)
+            }
+            lastTriggeredShortcut = "⌘W Idle"
             return
         }
         if model.isExpanded {

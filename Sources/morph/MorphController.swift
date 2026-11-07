@@ -97,6 +97,11 @@ public final class MorphController: NSObject {
             return self.model.isExpanded || self.model.isSpotlightBarActive || self.model.isCompactActive || self.model.isEditingTimerInPill || self.model.isTimerPopupActive || self.model.islandState != .resting || (self.model.isGlassIslandEnabled && self.model.glassIslandState != .idle)
         }
         
+        self.hostingView.isDraggingActive = { [weak self] in
+            guard let self = self else { return false }
+            return self.model.dropShelf.isDraggingOverNotch || self.isFileDragActive()
+        }
+        
         self.hostingView.getActiveBounds = { [weak self] in
             guard let self = self else { return .zero }
             let w = self.model.currentWidth
@@ -154,13 +159,30 @@ public final class MorphController: NSObject {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
                     self.model.dropShelf.isDraggingOverNotch = false
                     self.model.dropShelf.stageFiles(urls: urls)
-                    self.model.openContextualFeature(.dropShelf)
+                    if self.model.isGlassIslandEnabled {
+                        MorphHaptics.levelChange()
+                        self.model.setGlassIslandState(.drops)
+                    } else {
+                        self.model.openContextualFeature(.dropShelf)
+                    }
                 }
             }
             return true
         }
         
         self.panel.contentView = hostingView
+        self.panel.onDraggingEntered = { [weak self] sender in
+            return self?.hostingView.draggingEntered(sender) ?? .copy
+        }
+        self.panel.onDraggingUpdated = { [weak self] sender in
+            return self?.hostingView.draggingUpdated(sender) ?? .copy
+        }
+        self.panel.onDraggingExited = { [weak self] sender in
+            self?.hostingView.draggingExited(sender)
+        }
+        self.panel.onPerformDragOperation = { [weak self] sender in
+            return self?.hostingView.performDragOperation(sender) ?? false
+        }
         self.panel.onKeyEquivalent = { event in
             ShortcutManager.shared.handleKeyEvent(event)
         }
@@ -405,10 +427,23 @@ public final class MorphController: NSObject {
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [
             .leftMouseDown, .rightMouseDown, .otherMouseDown,
             .leftMouseDragged, .rightMouseDragged, .otherMouseDragged
-        ]) { [weak self] _ in
+        ]) { [weak self] event in
             guard let self = self else { return }
             let mouseLoc = NSEvent.mouseLocation
-            if self.isMouseInsideMorphUI(mouseLoc) {
+            
+            if event.type == .leftMouseDragged && self.isFileDragActive() {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.panel?.ignoresMouseEvents = false
+                    if self.isMouseInsideMorphUI(mouseLoc) {
+                        if !self.model.dropShelf.isDraggingOverNotch {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                                self.model.dropShelf.isDraggingOverNotch = true
+                            }
+                        }
+                    }
+                }
+            } else if self.isMouseInsideMorphUI(mouseLoc) {
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     if self.isExplicitlyDismissed { return }
@@ -517,6 +552,27 @@ public final class MorphController: NSObject {
         let isInside = isMouseInsideMorphUI(mouseLoc)
         let now = ProcessInfo.processInfo.systemUptime
         
+        let isDraggingFiles = isFileDragActive()
+        if isDraggingFiles {
+            panel?.ignoresMouseEvents = false
+            if isInside {
+                collapseWorkItem?.cancel()
+                collapseWorkItem = nil
+                if !model.dropShelf.isDraggingOverNotch {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                        model.dropShelf.isDraggingOverNotch = true
+                    }
+                }
+                return
+            }
+        }
+        if !isDraggingFiles && model.dropShelf.isDraggingOverNotch {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                model.dropShelf.isDraggingOverNotch = false
+            }
+            panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+        }
+        
         // Calculate cursor velocity to distinguish fast sweeps to browser tabs from intentional hovering
         var velocity: CGFloat = 0
         if let lastPt = lastMousePoint, lastMouseTimestamp > 0 {
@@ -609,7 +665,7 @@ public final class MorphController: NSObject {
                         guard let self = self else { return }
                         let currentLoc = MorphEnvironment.isTestingEnvironment ? (self.lastMousePoint ?? entry) : NSEvent.mouseLocation
                         let finalDisplacement = hypot(currentLoc.x - entry.x, currentLoc.y - entry.y)
-                        if self.isMouseInsideMorphUI(currentLoc) && finalDisplacement <= 10 {
+                        if self.isMouseInsideMorphUI(currentLoc) && finalDisplacement <= 16 {
                             self.handleMouseEnter()
                         }
                         self.hoverIntentWorkItem = nil
@@ -662,7 +718,8 @@ public final class MorphController: NSObject {
         
         if model.isGlassIslandEnabled {
             if model.glassIslandState == .idle {
-                let targetState = model.contextualOpenState
+                let targetState = model.targetedHoverGlassState ?? model.contextualOpenState
+                model.targetedHoverGlassState = nil
                 model.glassPromptText = ""
                 withAnimation(MorphUniversalAnimation.stateExpansion) {
                     model.setGlassIslandState(targetState)
@@ -749,7 +806,17 @@ public final class MorphController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
     
+    public func isFileDragActive() -> Bool {
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { return false }
+        let dragPb = NSPasteboard(name: .drag)
+        guard let types = dragPb.types else { return false }
+        return types.contains(.fileURL) || types.contains(NSPasteboard.PasteboardType("NSFilenamesPboardType")) || types.contains(.URL)
+    }
+    
     public var shouldIgnoreMouseEvents: Bool {
+        if model.dropShelf.isDraggingOverNotch || isFileDragActive() {
+            return false
+        }
         if model.isGlassIslandEnabled && model.glassIslandState != .idle {
             return false
         }

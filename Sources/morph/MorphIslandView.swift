@@ -365,11 +365,6 @@ public struct MorphIslandView: View {
             .onHover { hovering in
                 if hovering {
                     onMouseEnter()
-                    if model.isGlassIslandEnabled && model.glassIslandState == .idle {
-                        withAnimation(MorphUniversalAnimation.stateExpansion) {
-                            model.setGlassIslandState(model.contextualOpenState)
-                        }
-                    }
                 } else {
                     onMouseExit()
                 }
@@ -409,7 +404,12 @@ public struct MorphIslandView: View {
                     if let fileURL = url {
                         Task { @MainActor in
                             model.dropShelf.stageFile(url: fileURL)
-                            model.openContextualFeature(.dropShelf)
+                            if model.isGlassIslandEnabled {
+                                MorphHaptics.levelChange()
+                                model.setGlassIslandState(.drops)
+                            } else {
+                                model.openContextualFeature(.dropShelf)
+                            }
                         }
                     }
                 }
@@ -1465,46 +1465,128 @@ public struct MorphIslandView: View {
     
     // MARK: - Idle Capsule View (176 x 38 pt resting, up to 280 pt with Live Activity)
     // MARK: - Idle Capsule View (176 x 38 pt resting, up to 410 pt with Live Activity)
+    @ViewBuilder
     private var glassIdleView: some View {
-        let hasForm = model.isBackgroundFormActive
-        let hasMusic = model.isGlassMusicPlaying && model.isFeatureEnabled(.music)
-        let hasTimer = model.isGlassTimerActive && model.isFeatureEnabled(.timer)
-        return HStack(spacing: 8) {
-            if hasForm {
-                if hasMusic {
-                    miniMusicView
-                    Rectangle()
-                        .fill(Color.white.opacity(0.18))
-                        .frame(width: 1, height: 14)
-                    miniFormView
-                } else if hasTimer {
+        if model.dropShelf.isDraggingOverNotch {
+            miniDragOverDropView
+        } else {
+            let hasDrops = model.isBackgroundDropActive
+            let hasForm = model.isBackgroundFormActive
+            let hasMusic = model.isGlassMusicPlaying && model.isFeatureEnabled(.music)
+            let hasTimer = model.isGlassTimerActive && model.isFeatureEnabled(.timer)
+            HStack(spacing: 8) {
+                if hasDrops {
+                    miniDropShelfView
+                    if hasForm {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 14)
+                        miniFormView
+                    } else if hasMusic {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 14)
+                        miniMusicView
+                    } else if hasTimer {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 14)
+                        miniTimerView
+                    }
+                } else if hasForm {
+                    if hasMusic {
+                        miniMusicView
+                        Rectangle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 14)
+                        miniFormView
+                    } else if hasTimer {
+                        miniTimerView
+                        Rectangle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 14)
+                        miniFormView
+                    } else {
+                        miniFormView
+                    }
+                } else if hasTimer && hasMusic {
                     miniTimerView
                     Rectangle()
                         .fill(Color.white.opacity(0.18))
                         .frame(width: 1, height: 14)
-                    miniFormView
+                    miniMusicView
+                } else if hasTimer {
+                    miniTimerView
+                } else if hasMusic {
+                    miniMusicView
                 } else {
-                    miniFormView
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color(hex: "#cfd8ff").opacity(0.85))
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
-            } else if hasTimer && hasMusic {
-                miniTimerView
-                Rectangle()
-                    .fill(Color.white.opacity(0.18))
-                    .frame(width: 1, height: 14)
-                miniMusicView
-            } else if hasTimer {
-                miniTimerView
-            } else if hasMusic {
-                miniMusicView
-            } else {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color(hex: "#cfd8ff").opacity(0.85))
-                    .frame(maxWidth: .infinity, alignment: .center)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+    }
+    
+    private var miniDragOverDropView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.down.to.line.compact")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(Color(hex: model.featureTintColorHex(.drops)))
+            
+            Text("Drop to Stash")
+                .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+    }
+    
+    private var miniDropShelfView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color(hex: model.featureTintColorHex(.drops)))
+            
+            Text("\(model.dropShelf.count) \(model.dropShelf.count == 1 ? "file" : "files")")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            
+            if model.dropShelf.isHoldModeActive {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color(hex: model.featureTintColorHex(.drops)))
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                model.targetedHoverGlassState = .drops
+            } else if model.targetedHoverGlassState == .drops {
+                model.targetedHoverGlassState = nil
+            }
+        }
+        .onTapGesture {
+            MorphHaptics.levelChange()
+            withAnimation(MorphUniversalAnimation.stateExpansion) {
+                model.setGlassIslandState(.drops)
+            }
+        }
+        .onDrag {
+            guard model.dropShelf.stagedItems.count == 1, let firstItem = model.dropShelf.stagedItems.first else {
+                return NSItemProvider()
+            }
+            model.dropShelf.startDragOut(for: firstItem)
+            let provider = NSItemProvider(object: firstItem.url as NSURL)
+            provider.suggestedName = firstItem.name
+            return provider
+        }
     }
     
     private var miniFormView: some View {
@@ -1551,11 +1633,10 @@ public struct MorphIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .onHover { hovering in
-            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle && model.isBackgroundFormActive {
-                MorphHaptics.levelChange()
-                withAnimation(MorphUniversalAnimation.stateExpansion) {
-                    model.setGlassIslandState(model.contextualOpenState)
-                }
+            if hovering {
+                model.targetedHoverGlassState = .forms
+            } else if model.targetedHoverGlassState == .forms {
+                model.targetedHoverGlassState = nil
             }
         }
         .onTapGesture {
@@ -1689,11 +1770,10 @@ public struct MorphIslandView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering in
-            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle {
-                MorphHaptics.levelChange()
-                withAnimation(MorphUniversalAnimation.stateExpansion) {
-                    model.setGlassIslandState(.timer)
-                }
+            if hovering {
+                model.targetedHoverGlassState = .timer
+            } else if model.targetedHoverGlassState == .timer {
+                model.targetedHoverGlassState = nil
             }
         }
         .onTapGesture {
@@ -1730,11 +1810,10 @@ public struct MorphIslandView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering in
-            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle {
-                MorphHaptics.levelChange()
-                withAnimation(MorphUniversalAnimation.stateExpansion) {
-                    model.setGlassIslandState(.music)
-                }
+            if hovering {
+                model.targetedHoverGlassState = .music
+            } else if model.targetedHoverGlassState == .music {
+                model.targetedHoverGlassState = nil
             }
         }
         .onTapGesture {
@@ -1817,6 +1896,9 @@ public struct MorphIslandView: View {
             if model.isFeatureEnabled(.forms) {
                 tabButton(state: .forms, icon: "list.bullet.clipboard", label: "Forms")
             }
+            if model.isFeatureEnabled(.drops) {
+                tabButton(state: .drops, icon: "tray.and.arrow.down", label: "Drop Shelf")
+            }
             
             // Profile & Settings Tab
             tabButton(state: .profile, icon: "person.crop.circle", label: "Profile & Settings")
@@ -1886,6 +1968,8 @@ public struct MorphIslandView: View {
             glassNotesView
         case .forms:
             glassFormsView
+        case .drops:
+            glassDropShelfView
         case .reply:
             glassReplyView
         case .profile:
@@ -1898,6 +1982,11 @@ public struct MorphIslandView: View {
     // MARK: - Profile & Settings Panel View (460 x 380 pt, Liquid Glass)
     private var glassProfileView: some View {
         GlassProfileView(model: model)
+    }
+    
+    // MARK: - Drop Shelf Panel View (460 x 284 pt, Liquid Glass)
+    private var glassDropShelfView: some View {
+        DropShelfView(model: model)
     }
     
     // MARK: - Form Assistant Panel View (460 x 284 pt, Glass Island (2).html)
