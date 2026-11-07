@@ -91,8 +91,11 @@ public struct GlassProfileView: View {
                         ))
                 }
                 
-                // MARK: - Section 2: Features On/Off Toggles
-                featureTogglesSection
+                // MARK: - Section 2: Context-Aware Features (Off-Bar Automation)
+                contextAwareFeaturesSection
+                
+                // MARK: - Section 3: All Features On/Off & Color Customization
+                allFeaturesAndColorsSection
             }
             .padding(.horizontal, 2)
             .padding(.bottom, 12)
@@ -309,16 +312,159 @@ public struct GlassProfileView: View {
         }
     }
     
-    // MARK: - Section 2: Toolbar Features On/Off Toggles & Color Customization
-    private var featureTogglesSection: some View {
+    // MARK: - Section 2: Context-Aware Features (Off-Bar Automation)
+    private var contextAwareFeaturesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color(hex: "#8ff0b4"))
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("CONTEXT-AWARE FEATURES")
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.70))
+                        .tracking(1.0)
+                    Text("These work seamlessly in the background even when hidden from the search bar.")
+                        .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.45))
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 2)
+            
+            VStack(spacing: 8) {
+                // Feature 1: Drop Files Shelf (Electric Violet default)
+                contextFeatureCard(
+                    icon: "tray.and.arrow.down",
+                    title: "Drop Files Shelf",
+                    featureColorHex: model.featureTintColorHex(.drops),
+                    description: "Dragging files over the top notch automatically activates the shelf to inspect, hold, and AirDrop files. No search bar symbol required.",
+                    isEnabled: model.isDropContextAwareEnabled && model.isFeatureEnabled(.drops),
+                    onToggle: {
+                        model.setDropContextAwareEnabled(!model.isDropContextAwareEnabled)
+                    }
+                )
+                
+                // Feature 2: Form Detection Assistant (Mint Emerald default)
+                contextFeatureCard(
+                    icon: "list.bullet.clipboard",
+                    title: "Form Detection Assistant",
+                    featureColorHex: model.featureTintColorHex(.forms),
+                    description: "Continuously senses login & sign-up forms in your browsers or apps to provide 1-click autofill with your Morph profile. Functions completely off-bar.",
+                    isEnabled: model.isFormContextAwareEnabled && model.isFeatureEnabled(.forms),
+                    onToggle: {
+                        model.setFormContextAwareEnabled(!model.isFormContextAwareEnabled)
+                    }
+                )
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.8))
+        )
+    }
+    
+    private func contextFeatureCard(
+        icon: String,
+        title: String,
+        featureColorHex: String,
+        description: String,
+        isEnabled: Bool,
+        onToggle: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(hex: featureColorHex).opacity(isEnabled ? 0.20 : 0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color(hex: featureColorHex).opacity(isEnabled ? 0.50 : 0.15), lineWidth: 0.8)
+                    )
+                    .frame(width: 34, height: 34)
+                
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isEnabled ? Color(hex: featureColorHex) : Color.white.opacity(0.35))
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(isEnabled ? .white : Color.white.opacity(0.55))
+                    
+                    Spacer()
+                    
+                    // Switch Button (Clean toggle: no status badge, no flashing dot)
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                            onToggle()
+                        }
+                    }) {
+                        ZStack(alignment: isEnabled ? .trailing : .leading) {
+                            Capsule()
+                                .fill(
+                                    isEnabled
+                                    ? LinearGradient(
+                                        colors: [Color(hex: featureColorHex).opacity(0.85), Color(hex: featureColorHex).opacity(0.65)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                    : LinearGradient(
+                                        colors: [Color.white.opacity(0.12), Color.white.opacity(0.08)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: 38, height: 22)
+                                .overlay(
+                                    Capsule()
+                                        .stroke(isEnabled ? Color(hex: featureColorHex).opacity(0.60) : Color.white.opacity(0.20), lineWidth: 0.8)
+                                )
+                                .shadow(color: isEnabled ? Color(hex: featureColorHex).opacity(0.40) : Color.clear, radius: 4)
+                            
+                            Circle()
+                                .fill(isEnabled ? Color.white : Color.white.opacity(0.55))
+                                .frame(width: 16, height: 16)
+                                .padding(.horizontal, 3)
+                                .shadow(color: Color.black.opacity(0.2), radius: 2, y: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(isEnabled ? "Turn off context-aware trigger for \(title)" : "Turn on context-aware trigger for \(title)")
+                }
+                
+                Text(description)
+                    .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.45))
+                    .lineSpacing(1.5)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(isEnabled ? 0.05 : 0.02))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(isEnabled ? 0.12 : 0.06), lineWidth: 0.7)
+                )
+        )
+    }
+    
+    // MARK: - Section 3: All Features On/Off Toggles & Color Customization
+    private var allFeaturesAndColorsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("TOOLBAR FEATURES & COLORS")
+                    Text("ALL FEATURES & COLOR THEMES")
                         .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.65))
                         .tracking(1.2)
-                    Text("Turn features on/off or click the color circle to choose more colors")
+                    Text("Turn features on/off or click the color circle to choose custom liquid glow")
                         .font(.system(size: 10.5, weight: .regular, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.45))
                 }
@@ -333,6 +479,12 @@ public struct GlassProfileView: View {
                 }
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.8))
+        )
     }
     
     private func featureToggleRow(feature: MorphGlassFeature) -> some View {

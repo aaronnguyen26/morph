@@ -386,7 +386,9 @@ public struct MorphIslandView: View {
                 handleNotchFileDrop(providers: providers)
             }
             .onChange(of: isNotchDragTargeted) { _, targeted in
-                model.dropShelf.isDraggingOverNotch = targeted
+                if model.isDropContextAwareEnabled && model.isFeatureEnabled(.drops) {
+                    model.dropShelf.isDraggingOverNotch = targeted
+                }
             }
             .animation(MorphUniversalAnimation.stateExpansion, value: model.glassIslandState)
             .animation(model.isExpanded ? MorphUniversalAnimation.stateExpansion : MorphUniversalAnimation.stateRetraction, value: model.isExpanded)
@@ -403,6 +405,7 @@ public struct MorphIslandView: View {
     }
     
     private func handleNotchFileDrop(providers: [NSItemProvider]) -> Bool {
+        guard model.isFeatureEnabled(.drops) && model.isDropContextAwareEnabled else { return false }
         var didLoadAny = false
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
@@ -1886,24 +1889,9 @@ public struct MorphIslandView: View {
                 .fill(Color.white.opacity(0.22))
                 .frame(width: 1, height: 18)
             
-            // Configurable Feature Tabs (filtered by user on/off preference)
-            if model.isFeatureEnabled(.timer) {
-                tabButton(state: .timer, icon: "timer", label: "Focus timer")
-            }
-            if model.isFeatureEnabled(.calendar) {
-                tabButton(state: .calendar, icon: "calendar", label: "Calendar")
-            }
-            if model.isFeatureEnabled(.music) {
-                tabButton(state: .music, icon: "music.note", label: "Music")
-            }
-            if model.isFeatureEnabled(.notes) {
-                tabButton(state: .notes, icon: "doc.text", label: "Notes")
-            }
-            if model.isFeatureEnabled(.forms) {
-                tabButton(state: .forms, icon: "list.bullet.clipboard", label: "Forms")
-            }
-            if model.isFeatureEnabled(.drops) {
-                tabButton(state: .drops, icon: "tray.and.arrow.down", label: "Drop Shelf")
+            // Top 3 Most Frequently Used Feature Symbols (prevents dominating the search bar)
+            ForEach(model.activeOrTopBarFeatures) { feature in
+                tabButton(state: feature.state, icon: feature.iconName, label: feature.title)
             }
             
             // Profile & Settings Tab

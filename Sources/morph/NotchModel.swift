@@ -329,6 +329,18 @@ public enum GlassIslandState: String, CaseIterable, Equatable {
     case profile
 }
 
+public enum TopBarSlotMode: String, Codable, CaseIterable {
+    case auto = "auto"
+    case customPinned = "custom"
+    
+    public var title: String {
+        switch self {
+        case .auto: return "Auto (Most Used)"
+        case .customPinned: return "Custom Pinned"
+        }
+    }
+}
+
 public enum MorphGlassFeature: String, CaseIterable, Identifiable, Codable {
     case timer
     case calendar
@@ -626,14 +638,15 @@ public final class NotchModel: ObservableObject {
     }
     
     public var isBackgroundFormActive: Bool {
-        // Only considered active when the forms feature is enabled in the profile
-        // AND a form is actively detected on screen right now (showing on the stealth pill).
-        guard isFeatureEnabled(.forms) else { return false }
+        // Active when forms feature is enabled and context-aware form detection is enabled,
+        // AND a form is actively detected on screen right now.
+        guard isFeatureEnabled(.forms) && isFormContextAwareEnabled else { return false }
         return formTracker.isFormDetected
     }
     
     public var isBackgroundDropActive: Bool {
-        guard isFeatureEnabled(.drops) else { return false }
+        // Active when drops feature is enabled and context-aware drop shelf is enabled.
+        guard isFeatureEnabled(.drops) && isDropContextAwareEnabled else { return false }
         return dropShelf.hasItems || dropShelf.isDraggingOverNotch
     }
     
@@ -708,6 +721,153 @@ public final class NotchModel: ObservableObject {
     // Feature Toggles (Configurable Toolbar Feature Symbols)
     @Published public var enabledFeatures: Set<MorphGlassFeature> = Set(MorphGlassFeature.allCases)
     
+    // Top Bar Quick Slots & Usage Frequency Tracking (Strictly capped at 3 symbols)
+    @Published public var topBarSlotMode: TopBarSlotMode = .auto
+    @Published public var pinnedFeatureSlots: [MorphGlassFeature] = [.timer, .calendar, .music]
+    @Published public var featureUsageCounts: [MorphGlassFeature: Int] = [:]
+    
+    // Context-Aware Features (Off-Bar Automation)
+    @Published public var isDropContextAwareEnabled: Bool = true
+    @Published public var isFormContextAwareEnabled: Bool = true
+    
+    public static let defaultFeatureUsageBaselines: [MorphGlassFeature: Int] = [
+        .timer: 42,
+        .calendar: 28,
+        .music: 19,
+        .notes: 12,
+        .drops: 8,
+        .forms: 5
+    ]
+    
+    public func featureUsageCount(for feature: MorphGlassFeature) -> Int {
+        return featureUsageCounts[feature] ?? Self.defaultFeatureUsageBaselines[feature] ?? 0
+    }
+    
+    public func recordFeatureUsage(_ feature: MorphGlassFeature) {
+        let current = featureUsageCount(for: feature)
+        featureUsageCounts[feature] = current + 1
+        saveFeatureUsageCounts()
+    }
+    
+    public func resetFeatureUsageStats() {
+        featureUsageCounts = Self.defaultFeatureUsageBaselines
+        saveFeatureUsageCounts()
+    }
+    
+    public func setTopBarSlotMode(_ mode: TopBarSlotMode) {
+        self.topBarSlotMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: "com.morph.top_bar_slot_mode")
+    }
+    
+    public func setPinnedFeatureSlots(_ slots: [MorphGlassFeature]) {
+        self.pinnedFeatureSlots = Array(slots.prefix(3))
+        let array = self.pinnedFeatureSlots.map { $0.rawValue }
+        UserDefaults.standard.set(array, forKey: "com.morph.pinned_feature_slots")
+    }
+    
+    public func togglePinnedFeatureSlot(_ feature: MorphGlassFeature) {
+        if let idx = pinnedFeatureSlots.firstIndex(of: feature) {
+            if pinnedFeatureSlots.count > 1 {
+                pinnedFeatureSlots.remove(at: idx)
+            }
+        } else {
+            if pinnedFeatureSlots.count >= 3 {
+                pinnedFeatureSlots.removeLast()
+            }
+            pinnedFeatureSlots.append(feature)
+        }
+        let array = pinnedFeatureSlots.map { $0.rawValue }
+        UserDefaults.standard.set(array, forKey: "com.morph.pinned_feature_slots")
+    }
+    
+    public func setDropContextAwareEnabled(_ enabled: Bool) {
+        self.isDropContextAwareEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "com.morph.drop_context_aware_enabled")
+    }
+    
+    public func setFormContextAwareEnabled(_ enabled: Bool) {
+        self.isFormContextAwareEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "com.morph.form_context_aware_enabled")
+        syncFormTrackerFeatureState()
+    }
+    
+    /// Exactly up to 3 features visible on the top search bar based on user preference or usage frequency
+    public var topBarFeatures: [MorphGlassFeature] {
+        if topBarSlotMode == .customPinned {
+            let valid = pinnedFeatureSlots.filter { isFeatureEnabled($0) }
+            if valid.count >= 3 {
+                return Array(valid.prefix(3))
+            }
+            let remaining = MorphGlassFeature.allCases
+                .filter { isFeatureEnabled($0) && !valid.contains($0) }
+                .sorted { featureUsageCount(for: $0) > featureUsageCount(for: $1) }
+            return Array((valid + remaining).prefix(3))
+        } else {
+            let sorted = MorphGlassFeature.allCases
+                .filter { isFeatureEnabled($0) }
+                .sorted { featureUsageCount(for: $0) > featureUsageCount(for: $1) }
+            return Array(sorted.prefix(3))
+        }
+    }
+    
+    /// Top bar features ensuring that if an unpinned feature is actively open, it surfaces in slot 3
+    public var activeOrTopBarFeatures: [MorphGlassFeature] {
+        let base = topBarFeatures
+        if let activeFeature = MorphGlassFeature.allCases.first(where: { $0.state == glassIslandState }),
+           isFeatureEnabled(activeFeature),
+           !base.contains(activeFeature) {
+            if base.count >= 3 {
+                return [base[0], base[1], activeFeature]
+            } else {
+                return base + [activeFeature]
+            }
+        }
+        return base
+    }
+    
+    private func saveFeatureUsageCounts() {
+        var dict: [String: Int] = [:]
+        for (k, v) in featureUsageCounts {
+            dict[k.rawValue] = v
+        }
+        UserDefaults.standard.set(dict, forKey: "com.morph.feature_usage_counts")
+    }
+    
+    public func loadFeatureUsageCounts() {
+        if let dict = UserDefaults.standard.dictionary(forKey: "com.morph.feature_usage_counts") as? [String: Int] {
+            var counts: [MorphGlassFeature: Int] = [:]
+            for (k, v) in dict {
+                if let feature = MorphGlassFeature(rawValue: k) {
+                    counts[feature] = v
+                }
+            }
+            if !counts.isEmpty {
+                self.featureUsageCounts = counts
+                return
+            }
+        }
+        self.featureUsageCounts = Self.defaultFeatureUsageBaselines
+    }
+    
+    public func loadTopBarSlotPreferences() {
+        if let modeStr = UserDefaults.standard.string(forKey: "com.morph.top_bar_slot_mode"),
+           let mode = TopBarSlotMode(rawValue: modeStr) {
+            self.topBarSlotMode = mode
+        }
+        if let slotsArr = UserDefaults.standard.stringArray(forKey: "com.morph.pinned_feature_slots") {
+            let features = slotsArr.compactMap { MorphGlassFeature(rawValue: $0) }
+            if !features.isEmpty {
+                self.pinnedFeatureSlots = Array(features.prefix(3))
+            }
+        }
+        if UserDefaults.standard.object(forKey: "com.morph.drop_context_aware_enabled") != nil {
+            self.isDropContextAwareEnabled = UserDefaults.standard.bool(forKey: "com.morph.drop_context_aware_enabled")
+        }
+        if UserDefaults.standard.object(forKey: "com.morph.form_context_aware_enabled") != nil {
+            self.isFormContextAwareEnabled = UserDefaults.standard.bool(forKey: "com.morph.form_context_aware_enabled")
+        }
+    }
+    
     public func isFeatureEnabled(_ feature: MorphGlassFeature) -> Bool {
         return enabledFeatures.contains(feature)
     }
@@ -744,7 +904,7 @@ public final class NotchModel: ObservableObject {
     }
     
     private func syncFormTrackerFeatureState() {
-        let formsEnabled = isFeatureEnabled(.forms)
+        let formsEnabled = isFeatureEnabled(.forms) && isFormContextAwareEnabled
         formTracker.isFormFeatureEnabled = formsEnabled
         if !formsEnabled {
             if formTracker.isFormDetected || formTracker.isTracking {
@@ -855,6 +1015,8 @@ public final class NotchModel: ObservableObject {
     
     private func initGlassState() {
         loadEnabledFeatures()
+        loadFeatureUsageCounts()
+        loadTopBarSlotPreferences()
         loadCustomFeatureColors()
         if !media.quickPicks.isEmpty {
             syncGlassTracks(from: media.quickPicks)
@@ -2574,10 +2736,12 @@ public final class NotchModel: ObservableObject {
     
     // MARK: - Glass Island State Actions
     public func setGlassIslandState(_ state: GlassIslandState) {
-        if let feature = MorphGlassFeature.allCases.first(where: { $0.state == state }),
-           !isFeatureEnabled(feature) {
-            self.glassIslandState = .prompt
-            return
+        if let feature = MorphGlassFeature.allCases.first(where: { $0.state == state }) {
+            if !isFeatureEnabled(feature) {
+                self.glassIslandState = .prompt
+                return
+            }
+            recordFeatureUsage(feature)
         }
         self.glassIslandState = state
         if state == .idle {
