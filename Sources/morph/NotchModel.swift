@@ -605,29 +605,38 @@ public final class NotchModel: ObservableObject {
     }
     
     public var isBackgroundMusicActive: Bool {
+        guard isFeatureEnabled(.music) else { return false }
         if isGlassMusicPlaying || media.isPlaying { return true }
         if case .media = activeBackgroundTaskPill { return true }
         return false
     }
     
     public var isBackgroundTimerActive: Bool {
+        guard isFeatureEnabled(.timer) else { return false }
         if isGlassTimerActive { return true }
         if case .timer = activeBackgroundTaskPill { return true }
         return false
     }
     
     public var isBackgroundFormActive: Bool {
-        return formTracker.isFormDetected || formTracker.isTracking
+        // Only considered active when the forms feature is enabled in the profile
+        // AND a form is actively detected on screen right now (showing on the stealth pill).
+        guard isFeatureEnabled(.forms) else { return false }
+        return formTracker.isFormDetected
     }
     
     public var contextualOpenState: GlassIslandState {
-        if isBackgroundFormActive {
-            return .forms
-        } else if isBackgroundMusicActive {
+        // Priority: active background tasks (timer/music) always take precedence over
+        // form detection so hovering opens the thing already visible on the stealth pill.
+        // Forms are only the contextual destination when nothing else is running.
+        if isBackgroundMusicActive && isFeatureEnabled(.music) {
             return .music
-        } else if isBackgroundTimerActive {
+        } else if isBackgroundTimerActive && isFeatureEnabled(.timer) {
             return .timer
-        } else if calendar.showNotchAlert {
+        } else if isBackgroundFormActive {
+            // isBackgroundFormActive already checks isFeatureEnabled(.forms)
+            return .forms
+        } else if calendar.showNotchAlert && isFeatureEnabled(.calendar) {
             return .calendar
         } else {
             return .prompt
@@ -637,7 +646,24 @@ public final class NotchModel: ObservableObject {
     @Published public var hasPromptedMusicSignIn: Bool = false
     
     // Calendar State
-    @Published public var glassSelectedDayIndex: Int = 0
+    /// Index (Mon = 0 ... Sun = 6) of the selected day inside the week shown by the glass calendar.
+    /// Backed by `calendar.selectedDate` so the 3-Day / Week / Month views share one source of truth.
+    /// Assigning an index selects that weekday of the *current* (today's) week.
+    public var glassSelectedDayIndex: Int {
+        get {
+            let weekday = Calendar.current.component(.weekday, from: calendar.selectedDate)
+            return (weekday == 1) ? 6 : (weekday - 2)
+        }
+        set {
+            let cal = Calendar.current
+            let weekday = cal.component(.weekday, from: Date())
+            let monOffset = (weekday == 1) ? -6 : (2 - weekday)
+            guard let monday = cal.date(byAdding: .day, value: monOffset, to: cal.startOfDay(for: Date())),
+                  let target = cal.date(byAdding: .day, value: max(0, min(6, newValue)), to: monday) else { return }
+            calendar.selectedDate = target
+            calendar.displayedMonth = target
+        }
+    }
     @Published public var hasPromptedCalendarSignIn: Bool = false
     @Published public var glassCalendarEvents: [Int: [GlassCalendarEvent]] = [:]
     
@@ -678,6 +704,7 @@ public final class NotchModel: ObservableObject {
                 setGlassIslandState(.profile)
             }
         }
+        syncFormTrackerFeatureState()
         let array = Array(enabledFeatures.map { $0.rawValue })
         UserDefaults.standard.set(array, forKey: "com.morph.enabled_features")
     }
@@ -691,10 +718,30 @@ public final class NotchModel: ObservableObject {
             let features = stored.compactMap { MorphGlassFeature(rawValue: $0) }
             if !features.isEmpty {
                 self.enabledFeatures = Set(features)
+                syncFormTrackerFeatureState()
                 return
             }
         }
         self.enabledFeatures = Set(MorphGlassFeature.allCases)
+        syncFormTrackerFeatureState()
+    }
+    
+    private func syncFormTrackerFeatureState() {
+        let formsEnabled = isFeatureEnabled(.forms)
+        formTracker.isFormFeatureEnabled = formsEnabled
+        if !formsEnabled {
+            if formTracker.isFormDetected || formTracker.isTracking {
+                if let current = formTracker.activeSession {
+                    formTracker.suspendedSession = current
+                }
+                formTracker.isFormDetected = false
+                formTracker.isJustDetected = false
+                formTracker.isTracking = false
+            }
+            if activeContextFeature == .formTracker {
+                activeContextFeature = nil
+            }
+        }
     }
     
     // Feature Color Customization (Live & Persisted)
@@ -916,8 +963,9 @@ public final class NotchModel: ObservableObject {
             return .meetingFlight
         }
         
-        // Priority 3: Form Tracker (Strictly context-aware: active when an application form is detected on screen)
-        if formTracker.isFormDetected {
+        // Priority 3: Form Tracker (Strictly context-aware: active when an application form is
+        // detected on screen AND the forms feature is enabled in the user's profile)
+        if formTracker.isFormDetected && isFeatureEnabled(.forms) {
             return .formTrackerActive
         }
         
@@ -1003,21 +1051,24 @@ public final class NotchModel: ObservableObject {
     public var glassIslandWidth: CGFloat {
         switch glassIslandState {
         case .idle:
-            if formTracker.isFormDetected {
-                if isGlassTimerActive && isGlassMusicPlaying {
+            let hasForm = isBackgroundFormActive
+            let hasTimer = isGlassTimerActive && isFeatureEnabled(.timer)
+            let hasMusic = isGlassMusicPlaying && isFeatureEnabled(.music)
+            if hasForm {
+                if hasTimer && hasMusic {
                     return 410
-                } else if isGlassMusicPlaying {
+                } else if hasMusic {
                     return 380
-                } else if isGlassTimerActive {
+                } else if hasTimer {
                     return 370
                 } else {
                     return 300
                 }
-            } else if isGlassTimerActive && isGlassMusicPlaying {
+            } else if hasTimer && hasMusic {
                 return 268
-            } else if isGlassTimerActive {
+            } else if hasTimer {
                 return 208
-            } else if isGlassMusicPlaying {
+            } else if hasMusic {
                 return 196
             } else {
                 return 176
@@ -2227,6 +2278,8 @@ public final class NotchModel: ObservableObject {
             .dropFirst()
             .sink { [weak self] detected in
                 guard let self = self else { return }
+                // Guard: only auto-surface when the forms feature is enabled in the profile
+                guard self.isFeatureEnabled(.forms) else { return }
                 if detected && self.isExpanded && (self.selectedTab == .home || self.activeContextFeature == nil) {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
                         self.activeContextFeature = .formTracker
@@ -2435,7 +2488,7 @@ public final class NotchModel: ObservableObject {
                 return
             }
             
-            if formTracker.isFormDetected {
+            if formTracker.isFormDetected && isFeatureEnabled(.forms) {
                 activeContextFeature = .formTracker
                 return
             }
@@ -2474,6 +2527,11 @@ public final class NotchModel: ObservableObject {
     
     // MARK: - Glass Island State Actions
     public func setGlassIslandState(_ state: GlassIslandState) {
+        if let feature = MorphGlassFeature.allCases.first(where: { $0.state == state }),
+           !isFeatureEnabled(feature) {
+            self.glassIslandState = .prompt
+            return
+        }
         self.glassIslandState = state
         if state == .idle {
             self.isGlassIslandPinned = false
@@ -2522,21 +2580,13 @@ public final class NotchModel: ObservableObject {
         return (weekday == 1) ? 6 : (weekday - 2) // Monday = 0, ..., Sunday = 6
     }
     
+    /// The 7 dates (Mon...Sun) of the week containing the selected date.
     public var glassCurrentWeekDates: [Date] {
-        let cal = Calendar.current
-        let today = Date()
-        let weekday = cal.component(.weekday, from: today)
-        let monOffset = (weekday == 1) ? -6 : (2 - weekday)
-        guard let monday = cal.date(byAdding: .day, value: monOffset, to: today) else { return (0..<7).map { _ in today } }
-        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: monday) }
+        return calendar.datesForCurrentWeek()
     }
     
     public var glassSelectedDate: Date {
-        let dates = glassCurrentWeekDates
-        if glassSelectedDayIndex >= 0 && glassSelectedDayIndex < dates.count {
-            return dates[glassSelectedDayIndex]
-        }
-        return Date()
+        return calendar.selectedDate
     }
     
     public var glassRealCalendarEvents: [CalendarEvent] {

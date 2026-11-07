@@ -119,6 +119,8 @@ public struct CalendarView: View {
                         MorphHaptics.alignment()
                         withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
                             calendar.viewMode = mode
+                            // Keep month grid in sync with the date being viewed (as in Google Calendar)
+                            calendar.displayedMonth = calendar.selectedDate
                         }
                     }) {
                         HStack(spacing: 3) {
@@ -1289,7 +1291,8 @@ public struct CalendarView: View {
             Text(event.title)
                 .font(.system(size: 9.5, weight: .bold, design: .rounded))
                 .foregroundColor(theme.textPrimary)
-                .lineLimit(1)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
             
             if !event.description.isEmpty || event.location != nil {
                 HStack(spacing: 4) {
@@ -1775,7 +1778,8 @@ public struct CalendarView: View {
             Text(event.title)
                 .font(.system(size: 8.5, weight: .bold, design: .rounded))
                 .foregroundColor(theme.textPrimary)
-                .lineLimit(1)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
             
             if !isCompact, let loc = event.location, !loc.isEmpty {
                 HStack(spacing: 2) {
@@ -1818,10 +1822,18 @@ public struct CalendarView: View {
                 Text(event.title)
                     .font(.system(size: 7, weight: .semibold, design: .rounded))
                     .foregroundColor(theme.textPrimary)
-                    .lineLimit(1)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                if let cal = event.calendarName, !cal.isEmpty, cal.lowercased() != "primary" {
+                    Text(cal)
+                        .font(.system(size: 6, weight: .bold, design: .rounded))
+                        .foregroundColor(event.colorHex.map { Color(hex: $0) } ?? theme.textSecondary)
+                        .lineLimit(1)
+                }
                 
                 if !event.isAllDay {
-                    Text(event.formattedStartTime)
+                    Text(event.formattedTimeRange)
                         .font(.system(size: 6, weight: .medium, design: .monospaced))
                         .foregroundColor(theme.textTertiary)
                         .lineLimit(1)

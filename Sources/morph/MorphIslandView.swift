@@ -1466,15 +1466,18 @@ public struct MorphIslandView: View {
     // MARK: - Idle Capsule View (176 x 38 pt resting, up to 280 pt with Live Activity)
     // MARK: - Idle Capsule View (176 x 38 pt resting, up to 410 pt with Live Activity)
     private var glassIdleView: some View {
-        HStack(spacing: 8) {
-            if model.formTracker.isFormDetected {
-                if model.isGlassMusicPlaying {
+        let hasForm = model.isBackgroundFormActive
+        let hasMusic = model.isGlassMusicPlaying && model.isFeatureEnabled(.music)
+        let hasTimer = model.isGlassTimerActive && model.isFeatureEnabled(.timer)
+        return HStack(spacing: 8) {
+            if hasForm {
+                if hasMusic {
                     miniMusicView
                     Rectangle()
                         .fill(Color.white.opacity(0.18))
                         .frame(width: 1, height: 14)
                     miniFormView
-                } else if model.isGlassTimerActive {
+                } else if hasTimer {
                     miniTimerView
                     Rectangle()
                         .fill(Color.white.opacity(0.18))
@@ -1483,15 +1486,15 @@ public struct MorphIslandView: View {
                 } else {
                     miniFormView
                 }
-            } else if model.isGlassTimerActive && model.isGlassMusicPlaying {
+            } else if hasTimer && hasMusic {
                 miniTimerView
                 Rectangle()
                     .fill(Color.white.opacity(0.18))
                     .frame(width: 1, height: 14)
                 miniMusicView
-            } else if model.isGlassTimerActive {
+            } else if hasTimer {
                 miniTimerView
-            } else if model.isGlassMusicPlaying {
+            } else if hasMusic {
                 miniMusicView
             } else {
                 Image(systemName: "sparkles")
@@ -1548,14 +1551,15 @@ public struct MorphIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .onHover { hovering in
-            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle {
+            if hovering && model.isGlassIslandEnabled && model.glassIslandState == .idle && model.isBackgroundFormActive {
                 MorphHaptics.levelChange()
                 withAnimation(MorphUniversalAnimation.stateExpansion) {
-                    model.setGlassIslandState(.forms)
+                    model.setGlassIslandState(model.contextualOpenState)
                 }
             }
         }
         .onTapGesture {
+            guard model.isFeatureEnabled(.forms) else { return }
             MorphHaptics.levelChange()
             withAnimation(MorphUniversalAnimation.stateExpansion) {
                 model.setGlassIslandState(.forms)
@@ -2529,8 +2533,7 @@ public struct MorphIslandView: View {
     
     private var calendarNextChipText: String {
         let events = model.glassRealCalendarEvents
-        let todayIdx = currentWeekTodayIndex
-        if model.glassSelectedDayIndex == todayIdx {
+        if Calendar.current.isDateInToday(model.glassSelectedDate) {
             if let next = model.calendar.nextUpcomingEvent {
                 return next.isNow ? "Next up · Now" : "Next up · in \(next.minutesUntilStart)m"
             } else if !events.isEmpty {
@@ -2561,79 +2564,73 @@ public struct MorphIslandView: View {
                 Spacer()
                 
                 HStack(spacing: 8) {
-                    // Quick Action: Add Event Drawer Toggle
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                            isAddingGlassEvent.toggle()
-                        }
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: isAddingGlassEvent ? "xmark" : "plus")
-                                .font(.system(size: 10, weight: .bold))
-                            Text(isAddingGlassEvent ? "Close" : "Add Event")
-                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        }
+                    // Next up / schedule status chip (positioned in the former Add Event spot)
+                    Text(calendarNextChipText)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundColor(.white)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: model.featureTintColorHex(.calendar)).opacity(0.26))
-                                .overlay(Capsule().stroke(Color(hex: model.featureTintColorHex(.calendar)).opacity(0.65), lineWidth: 0.9))
+                                .fill(Color.white.opacity(0.14))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
                         )
-                    }
-                    .buttonStyle(.plain)
-                    .help(isAddingGlassEvent ? "Close event composer" : "Add event to this day")
                     
-                    VStack(alignment: .trailing, spacing: 4) {
+                    // Far-right action stack (Add Event button in the former Next Up spot)
+                    VStack(alignment: .trailing, spacing: 3) {
                         Text(calendarSubtitleText)
                             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                             .tracking(1.0)
                             .foregroundColor(Color.white.opacity(0.50))
                         
-                        Text(calendarNextChipText)
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                isAddingGlassEvent.toggle()
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: isAddingGlassEvent ? "xmark" : "plus")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(isAddingGlassEvent ? "Close" : "Add Event")
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            }
                             .foregroundColor(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
                             .background(
                                 Capsule()
-                                    .fill(Color.white.opacity(0.14))
-                                    .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                                    .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: model.featureTintColorHex(.calendar)).opacity(0.26))
+                                    .overlay(Capsule().stroke(Color(hex: model.featureTintColorHex(.calendar)).opacity(0.65), lineWidth: 0.9))
                             )
+                        }
+                        .buttonStyle(.plain)
+                        .help(isAddingGlassEvent ? "Close event composer" : "Add event to this day")
                     }
                 }
             }
-            .frame(height: 40)
+            .frame(minHeight: 40)
             
-            // 7-Day Week selector (M T W T F S S)
-            HStack(spacing: 4) {
-                ForEach(0..<7, id: \.self) { i in
-                    weekDayButton(index: i)
-                }
-            }
-            .frame(height: 50)
+            // View mode picker + period navigation (3 Days | Week | Month)
+            glassCalendarModeBar
             
             if isAddingGlassEvent {
                 glassAddEventCard
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             
-            // Events list
-            ScrollView(.vertical, showsIndicators: false) {
-                let realEvents = model.glassRealCalendarEvents
-                if realEvents.isEmpty {
-                    calendarEmptyOrSignInCard
-                } else {
-                    VStack(spacing: 6) {
-                        ForEach(Array(realEvents.enumerated()), id: \.element.id) { (idx, e) in
-                            realCalendarEventRowView(event: e, isNext: idx == 0 && (model.glassSelectedDayIndex == currentWeekTodayIndex))
-                        }
-                    }
+            // Mode content
+            Group {
+                switch model.calendar.viewMode {
+                case .threeDay:
+                    glassThreeDayView
+                case .week:
+                    glassWeekView
+                case .month:
+                    glassMonthView
                 }
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 4)
         .onAppear {
@@ -2642,16 +2639,329 @@ public struct MorphIslandView: View {
         }
     }
     
+    // MARK: - Glass Calendar: View Modes (3 Days / Week / Month)
+    private var glassCalendarTint: Color { Color(hex: model.featureTintColorHex(.calendar)) }
+    
+    private var glassCalendarModeBar: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 2) {
+                ForEach(CalendarViewMode.allCases) { mode in
+                    let isSelected = model.calendar.viewMode == mode
+                    Button(action: {
+                        MorphHaptics.alignment()
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
+                            model.calendar.viewMode = mode
+                            model.calendar.displayedMonth = model.calendar.selectedDate
+                        }
+                    }) {
+                        Text(mode.rawValue)
+                            .font(.system(size: 10, weight: isSelected ? .bold : .medium, design: .rounded))
+                            .foregroundColor(isSelected ? .white : Color.white.opacity(0.62))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(isSelected ? glassCalendarTint.opacity(0.38) : Color.clear))
+                            .overlay(Capsule().stroke(isSelected ? glassCalendarTint.opacity(0.7) : Color.clear, lineWidth: 0.8))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show \(mode.rawValue)")
+                }
+            }
+            .padding(2)
+            .background(Capsule().fill(Color.white.opacity(0.08)))
+            
+            Spacer(minLength: 4)
+            
+            Text(glassPeriodTitle)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(Color.white.opacity(0.72))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            
+            HStack(spacing: 2) {
+                glassNavButton(icon: "chevron.left", help: "Previous") { model.calendar.previousPeriod() }
+                Button(action: {
+                    MorphHaptics.alignment()
+                    model.calendar.goToToday()
+                }) {
+                    Text("Today")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                glassNavButton(icon: "chevron.right", help: "Next") { model.calendar.nextPeriod() }
+            }
+        }
+        .frame(height: 24)
+    }
+    
+    private func glassNavButton(icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: {
+            MorphHaptics.alignment()
+            action()
+        }) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.white.opacity(0.12)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+    
+    private var glassPeriodTitle: String {
+        let f = DateFormatter()
+        switch model.calendar.viewMode {
+        case .month:
+            f.dateFormat = "MMMM yyyy"
+            return f.string(from: model.calendar.displayedMonth)
+        case .week, .threeDay:
+            let dates = model.calendar.viewMode == .week ? model.calendar.datesForCurrentWeek() : model.calendar.datesForThreeDays()
+            guard let first = dates.first, let last = dates.last else { return "" }
+            f.dateFormat = "MMM d"
+            let a = f.string(from: first)
+            let b = f.string(from: last)
+            return "\(a) – \(b)"
+        }
+    }
+    
+    private func glassSortedEvents(on date: Date) -> [CalendarEvent] {
+        model.calendar.eventsForDate(date).sorted { $0.startTime < $1.startTime }
+    }
+    
+    private func glassEventsScroll(for date: Date) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            let realEvents = glassSortedEvents(on: date)
+            if realEvents.isEmpty {
+                calendarEmptyOrSignInCard
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(Array(realEvents.enumerated()), id: \.element.id) { (idx, e) in
+                        realCalendarEventRowView(event: e, isNext: idx == 0 && Calendar.current.isDateInToday(date))
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+    
+    // Week: 7-day strip + agenda of the selected day
+    private var glassWeekView: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
+                ForEach(0..<7, id: \.self) { i in
+                    weekDayButton(index: i)
+                }
+            }
+            .frame(height: 50)
+            glassEventsScroll(for: model.glassSelectedDate)
+        }
+    }
+    
+    // 3 Days: three side-by-side day columns
+    private var glassThreeDayView: some View {
+        HStack(alignment: .top, spacing: 6) {
+            ForEach(model.calendar.datesForThreeDays(), id: \.self) { date in
+                glassThreeDayColumn(date: date)
+            }
+        }
+    }
+    
+    private func glassThreeDayColumn(date: Date) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(date)
+        let isSelected = cal.isDate(date, inSameDayAs: model.glassSelectedDate)
+        let events = glassSortedEvents(on: date)
+        let letterFmt = DateFormatter()
+        letterFmt.dateFormat = "EEE"
+        return VStack(spacing: 4) {
+            Button(action: {
+                MorphHaptics.levelChange()
+                model.calendar.selectedDate = date
+            }) {
+                VStack(spacing: 1) {
+                    Text(letterFmt.string(from: date).uppercased())
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.60))
+                    Text("\(cal.component(.day, from: date))")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(isToday ? glassCalendarTint.opacity(0.55) : Color.clear))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isSelected ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            
+            ScrollView(.vertical, showsIndicators: false) {
+                if events.isEmpty {
+                    Text("No events")
+                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.40))
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 14)
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(events) { e in
+                            glassCompactEventChip(event: e)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private func glassCompactEventChip(event: CalendarEvent) -> some View {
+        let colorHex = event.colorHex ?? "#6ab7ff"
+        let labelName: String = {
+            if let cName = event.calendarName?.trimmingCharacters(in: .whitespacesAndNewlines), !cName.isEmpty, cName.lowercased() != "primary" {
+                return cName
+            }
+            if let hex = event.colorHex, let colorLabel = GoogleCalendarColor.labelName(for: hex), !colorLabel.isEmpty {
+                return colorLabel
+            }
+            return ""
+        }()
+        let timeStr: String = {
+            if event.isAllDay { return "All Day" }
+            let f = DateFormatter()
+            f.dateFormat = "h:mm a"
+            return "\(f.string(from: event.startTime)) – \(f.string(from: event.endTime))"
+        }()
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(event.title.isEmpty ? "Untitled Event" : event.title)
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            if !labelName.isEmpty {
+                Text(labelName)
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundColor(Color(hex: colorHex).opacity(0.95))
+                    .lineLimit(1)
+            }
+            
+            Text(timeStr)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundColor(Color.white.opacity(0.75))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(hex: colorHex).opacity(0.22))
+                .overlay(
+                    HStack {
+                        Rectangle().fill(Color(hex: colorHex)).frame(width: 2.5)
+                        Spacer()
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                )
+        )
+    }
+    
+    // Month: compact month grid + agenda of the selected day
+    private var glassMonthView: some View {
+        HStack(alignment: .top, spacing: 10) {
+            glassMonthGrid
+                .frame(width: 236)
+            glassEventsScroll(for: model.glassSelectedDate)
+        }
+    }
+    
+    private var glassMonthGrid: some View {
+        let cal = Calendar.current
+        let month = model.calendar.displayedMonth
+        let comps = cal.dateComponents([.year, .month], from: month)
+        let firstOfMonth = cal.date(from: comps) ?? month
+        let dayCount = cal.range(of: .day, in: .month, for: firstOfMonth)?.count ?? 30
+        let weekday = cal.component(.weekday, from: firstOfMonth)
+        let leading = (weekday == 1) ? 6 : (weekday - 2) // Monday-first
+        let totalCells = Int(ceil(Double(leading + dayCount) / 7.0)) * 7
+        let letters = ["M", "T", "W", "T", "F", "S", "S"]
+        return VStack(spacing: 3) {
+            HStack(spacing: 0) {
+                ForEach(0..<7, id: \.self) { i in
+                    Text(letters[i])
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundColor(Color.white.opacity(0.55))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            ForEach(0..<(totalCells / 7), id: \.self) { row in
+                HStack(spacing: 0) {
+                    ForEach(0..<7, id: \.self) { col in
+                        let dayNum = row * 7 + col - leading + 1
+                        if dayNum >= 1 && dayNum <= dayCount,
+                           let date = cal.date(byAdding: .day, value: dayNum - 1, to: firstOfMonth) {
+                            glassMonthCell(date: date, dayNum: dayNum)
+                        } else {
+                            Color.clear.frame(maxWidth: .infinity).frame(height: 24)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func glassMonthCell(date: Date, dayNum: Int) -> some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(date)
+        let isSelected = cal.isDate(date, inSameDayAs: model.glassSelectedDate)
+        let hasEvents = !model.calendar.eventsForDate(date).isEmpty
+        return Button(action: {
+            MorphHaptics.levelChange()
+            model.calendar.selectedDate = date
+        }) {
+            VStack(spacing: 1) {
+                Text("\(dayNum)")
+                    .font(.system(size: 11, weight: isToday ? .bold : .medium, design: .rounded))
+                    .foregroundColor(.white)
+                Circle()
+                    .fill(hasEvents ? glassCalendarTint : Color.clear)
+                    .frame(width: 3, height: 3)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.white.opacity(0.26) : (isToday ? glassCalendarTint.opacity(0.28) : Color.clear))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(isSelected ? Color.white.opacity(0.6) : Color.clear, lineWidth: 1)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+    
     private func weekDayButton(index: Int) -> some View {
         let letters = ["M", "T", "W", "T", "F", "S", "S"]
         let dates = currentWeekDayDates
         let dayNum = (index < dates.count) ? Calendar.current.component(.day, from: dates[index]) : (index + 1)
-        let isSelected = model.glassSelectedDayIndex == index
-        let isToday = index == currentWeekTodayIndex
+        let isSelected = (index < dates.count) && Calendar.current.isDate(dates[index], inSameDayAs: model.glassSelectedDate)
+        let isToday = (index < dates.count) && Calendar.current.isDateInToday(dates[index])
         
         return Button(action: {
             MorphHaptics.levelChange()
-            model.glassSelectedDayIndex = index
+            if index < dates.count { model.calendar.selectedDate = dates[index] }
         }) {
             VStack(spacing: 2) {
                 Text(letters[index])
@@ -2688,66 +2998,95 @@ public struct MorphIslandView: View {
     
     private func realCalendarEventRowView(event: CalendarEvent, isNext: Bool) -> some View {
         let colorHex = event.colorHex ?? "#6ab7ff"
-        let location = (event.location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
-            ? event.location!
-            : (event.hasMeetLink ? "Google Meet" : "Calendar Event")
-        let timeStr = event.isAllDay ? "All Day" : {
-            let f = DateFormatter()
-            f.dateFormat = "h:mm a"
-            return "\(f.string(from: event.startTime))"
-        }()
         
-        let labelName: String? = {
-            if let cName = event.calendarName, !cName.isEmpty, cName.lowercased() != "primary" {
+        let labelName: String = {
+            if let cName = event.calendarName?.trimmingCharacters(in: .whitespacesAndNewlines), !cName.isEmpty, cName.lowercased() != "primary" {
                 return cName
             }
-            if let hex = event.colorHex {
-                return GoogleCalendarColor.labelName(for: hex)
+            if let hex = event.colorHex, let colorLabel = GoogleCalendarColor.labelName(for: hex), !colorLabel.isEmpty {
+                return colorLabel
             }
-            return nil
+            if let loc = event.location?.trimmingCharacters(in: .whitespacesAndNewlines), !loc.isEmpty {
+                return loc
+            }
+            if event.hasMeetLink {
+                return "Google Meet"
+            }
+            return "Event"
         }()
         
-        return HStack(spacing: 8) {
+        let subtitleText: String = {
+            let baseLabel = labelName
+            if let loc = event.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !loc.isEmpty,
+               loc.lowercased() != baseLabel.lowercased() {
+                return "\(baseLabel) • \(loc)"
+            } else if event.hasMeetLink && baseLabel.lowercased() != "google meet" {
+                return "\(baseLabel) • Google Meet"
+            }
+            return baseLabel
+        }()
+        
+        let timeStr: String = {
+            if event.isAllDay {
+                return "All Day"
+            }
+            let f = DateFormatter()
+            f.dateFormat = "h:mm a"
+            let start = f.string(from: event.startTime)
+            let end = f.string(from: event.endTime)
+            return "\(start) – \(end)"
+        }()
+        
+        return HStack(alignment: .center, spacing: 9) {
             Circle()
                 .fill(Color(hex: colorHex))
                 .frame(width: 8, height: 8)
                 .shadow(color: Color(hex: colorHex).opacity(0.8), radius: 3)
             
-            VStack(alignment: .leading, spacing: 1.5) {
-                HStack(spacing: 5) {
-                    Text(event.title.isEmpty ? "Untitled Event" : event.title)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    
-                    if let label = labelName {
-                        Text(label)
-                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                            .foregroundColor(Color(hex: colorHex))
-                            .padding(.horizontal, 5.5)
-                            .padding(.vertical, 1.5)
-                            .background(
-                                Capsule()
-                                    .fill(Color(hex: colorHex).opacity(0.20))
-                                    .overlay(Capsule().stroke(Color(hex: colorHex).opacity(0.55), lineWidth: 0.75))
-                            )
-                    }
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.title.isEmpty ? "Untitled Event" : event.title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                 
-                Text(location)
-                    .font(.system(size: 11, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.62))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(subtitleText)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(Color(hex: colorHex).opacity(0.92))
+                        .lineLimit(1)
+                }
             }
             
-            Spacer()
+            Spacer(minLength: 8)
             
-            Text(timeStr)
-                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                .foregroundColor(Color.white.opacity(0.80))
+            VStack(alignment: .trailing, spacing: 1.5) {
+                Text(timeStr)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .lineLimit(1)
+                
+                if event.isNow {
+                    Text("NOW")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(hex: "#6ab7ff"))
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color(hex: "#6ab7ff").opacity(0.20)))
+                } else if event.isStartingSoon && !event.isAllDay {
+                    Text("SOON")
+                        .font(.system(size: 8, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.75))
+                        .padding(.horizontal, 4.5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.white.opacity(0.15)))
+                }
+            }
         }
         .padding(.horizontal, 12)
-        .frame(height: 42)
+        .padding(.vertical, 7)
+        .frame(minHeight: 46)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(isNext ? Color.white.opacity(0.18) : Color.white.opacity(0.09))

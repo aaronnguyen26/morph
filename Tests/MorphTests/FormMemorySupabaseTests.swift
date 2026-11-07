@@ -322,10 +322,10 @@ final class FormMemorySupabaseTests: XCTestCase {
         XCTAssertTrue(model.isBackgroundTimerActive)
         XCTAssertEqual(model.contextualOpenState, .timer)
         
-        // E. Form takes precedence when both form and music are active on stealth capsule
+        // E. Running Music/Timer takes precedence when both form and music are active on stealth capsule
         formTracker.isFormDetected = true
         model.media.isPlaying = true
-        XCTAssertEqual(model.contextualOpenState, .forms)
+        XCTAssertEqual(model.contextualOpenState, .music)
     }
     
     // MARK: - 10. Ability for Morph to Input Saved Input for That Question

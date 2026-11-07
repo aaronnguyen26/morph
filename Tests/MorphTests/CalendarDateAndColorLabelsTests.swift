@@ -237,4 +237,72 @@ final class CalendarDateAndColorLabelsTests: XCTestCase {
         let view = CalendarView(calendar: calendar)
         XCTAssertNotNil(view.body)
     }
+    
+    func testGlassCalendarSharesViewModeAndDateWithCalendarModel() {
+        let model = NotchModel()
+        let cal = Calendar.current
+        model.calendar.goToToday()
+        model.calendar.viewMode = .week
+        model.calendar.nextPeriod()
+        XCTAssertEqual(model.glassCurrentWeekDates, model.calendar.datesForCurrentWeek())
+        XCTAssertTrue(cal.isDate(model.glassSelectedDate, inSameDayAs: model.calendar.selectedDate))
+        XCTAssertEqual(model.glassCurrentWeekDates.count, 7)
+        XCTAssertTrue(model.glassCurrentWeekDates.contains { cal.isDate($0, inSameDayAs: model.glassSelectedDate) })
+        model.calendar.viewMode = .threeDay
+        XCTAssertEqual(model.calendar.datesForThreeDays().count, 3)
+        model.calendar.viewMode = .month
+        model.calendar.goToToday()
+        XCTAssertTrue(cal.isDateInToday(model.glassSelectedDate))
+    }
+    
+    func testEventSubtitleAndLabelsShowDebateSociology() {
+        let debateEvent = CalendarEvent(
+            id: "evt-debate-1",
+            title: "Debate Tournament Prep Round 1",
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(3600),
+            colorHex: "#7986cb",
+            calendarName: "Debate"
+        )
+        XCTAssertEqual(debateEvent.calendarName, "Debate")
+        XCTAssertFalse(debateEvent.title.isEmpty)
+        
+        let sociologyEvent = CalendarEvent(
+            id: "evt-socio-2",
+            title: "Sociology 101 Lecture: Social Structures and Institutions in Modern Societies",
+            startTime: Date(),
+            endTime: Date().addingTimeInterval(5400),
+            colorHex: "#33b679",
+            calendarName: "Sociology"
+        )
+        XCTAssertEqual(sociologyEvent.calendarName, "Sociology")
+        XCTAssertFalse(sociologyEvent.title.contains("..."))
+        
+        // Ensure standard palette label resolution works for color hex
+        let lavenderLabel = GoogleCalendarColor.labelName(for: "#7986cb")
+        XCTAssertEqual(lavenderLabel, "Lavender")
+        let sageLabel = GoogleCalendarColor.labelName(for: "#33b679")
+        XCTAssertEqual(sageLabel, "Sage")
+    }
+    
+    func testStartAndEndTimeFormatting() {
+        let now = Date()
+        let end = now.addingTimeInterval(3600)
+        let event = CalendarEvent(
+            id: "evt-time-test",
+            title: "Team Sync",
+            startTime: now,
+            endTime: end
+        )
+        
+        let range = event.formattedTimeRange
+        XCTAssertTrue(range.contains("-") || range.contains("–"), "Time range must contain start and end time separator")
+        
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        let expectedStart = f.string(from: now)
+        let expectedEnd = f.string(from: end)
+        XCTAssertTrue(range.contains(expectedStart), "Range must contain start time")
+        XCTAssertTrue(range.contains(expectedEnd), "Range must contain end time")
+    }
 }

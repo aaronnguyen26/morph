@@ -175,4 +175,65 @@ final class GlassProfileAndFeaturesTests: XCTestCase {
         popover.onDismiss()
         XCTAssertTrue(didDismiss)
     }
+    
+    // MARK: - 8. Contextual Open State and Form Feature Disabled Tests
+    func testContextualOpenStatePrefersRunningMediaAndTimerOverFormDetection() {
+        // When both form is detected and music/timer are running, active background activities (music/timer) take priority
+        model.formTracker.isFormDetected = true
+        model._simulatedGlassMusicPlaying = true
+        XCTAssertEqual(model.contextualOpenState, .music, "Running music must take priority over form detection when opening stealth")
+        
+        model._simulatedGlassMusicPlaying = false
+        model.glassTimerStatus = .running
+        XCTAssertEqual(model.contextualOpenState, .timer, "Running timer must take priority over form detection when opening stealth")
+    }
+    
+    func testContextualOpenStateAndCompactHUDRespectFormsFeatureDisabled() {
+        model.formTracker.isFormDetected = true
+        XCTAssertTrue(model.isBackgroundFormActive)
+        XCTAssertEqual(model.contextualOpenState, .forms)
+        XCTAssertEqual(model.compactHUDMode, .formTrackerActive)
+        
+        // Turn off Forms feature in profile
+        model.setFeature(.forms, isEnabled: false)
+        XCTAssertFalse(model.isFeatureEnabled(.forms))
+        XCTAssertFalse(model.formTracker.isFormFeatureEnabled)
+        XCTAssertFalse(model.formTracker.isFormDetected)
+        XCTAssertFalse(model.formTracker.isTracking)
+        
+        // Form detection must be ignored when feature is disabled in profile
+        XCTAssertFalse(model.isBackgroundFormActive, "Form should not be considered active when feature is disabled")
+        XCTAssertEqual(model.contextualOpenState, .prompt, "Contextual state should default to prompt, not forms, when forms feature is disabled")
+        XCTAssertEqual(model.compactHUDMode, .none, "Compact HUD should not show formTrackerActive when forms feature is disabled")
+        
+        // Attempting to transition to .forms while disabled redirects to .prompt
+        model.setGlassIslandState(.forms)
+        XCTAssertEqual(model.glassIslandState, .prompt)
+    }
+    
+    func testStealthHoverOpensLongerUIPromptWhenNoFormIsDetectedEvenIfTrackingWasPreviouslySet() {
+        model.setGlassIslandState(.idle)
+        
+        // Simulate a form session that was started earlier, then the user navigated away from the form
+        model.formTracker.detector = MockApplicationFormDetector(
+            detected: true,
+            title: "Judge Signup",
+            appName: "Polar",
+            url: "https://docs.google.com/forms/d/e/1FAIpQLSc/viewform"
+        )
+        model.formTracker.checkActiveApplication()
+        XCTAssertTrue(model.formTracker.isFormDetected)
+        XCTAssertTrue(model.formTracker.isTracking)
+        XCTAssertTrue(model.isBackgroundFormActive)
+        
+        // User navigates away / closes form so no form is in the background
+        model.formTracker.detector = MockApplicationFormDetector(detected: false)
+        model.formTracker.checkActiveApplication()
+        
+        XCTAssertFalse(model.formTracker.isFormDetected)
+        XCTAssertFalse(model.formTracker.isTracking, "isTracking must reset when form is no longer detected on screen")
+        XCTAssertFalse(model.isBackgroundFormActive, "isBackgroundFormActive must be false when no form is detected")
+        XCTAssertEqual(model.glassIslandWidth, 176, "Stealth capsule must return to 176pt resting width")
+        XCTAssertEqual(model.contextualOpenState, .prompt, "Hovering stealth capsule must open the longer UI (.prompt), never .forms")
+    }
 }

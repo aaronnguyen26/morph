@@ -1680,6 +1680,15 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
                !t.isEmpty && t.lowercased() != "polar" {
                 return f
             }
+            var sizeRef: CFTypeRef?
+            var size = CGSize.zero
+            if AXUIElementCopyAttributeValue(f, kAXSizeAttribute as CFString, &sizeRef) == .success,
+               let s = sizeRef as! AXValue? {
+                AXValueGetValue(s, .cgSize, &size)
+            }
+            if size.width > 200 && size.height > 200 {
+                return f
+            }
         }
         
         // 2. Check main window
@@ -2060,62 +2069,62 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
         var focusedRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &focusedRef) == .success,
            let fWin = focusedRef as! AXUIElement? {
+            targetWin = fWin
             var tRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(fWin, kAXTitleAttribute as CFString, &tRef) == .success,
                let t = (tRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                !t.isEmpty && t.lowercased() != "polar" {
                 frontTitle = t
-                targetWin = fWin
             }
         }
         
-        if frontTitle.isEmpty {
+        if targetWin == nil {
             var mainRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(appElem, kAXMainWindowAttribute as CFString, &mainRef) == .success,
                let mWin = mainRef as! AXUIElement? {
+                targetWin = mWin
                 var tRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(mWin, kAXTitleAttribute as CFString, &tRef) == .success,
                    let t = (tRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !t.isEmpty && t.lowercased() != "polar" {
                     frontTitle = t
-                    targetWin = mWin
                 }
             }
         }
         
-        // 2. Check all AX windows of Polar for the active content window
-        if frontTitle.isEmpty || targetWin == nil {
+        // 2. Only fall back to kAXWindowsAttribute if neither focused nor main window was reported
+        if targetWin == nil {
             var winsRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(appElem, kAXWindowsAttribute as CFString, &winsRef) == .success,
-               let wins = winsRef as? [AXUIElement] {
-                for win in wins {
-                    var tRef: CFTypeRef?
-                    if AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &tRef) == .success,
-                       let t = (tRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !t.isEmpty && t.lowercased() != "polar" {
-                        frontTitle = t
-                        targetWin = win
-                        break
-                    }
+               let wins = winsRef as? [AXUIElement],
+               let firstWin = wins.first {
+                targetWin = firstWin
+                var tRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(firstWin, kAXTitleAttribute as CFString, &tRef) == .success,
+                   let t = (tRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !t.isEmpty && t.lowercased() != "polar" {
+                    frontTitle = t
                 }
             }
         }
         
-        // 3. Fallback to WindowServer layer 0 window only if AX had no titled window
+        // 3. Fallback to WindowServer topmost ON-SCREEN layer 0 window only if AX had no title on the active window
         if frontTitle.isEmpty {
-            let options = CGWindowListOption.excludeDesktopElements
+            let options: CGWindowListOption = [.excludeDesktopElements, .optionOnScreenOnly]
             if let winList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] {
                 for win in winList {
+                    let ownerPID = win[kCGWindowOwnerPID as String] as? pid_t ?? 0
                     let owner = (win[kCGWindowOwnerName as String] as? String ?? "").lowercased()
                     let layer = win[kCGWindowLayer as String] as? Int ?? -1
                     let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
                     let h = bounds["Height"] as? CGFloat ?? 0
-                    if (owner.contains("polar") || owner == "polar host") && layer == 0 && h > 100 {
+                    if (ownerPID == polar.processIdentifier || owner == "polar") && layer == 0 && h > 100 {
                         let t = (win[kCGWindowName as String] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         if !t.isEmpty && t.lowercased() != "polar" {
                             frontTitle = t
-                            break
                         }
+                        // Strictly inspect ONLY the frontmost on-screen Polar window in z-order; never scan deeper background windows
+                        break
                     }
                 }
             }
@@ -2823,8 +2832,58 @@ public struct DefaultApplicationFormDetector: ApplicationFormDetectorProtocol {
     // MARK: - Detect Active Form Across Frontmost Application Context
     public func detectActiveApplicationForm() -> FormDetectionResult {
         // 1. Inspect Frontmost Application context
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
+        guard var frontApp = NSWorkspace.shared.frontmostApplication else {
             return FormDetectionResult(isDetected: false)
+        }
+        
+        if !MorphEnvironment.isTestingEnvironment {
+            let onScreenWindows = (CGWindowListCopyWindowInfo([.excludeDesktopElements, .optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? []
+            let systemOwners: Set<String> = [
+                "morph", "windowserver", "dock", "control center", "controlcenter",
+                "notification center", "notificationcenter", "systemuiserver", "wallpaper",
+                "spotlight", "universalcontrol", "loginwindow"
+            ]
+            
+            let frontBundle = frontApp.bundleIdentifier?.lowercased() ?? ""
+            let frontName = frontApp.localizedName?.lowercased() ?? ""
+            let isMorphFront = frontBundle.contains("com.morph.") || frontBundle == "morph" || frontBundle.hasSuffix(".morph") || frontName == "morph"
+            
+            let frontAppHasOnScreenWindow = onScreenWindows.contains { win in
+                let pid = win[kCGWindowOwnerPID as String] as? pid_t ?? 0
+                let layer = win[kCGWindowLayer as String] as? Int ?? -1
+                let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                let h = bounds["Height"] as? CGFloat ?? 0
+                let w = bounds["Width"] as? CGFloat ?? 0
+                return pid == frontApp.processIdentifier && layer == 0 && h > 100 && w > 100
+            }
+            
+            if isMorphFront || !frontAppHasOnScreenWindow {
+                var resolvedApp: NSRunningApplication? = nil
+                for win in onScreenWindows {
+                    let layer = win[kCGWindowLayer as String] as? Int ?? -1
+                    guard layer == 0 else { continue }
+                    let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                    let h = bounds["Height"] as? CGFloat ?? 0
+                    let w = bounds["Width"] as? CGFloat ?? 0
+                    let alpha = win[kCGWindowAlpha as String] as? CGFloat ?? 1.0
+                    guard h > 100 && w > 100 && alpha > 0.01 else { continue }
+                    let owner = (win[kCGWindowOwnerName as String] as? String ?? "").lowercased()
+                    if systemOwners.contains(owner) || owner == "polar host" { continue }
+                    if let pid = win[kCGWindowOwnerPID as String] as? pid_t,
+                       let app = NSRunningApplication(processIdentifier: pid),
+                       !app.isTerminated {
+                        let bID = app.bundleIdentifier?.lowercased() ?? ""
+                        if bID.contains("com.morph.") || bID == "morph" || bID.hasSuffix(".morph") { continue }
+                        resolvedApp = app
+                        break
+                    }
+                }
+                if let resolved = resolvedApp {
+                    frontApp = resolved
+                } else {
+                    return FormDetectionResult(isDetected: false)
+                }
+            }
         }
         
         let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
@@ -5837,6 +5896,7 @@ public final class ApplicationFormModel: ObservableObject {
     @Published public var userDefaultBrowser: UserBrowserProfile
     @Published public var isTracking: Bool = false
     @Published public var isAutoCaptureEnabled: Bool = true
+    public var isFormFeatureEnabled: Bool = true
     public static let defaultRecipientEmail = "aaronn.nguyen.work@gmail.com"
     @Published public var recipientEmail: String = defaultRecipientEmail
     @Published public var deliveryToastMessage: String? = nil
@@ -6463,13 +6523,37 @@ public final class ApplicationFormModel: ObservableObject {
     
     // MARK: - Active Form Detection
     public func checkActiveApplication() {
+        guard isFormFeatureEnabled else {
+            if self.isFormDetected || self.isTracking {
+                if let current = self.activeSession {
+                    self.suspendedSession = current
+                }
+                self.isFormDetected = false
+                self.isJustDetected = false
+                self.isTracking = false
+                self.detectedBrowserFamily = .unknown
+                self.detectedScreenIndex = nil
+                self.detectedScreenName = nil
+                self.justDetectedResetTask?.cancel()
+            }
+            return
+        }
+        
         if !MorphEnvironment.isTestingEnvironment, let frontApp = NSWorkspace.shared.frontmostApplication {
             let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
             let appName = frontApp.localizedName?.lowercased() ?? ""
             if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") {
-                // Morph itself is frontmost (e.g. interacting with HUD or expanded view).
-                // Retain current detection and session state without touching it.
-                return
+                let isMorphOpen: Bool
+                if let ctrl = MorphController.shared {
+                    isMorphOpen = ctrl.model.isExpanded || (ctrl.model.isGlassIslandEnabled && ctrl.model.glassIslandState != .idle)
+                } else {
+                    isMorphOpen = false
+                }
+                if isMorphOpen {
+                    // Morph itself is expanded/open and frontmost (e.g. interacting with HUD or expanded view).
+                    // Retain current detection and session state without touching it.
+                    return
+                }
             }
         }
         
@@ -6617,12 +6701,18 @@ public final class ApplicationFormModel: ObservableObject {
             advanceToFirstUnansweredFieldIfNeeded()
             saveDrafts()
         } else {
-            // If Morph itself is frontmost and we already have an active form session,
+            // If Morph itself is expanded/open and frontmost and we already have an active form session,
             // retain the state while the user interacts with the Notch/HUD
             if !MorphEnvironment.isTestingEnvironment, let frontApp = NSWorkspace.shared.frontmostApplication {
                 let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
                 let appName = frontApp.localizedName?.lowercased() ?? ""
-                if (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") && self.isFormDetected {
+                let isMorphOpen: Bool
+                if let ctrl = MorphController.shared {
+                    isMorphOpen = ctrl.model.isExpanded || (ctrl.model.isGlassIslandEnabled && ctrl.model.glassIslandState != .idle)
+                } else {
+                    isMorphOpen = false
+                }
+                if isMorphOpen && (bundleID.contains("com.morph.") || bundleID == "morph" || bundleID.hasSuffix(".morph") || appName == "morph") && self.isFormDetected {
                     return
                 }
             }
@@ -6632,12 +6722,13 @@ public final class ApplicationFormModel: ObservableObject {
             // Immediate collapse when form is closed or navigated away:
             // Stash active session into suspendedSession so when the user goes back to the form,
             // it resumes without losing entered fields or answers.
-            if self.isFormDetected {
+            if self.isFormDetected || self.isTracking {
                 if let current = self.activeSession {
                     self.suspendedSession = current
                 }
                 self.isFormDetected = false
                 self.isJustDetected = false
+                self.isTracking = false
                 self.detectedBrowserFamily = .unknown
                 self.detectedScreenIndex = nil
                 self.detectedScreenName = nil
