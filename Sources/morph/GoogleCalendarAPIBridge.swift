@@ -266,7 +266,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
         location: String? = nil,
         addMeetLink: Bool = false,
         calendarId: String? = nil,
-        colorHex: String? = nil
+        colorHex: String? = nil,
+        calendarName: String? = nil
     ) async -> CalendarEvent? {
         guard let token = await ensureValidAccessToken() else {
             return nil
@@ -351,6 +352,9 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
             }
             
             let meet = (json["hangoutLink"] as? String) ?? extractMeetLink(from: description ?? "")
+            let matchedCal = availableCalendars.first(where: { $0.id == targetCalId })
+            let finalCalName = calendarName ?? matchedCal?.summary ?? "Google Calendar"
+            let finalColor = colorHex ?? matchedCal?.colorHex
             let newEvent = CalendarEvent(
                 id: "gcal_\(eventId)",
                 title: title,
@@ -361,7 +365,8 @@ public final class GoogleCalendarAPIBridge: ObservableObject {
                 meetLink: isAllDay ? nil : meet,
                 location: location,
                 attendees: [],
-                colorHex: colorHex
+                colorHex: finalColor,
+                calendarName: finalCalName
             )
             
             // Ingest into local event cache

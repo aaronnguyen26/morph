@@ -12,14 +12,20 @@ public struct MorphIslandView: View {
     
     // Calendar Add Event State
     @State private var isAddingGlassEvent: Bool = false
+    @State private var draftEventType: String = "Event"
     @State private var draftEventTitle: String = ""
+    @State private var draftEventStartDate: Date = Date()
+    @State private var draftEventEndDate: Date = Date()
     @State private var draftEventDuration: Int = 30
     @State private var draftEventHour: Int = 9
     @State private var draftEventMinute: Int = 0
     @State private var draftEventIsAllDay: Bool = false
     @State private var draftEventHasMeet: Bool = false
     @State private var draftEventLocation: String = ""
-    @State private var draftEventColorHex: String = GoogleCalendarColor.standardPalette.first?.hex ?? "#7986cb"
+    @State private var draftEventDescription: String = ""
+    @State private var draftEventCalendarId: String = ""
+    @State private var draftEventCalendarName: String = ""
+    @State private var draftEventColorHex: String = "#3b6fb5"
     @FocusState private var isSpotlightFocused: Bool
     @FocusState private var isPillEditFocused: Bool
     @Namespace private var navTabNamespace
@@ -2620,21 +2626,6 @@ public struct MorphIslandView: View {
         return model.calendar.isSignedIn ? "GOOGLE CALENDAR" : "LOCAL CALENDAR"
     }
     
-    private var calendarNextChipText: String {
-        let events = model.glassRealCalendarEvents
-        if Calendar.current.isDateInToday(model.glassSelectedDate) {
-            if let next = model.calendar.nextUpcomingEvent {
-                return next.isNow ? "Next up · Now" : "Next up · in \(next.minutesUntilStart)m"
-            } else if !events.isEmpty {
-                return "\(events.count) event\(events.count == 1 ? "" : "s")"
-            } else {
-                return "Schedule clear"
-            }
-        } else {
-            return events.isEmpty ? "No events" : "\(events.count) event\(events.count == 1 ? "" : "s")"
-        }
-    }
-    
     private var glassCalendarView: some View {
         VStack(spacing: 8) {
             // Header
@@ -2652,50 +2643,41 @@ public struct MorphIslandView: View {
                 
                 Spacer()
                 
-                HStack(spacing: 8) {
-                    // Next up / schedule status chip (positioned in the former Add Event spot)
-                    Text(calendarNextChipText)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                // Far-right action stack (Add Event button and calendar indicator)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(calendarSubtitleText)
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .tracking(1.0)
+                        .foregroundColor(Color.white.opacity(0.50))
+                    
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                            isAddingGlassEvent.toggle()
+                            if isAddingGlassEvent {
+                                draftEventStartDate = model.glassSelectedDate
+                                draftEventEndDate = model.glassSelectedDate
+                                ensureDefaultCalendarSelected()
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: isAddingGlassEvent ? "xmark" : "plus")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(isAddingGlassEvent ? "Close" : "Add Event")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        }
                         .foregroundColor(.white)
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(Color.white.opacity(0.14))
-                                .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                                .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: model.featureTintColorHex(.calendar)).opacity(0.26))
+                                .overlay(Capsule().stroke(Color(hex: model.featureTintColorHex(.calendar)).opacity(0.65), lineWidth: 0.9))
                         )
-                    
-                    // Far-right action stack (Add Event button in the former Next Up spot)
-                    VStack(alignment: .trailing, spacing: 3) {
-                        Text(calendarSubtitleText)
-                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                            .tracking(1.0)
-                            .foregroundColor(Color.white.opacity(0.50))
-                        
-                        Button(action: {
-                            MorphHaptics.levelChange()
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                                isAddingGlassEvent.toggle()
-                            }
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: isAddingGlassEvent ? "xmark" : "plus")
-                                    .font(.system(size: 10, weight: .bold))
-                                Text(isAddingGlassEvent ? "Close" : "Add Event")
-                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(isAddingGlassEvent ? Color.white.opacity(0.22) : Color(hex: model.featureTintColorHex(.calendar)).opacity(0.26))
-                                    .overlay(Capsule().stroke(Color(hex: model.featureTintColorHex(.calendar)).opacity(0.65), lineWidth: 0.9))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .help(isAddingGlassEvent ? "Close event composer" : "Add event to this day")
                     }
+                    .buttonStyle(.plain)
+                    .help(isAddingGlassEvent ? "Close event composer" : "Add event to this day")
                 }
             }
             .frame(minHeight: 40)
@@ -2704,27 +2686,37 @@ public struct MorphIslandView: View {
             glassCalendarModeBar
             
             if isAddingGlassEvent {
-                glassAddEventCard
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-            
-            // Mode content
-            Group {
-                switch model.calendar.viewMode {
-                case .threeDay:
-                    glassThreeDayView
-                case .week:
-                    glassWeekView
-                case .month:
-                    glassMonthView
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 8) {
+                        glassAddEventCard
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        
+                        glassCalendarCurrentModeContent
+                            .frame(minHeight: 220)
+                    }
+                    .padding(.bottom, 8)
                 }
+            } else {
+                glassCalendarCurrentModeContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 4)
         .onAppear {
             model.glassSelectedDayIndex = model.glassTodayDayIndex
             model.calendar.goToToday()
+        }
+    }
+    
+    @ViewBuilder
+    private var glassCalendarCurrentModeContent: some View {
+        switch model.calendar.viewMode {
+        case .threeDay:
+            glassThreeDayView
+        case .week:
+            glassWeekView
+        case .month:
+            glassMonthView
         }
     }
     
@@ -2925,7 +2917,17 @@ public struct MorphIslandView: View {
             return ""
         }()
         let timeStr: String = {
-            if event.isAllDay { return "All Day" }
+            if event.isAllDay {
+                let cal = Calendar.current
+                let startDay = cal.startOfDay(for: event.startTime)
+                let endDay = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: event.endTime)) ?? startDay
+                if endDay > startDay {
+                    let f = DateFormatter()
+                    f.dateFormat = "MMM d"
+                    return "\(f.string(from: startDay))–\(f.string(from: endDay))"
+                }
+                return "All Day"
+            }
             let f = DateFormatter()
             f.dateFormat = "h:mm a"
             return "\(f.string(from: event.startTime)) – \(f.string(from: event.endTime))"
@@ -3047,6 +3049,8 @@ public struct MorphIslandView: View {
         let dayNum = (index < dates.count) ? Calendar.current.component(.day, from: dates[index]) : (index + 1)
         let isSelected = (index < dates.count) && Calendar.current.isDate(dates[index], inSameDayAs: model.glassSelectedDate)
         let isToday = (index < dates.count) && Calendar.current.isDateInToday(dates[index])
+        let dayDate = (index < dates.count) ? dates[index] : nil
+        let hasEvents = (dayDate != nil) && !model.calendar.eventsForDate(dayDate!).isEmpty
         
         return Button(action: {
             MorphHaptics.levelChange()
@@ -3058,25 +3062,21 @@ public struct MorphIslandView: View {
                     .foregroundColor(Color.white.opacity(0.60))
                 
                 Text("\(dayNum)")
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: 15, weight: isToday ? .bold : .semibold, design: .rounded))
                     .foregroundColor(.white)
                 
-                if isToday {
-                    Circle()
-                        .fill(Color(hex: "#6ab7ff"))
-                        .frame(width: 4, height: 4)
-                } else {
-                    Color.clear.frame(width: 4, height: 4)
-                }
+                Circle()
+                    .fill(hasEvents ? Color(hex: "#6ab7ff") : Color.clear)
+                    .frame(width: 4, height: 4)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 50)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.26) : Color.clear)
+                    .fill(isSelected ? Color.white.opacity(0.26) : (isToday ? Color(hex: "#6ab7ff").opacity(0.18) : Color.clear))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(isSelected ? Color.white.opacity(0.65) : Color.clear, lineWidth: 1)
+                            .stroke(isSelected ? Color.white.opacity(0.65) : (isToday ? Color(hex: "#6ab7ff").opacity(0.40) : Color.clear), lineWidth: 1)
                     )
                     .shadow(color: isSelected ? Color(hex: "#6ab7ff").opacity(0.6) : Color.clear, radius: 8)
             )
@@ -3118,6 +3118,14 @@ public struct MorphIslandView: View {
         
         let timeStr: String = {
             if event.isAllDay {
+                let cal = Calendar.current
+                let startDay = cal.startOfDay(for: event.startTime)
+                let endDay = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: event.endTime)) ?? startDay
+                if endDay > startDay {
+                    let f = DateFormatter()
+                    f.dateFormat = "MMM d"
+                    return "\(f.string(from: startDay)) – \(f.string(from: endDay))"
+                }
                 return "All Day"
             }
             let f = DateFormatter()
@@ -3191,200 +3199,516 @@ public struct MorphIslandView: View {
         )
     }
     
+    private func ensureDefaultCalendarSelected() {
+        let labels = model.calendar.availableCalendarLabels
+        if draftEventCalendarId.isEmpty || !labels.contains(where: { $0.id == draftEventCalendarId }) {
+            if let primary = labels.first(where: { $0.isPrimary }) ?? labels.first {
+                draftEventCalendarId = primary.id
+                draftEventCalendarName = primary.name
+                draftEventColorHex = primary.colorHex
+            }
+        }
+    }
+    
     private var glassAddEventCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            glassAddEventTitleRow
+        VStack(alignment: .leading, spacing: 7) {
+            glassAddEventTypeAndTitleRow
+            glassAddEventCalendarLabelsRow
+            glassAddEventDateSpanRow
             glassAddEventTimeRow
-            glassAddEventPaletteRow
+            glassAddEventDetailsRow
             glassAddEventActionRow
         }
         .padding(9)
         .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(Color.white.opacity(0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .stroke(Color.white.opacity(0.24), lineWidth: 0.9)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.ultraThinMaterial.opacity(0.85))
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.40),
+                                    Color.white.opacity(0.12),
+                                    Color.white.opacity(0.04)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1.0
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.20), radius: 12, y: 4)
+        )
+        .onAppear {
+            ensureDefaultCalendarSelected()
+        }
+    }
+    
+    private var glassAddEventTypeAndTitleRow: some View {
+        VStack(spacing: 5) {
+            // Type switcher: Event vs Task
+            HStack(spacing: 4) {
+                ForEach(["Event", "Task"], id: \.self) { type in
+                    let isSel = draftEventType == type
+                    Button(action: {
+                        MorphHaptics.alignment()
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                            draftEventType = type
+                            if type == "Task" {
+                                draftEventIsAllDay = true
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 3.5) {
+                            Image(systemName: type == "Event" ? "calendar" : "checkmark.circle.fill")
+                                .font(.system(size: 8.5, weight: .bold))
+                            Text(type)
+                                .font(.system(size: 9.5, weight: isSel ? .bold : .medium, design: .rounded))
+                        }
+                        .foregroundColor(isSel ? .white : Color.white.opacity(0.60))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(isSel ? Color.white.opacity(0.20) : Color.white.opacity(0.04))
+                                .overlay(Capsule().stroke(isSel ? Color.white.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 0.8))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                
+                Spacer()
+                
+                Text(draftEventType == "Task" ? "MULTI-DAY TASK" : "CALENDAR EVENT")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundColor(Color.white.opacity(0.45))
+            }
+            
+            // Title input
+            HStack(spacing: 7) {
+                Image(systemName: draftEventType == "Task" ? "checklist" : "calendar.badge.plus")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(Color(hex: draftEventColorHex))
+                
+                TextField(draftEventType == "Task" ? "Task title or action item..." : "Event title...", text: $draftEventTitle)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .onSubmit {
+                        submitGlassEvent()
+                    }
+                
+                if !draftEventTitle.isEmpty {
+                    Button(action: { draftEventTitle = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(Color.white.opacity(0.45))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.8)
+                    )
+            )
+        }
+    }
+    
+    private var glassAddEventCalendarLabelsRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(draftEventType == "Task" ? "LIST / CALENDAR" : "CALENDAR")
+                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundColor(Color.white.opacity(0.50))
+                
+                Spacer()
+                
+                if !draftEventCalendarName.isEmpty {
+                    HStack(spacing: 3.5) {
+                        Circle()
+                            .fill(Color(hex: draftEventColorHex))
+                            .frame(width: 4.5, height: 4.5)
+                        Text(draftEventCalendarName)
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundColor(Color(hex: draftEventColorHex))
+                    }
+                }
+            }
+            .padding(.horizontal, 2)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(model.calendar.availableCalendarLabels) { option in
+                        let isSelected = draftEventCalendarId == option.id || (draftEventCalendarId.isEmpty && option.isPrimary)
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.8)) {
+                                draftEventCalendarId = option.id
+                                draftEventCalendarName = option.name
+                                draftEventColorHex = option.colorHex
+                            }
+                        }) {
+                            HStack(spacing: 4.5) {
+                                Circle()
+                                    .fill(Color(hex: option.colorHex))
+                                    .frame(width: 5.5, height: 5.5)
+                                    .shadow(color: isSelected ? Color(hex: option.colorHex).opacity(0.8) : Color.clear, radius: 2)
+                                
+                                Text(option.name)
+                                    .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.70))
+                            }
+                            .padding(.horizontal, 7.5)
+                            .padding(.vertical, 3.5)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? Color(hex: option.colorHex).opacity(0.28) : Color.white.opacity(0.06))
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(
+                                                isSelected ? Color(hex: option.colorHex).opacity(0.85) : Color.white.opacity(0.12),
+                                                lineWidth: isSelected ? 1.0 : 0.7
+                                            )
+                                    )
+                                    .shadow(color: isSelected ? Color(hex: option.colorHex).opacity(0.4) : Color.clear, radius: 3)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 1)
+                .padding(.horizontal, 1)
+            }
+        }
+    }
+    
+    private var calendarDaySpanCount: Int {
+        let cal = Calendar.current
+        let s = cal.startOfDay(for: draftEventStartDate)
+        let e = cal.startOfDay(for: draftEventEndDate)
+        let days = cal.dateComponents([.day], from: s, to: e).day ?? 0
+        return max(1, days + 1)
+    }
+    
+    private func glassDateStepperChip(date: Date, onDecrement: @escaping () -> Void, onIncrement: @escaping () -> Void) -> some View {
+        let f = DateFormatter()
+        f.dateFormat = "EEE, MMM d"
+        return HStack(spacing: 2) {
+            Button(action: {
+                MorphHaptics.alignment()
+                onDecrement()
+            }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .frame(width: 14, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            Text(f.string(from: date))
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(1)
+            
+            Button(action: {
+                MorphHaptics.alignment()
+                onIncrement()
+            }) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 6.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .frame(width: 14, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2.5)
+        .background(
+            Capsule()
+                .fill(Color.white.opacity(0.07))
+                .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.8))
         )
     }
     
-    private var glassAddEventTitleRow: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "pencil")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.55))
-            
-            TextField("Event title...", text: $draftEventTitle)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                .foregroundColor(.white)
-                .onSubmit {
-                    submitGlassEvent()
+    private var glassAddEventDateSpanRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text("DATE SPAN")
+                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundColor(Color.white.opacity(0.50))
+                
+                Spacer()
+                
+                let daysCount = calendarDaySpanCount
+                if daysCount > 1 {
+                    Text("\(daysCount) DAYS")
+                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(Color(hex: "#6ab7ff"))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color(hex: "#6ab7ff").opacity(0.20)))
                 }
+            }
+            .padding(.horizontal, 2)
             
-            if !draftEventTitle.isEmpty {
-                Button(action: { draftEventTitle = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(Color.white.opacity(0.45))
+            HStack(spacing: 5) {
+                // Start Date
+                glassDateStepperChip(
+                    date: draftEventStartDate,
+                    onDecrement: {
+                        let cal = Calendar.current
+                        if let newStart = cal.date(byAdding: .day, value: -1, to: draftEventStartDate) {
+                            draftEventStartDate = newStart
+                            if draftEventEndDate < newStart { draftEventEndDate = newStart }
+                        }
+                    },
+                    onIncrement: {
+                        let cal = Calendar.current
+                        if let newStart = cal.date(byAdding: .day, value: 1, to: draftEventStartDate) {
+                            draftEventStartDate = newStart
+                            if draftEventEndDate < newStart { draftEventEndDate = newStart }
+                        }
+                    }
+                )
+                
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.40))
+                
+                // End Date
+                glassDateStepperChip(
+                    date: draftEventEndDate,
+                    onDecrement: {
+                        let cal = Calendar.current
+                        if let newEnd = cal.date(byAdding: .day, value: -1, to: draftEventEndDate),
+                           newEnd >= Calendar.current.startOfDay(for: draftEventStartDate) {
+                            draftEventEndDate = newEnd
+                        }
+                    },
+                    onIncrement: {
+                        let cal = Calendar.current
+                        if let newEnd = cal.date(byAdding: .day, value: 1, to: draftEventEndDate) {
+                            draftEventEndDate = newEnd
+                        }
+                    }
+                )
+                
+                Spacer()
+                
+                // Multi-day presets
+                HStack(spacing: 2.5) {
+                    ForEach([("1d", 0), ("+1d", 1), ("+2d", 2), ("+3d", 3), ("+1w", 7)], id: \.0) { item in
+                        let cal = Calendar.current
+                        let targetEnd = cal.date(byAdding: .day, value: item.1, to: draftEventStartDate) ?? draftEventStartDate
+                        let isSel = cal.isDate(draftEventEndDate, inSameDayAs: targetEnd)
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            draftEventEndDate = targetEnd
+                        }) {
+                            Text(item.0)
+                                .font(.system(size: 8, weight: isSel ? .bold : .medium, design: .rounded))
+                                .foregroundColor(isSel ? .white : Color.white.opacity(0.60))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2.5)
+                                .background(
+                                    Capsule()
+                                        .fill(isSel ? Color(hex: "#6ab7ff").opacity(0.35) : Color.white.opacity(0.05))
+                                        .overlay(Capsule().stroke(isSel ? Color(hex: "#6ab7ff").opacity(0.75) : Color.clear, lineWidth: 0.8))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(0.20), lineWidth: 0.8)
-                )
-        )
     }
     
     private var glassAddEventTimeRow: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 5) {
             // All Day toggle
             Button(action: {
                 MorphHaptics.levelChange()
                 draftEventIsAllDay.toggle()
             }) {
-                HStack(spacing: 4) {
-                    Image(systemName: draftEventIsAllDay ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 10, weight: .bold))
+                HStack(spacing: 3.5) {
+                    Image(systemName: draftEventIsAllDay ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 9, weight: .bold))
                     Text("All-Day")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                 }
                 .foregroundColor(draftEventIsAllDay ? Color(hex: "#6ab7ff") : Color.white.opacity(0.70))
                 .padding(.horizontal, 7)
-                .padding(.vertical, 4)
+                .padding(.vertical, 3.5)
                 .background(
                     Capsule()
-                        .fill(draftEventIsAllDay ? Color(hex: "#6ab7ff").opacity(0.22) : Color.white.opacity(0.08))
-                        .overlay(Capsule().stroke(draftEventIsAllDay ? Color(hex: "#6ab7ff").opacity(0.5) : Color.white.opacity(0.18), lineWidth: 0.8))
+                        .fill(draftEventIsAllDay ? Color(hex: "#6ab7ff").opacity(0.22) : Color.white.opacity(0.06))
+                        .overlay(Capsule().stroke(draftEventIsAllDay ? Color(hex: "#6ab7ff").opacity(0.6) : Color.white.opacity(0.14), lineWidth: 0.8))
                 )
             }
             .buttonStyle(.plain)
             
             if !draftEventIsAllDay {
-                // Time selector
+                // Time stepper
                 HStack(spacing: 3) {
                     Button(action: {
                         draftEventHour = (draftEventHour - 1 + 24) % 24
                     }) {
-                        Image(systemName: "minus")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.6))
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.65))
                     }
                     .buttonStyle(.plain)
                     
                     let displayHour = (draftEventHour % 12 == 0) ? 12 : (draftEventHour % 12)
                     let ampm = draftEventHour >= 12 ? "PM" : "AM"
                     Text(String(format: "%d:%02d %@", displayHour, draftEventMinute, ampm))
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                     
                     Button(action: {
                         draftEventHour = (draftEventHour + 1) % 24
                     }) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundColor(Color.white.opacity(0.6))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.65))
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3.5)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                        .fill(Color.white.opacity(0.06))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.8))
                 )
                 
                 // Duration chips
-                HStack(spacing: 3) {
+                HStack(spacing: 2.5) {
                     ForEach([15, 30, 60], id: \.self) { d in
                         Button(action: { draftEventDuration = d }) {
                             Text("\(d)m")
-                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .font(.system(size: 8.5, weight: .bold, design: .rounded))
                                 .foregroundColor(draftEventDuration == d ? Color.white : Color.white.opacity(0.55))
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 3)
                                 .background(
                                     Capsule()
-                                        .fill(draftEventDuration == d ? Color(hex: "#6ab7ff").opacity(0.4) : Color.white.opacity(0.06))
-                                        .overlay(Capsule().stroke(draftEventDuration == d ? Color(hex: "#6ab7ff").opacity(0.8) : Color.clear, lineWidth: 0.8))
+                                        .fill(draftEventDuration == d ? Color(hex: "#6ab7ff").opacity(0.35) : Color.white.opacity(0.05))
+                                        .overlay(Capsule().stroke(draftEventDuration == d ? Color(hex: "#6ab7ff").opacity(0.75) : Color.clear, lineWidth: 0.8))
                                 )
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 
-                // Google Meet toggle
-                Button(action: {
-                    MorphHaptics.levelChange()
-                    draftEventHasMeet.toggle()
-                }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: draftEventHasMeet ? "video.fill" : "video")
-                            .font(.system(size: 8.5))
-                        Text("Meet")
-                            .font(.system(size: 9, weight: .semibold))
+                if draftEventType == "Event" {
+                    // Google Meet toggle
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        draftEventHasMeet.toggle()
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: draftEventHasMeet ? "video.fill" : "video")
+                                .font(.system(size: 8))
+                            Text("Meet")
+                                .font(.system(size: 8.5, weight: .semibold))
+                        }
+                        .foregroundColor(draftEventHasMeet ? Color(hex: "#6ab7ff") : Color.white.opacity(0.65))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3.5)
+                        .background(
+                            Capsule()
+                                .fill(draftEventHasMeet ? Color(hex: "#6ab7ff").opacity(0.22) : Color.white.opacity(0.06))
+                                .overlay(Capsule().stroke(draftEventHasMeet ? Color(hex: "#6ab7ff").opacity(0.6) : Color.white.opacity(0.14), lineWidth: 0.8))
+                        )
                     }
-                    .foregroundColor(draftEventHasMeet ? Color(hex: "#6ab7ff") : Color.white.opacity(0.65))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(draftEventHasMeet ? Color(hex: "#6ab7ff").opacity(0.22) : Color.white.opacity(0.08))
-                            .overlay(Capsule().stroke(draftEventHasMeet ? Color(hex: "#6ab7ff").opacity(0.5) : Color.white.opacity(0.18), lineWidth: 0.8))
-                    )
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
     
-    private var glassAddEventPaletteRow: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Text("Label:")
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.6))
-                
-                if let labelName = GoogleCalendarColor.labelName(for: draftEventColorHex) {
-                    Text(labelName)
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(hex: draftEventColorHex))
-                }
+    private var glassAddEventDetailsRow: some View {
+        HStack(spacing: 5) {
+            // Location
+            HStack(spacing: 3.5) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 8))
+                    .foregroundColor(Color.white.opacity(0.50))
+                TextField("Location...", text: $draftEventLocation)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 9.5, design: .rounded))
+                    .foregroundColor(.white)
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3.5)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.10), lineWidth: 0.8))
+            )
             
-            HStack(spacing: 4.5) {
-                ForEach(GoogleCalendarColor.standardPalette, id: \.id) { item in
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        draftEventColorHex = item.hex
-                    }) {
-                        Circle()
-                            .fill(Color(hex: item.hex))
-                            .frame(width: 13, height: 13)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: draftEventColorHex.lowercased() == item.hex.lowercased() ? 1.8 : 0)
-                            )
-                            .shadow(color: draftEventColorHex.lowercased() == item.hex.lowercased() ? Color(hex: item.hex).opacity(0.9) : Color.clear, radius: 2.5)
-                    }
-                    .buttonStyle(.plain)
-                    .help(item.name)
-                }
+            // Notes / Description
+            HStack(spacing: 3.5) {
+                Image(systemName: "text.alignleft")
+                    .font(.system(size: 8))
+                    .foregroundColor(Color.white.opacity(0.50))
+                TextField(draftEventType == "Task" ? "Task details..." : "Notes...", text: $draftEventDescription)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 9.5, design: .rounded))
+                    .foregroundColor(.white)
             }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3.5)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.10), lineWidth: 0.8))
+            )
         }
     }
     
     private var glassAddEventActionRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
+            let df: DateFormatter = {
+                let f = DateFormatter()
+                f.dateFormat = "MMM d"
+                return f
+            }()
+            
+            HStack(spacing: 3) {
+                Image(systemName: draftEventType == "Task" ? "checklist" : "calendar")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.45))
+                
+                let rangeText: String = {
+                    if calendarDaySpanCount > 1 {
+                        return "\(df.string(from: draftEventStartDate)) – \(df.string(from: draftEventEndDate))"
+                    }
+                    return df.string(from: draftEventStartDate)
+                }()
+                
+                Text(rangeText)
+                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.55))
+            }
+            
             Spacer()
             
             Button(action: {
@@ -3393,29 +3717,37 @@ public struct MorphIslandView: View {
                 }
             }) {
                 Text("Cancel")
-                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
                     .foregroundColor(Color.white.opacity(0.65))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .padding(.horizontal, 8.5)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.06))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.8))
+                    )
             }
             .buttonStyle(.plain)
             
             Button(action: {
                 submitGlassEvent()
             }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 8.5, weight: .bold))
-                    Text("Add Event")
-                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                HStack(spacing: 3.5) {
+                    Image(systemName: draftEventType == "Task" ? "checkmark" : "plus")
+                        .font(.system(size: 8, weight: .bold))
+                    Text(draftEventType == "Task" ? "Add Task" : "Add Event")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3.5)
                 .background(
                     Capsule()
-                        .fill(draftEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.12) : Color(hex: "#6ab7ff"))
+                        .fill(draftEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.white.opacity(0.12) : Color(hex: draftEventColorHex))
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.8)
+                        )
+                        .shadow(color: draftEventTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.clear : Color(hex: draftEventColorHex).opacity(0.5), radius: 5)
                 )
             }
             .buttonStyle(.plain)
@@ -3428,23 +3760,56 @@ public struct MorphIslandView: View {
         guard !trimmed.isEmpty else { return }
         
         let cal = Calendar.current
-        var comp = cal.dateComponents([.year, .month, .day], from: model.glassSelectedDate)
+        var comp = cal.dateComponents([.year, .month, .day], from: draftEventStartDate)
         comp.hour = draftEventHour
         comp.minute = draftEventMinute
-        let startDate = cal.date(from: comp) ?? model.glassSelectedDate
+        let startDate = draftEventIsAllDay ? cal.startOfDay(for: draftEventStartDate) : (cal.date(from: comp) ?? draftEventStartDate)
+        
+        // Multi-day end date calculation
+        let endDate: Date
+        if draftEventIsAllDay {
+            let endDayStart = cal.startOfDay(for: max(draftEventEndDate, draftEventStartDate))
+            endDate = cal.date(byAdding: .day, value: 1, to: endDayStart) ?? endDayStart.addingTimeInterval(86400)
+        } else {
+            if cal.isDate(draftEventStartDate, inSameDayAs: draftEventEndDate) {
+                endDate = startDate.addingTimeInterval(Double(draftEventDuration * 60))
+            } else {
+                var endComp = cal.dateComponents([.year, .month, .day], from: draftEventEndDate)
+                endComp.hour = (draftEventHour + (draftEventDuration / 60)) % 24
+                endComp.minute = (draftEventMinute + (draftEventDuration % 60)) % 60
+                let calculatedEnd = cal.date(from: endComp) ?? draftEventEndDate
+                endDate = max(calculatedEnd, startDate.addingTimeInterval(Double(draftEventDuration * 60)))
+            }
+        }
+        
+        let finalTitle = trimmed
+        let taskDescPrefix = draftEventType == "Task" ? "[Task] " : ""
+        let finalDesc: String? = {
+            let userDesc = draftEventDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !userDesc.isEmpty {
+                return "\(taskDescPrefix)\(userDesc)"
+            }
+            return draftEventType == "Task" ? "Task created via Morph" : nil
+        }()
         
         model.calendar.addQuickEvent(
-            title: trimmed,
+            title: finalTitle,
             startTime: startDate,
+            endTime: endDate,
             durationMinutes: draftEventDuration,
             isAllDay: draftEventIsAllDay,
-            hasMeetLink: draftEventHasMeet,
+            hasMeetLink: draftEventType == "Task" ? false : draftEventHasMeet,
+            description: finalDesc,
             location: draftEventLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : draftEventLocation,
-            colorHex: draftEventColorHex
+            colorHex: draftEventColorHex,
+            targetCalendarId: draftEventCalendarId.isEmpty ? nil : draftEventCalendarId,
+            calendarName: draftEventCalendarName.isEmpty ? nil : draftEventCalendarName
         )
         
         MorphHaptics.levelChange()
         draftEventTitle = ""
+        draftEventDescription = ""
+        draftEventLocation = ""
         withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
             isAddingGlassEvent = false
         }

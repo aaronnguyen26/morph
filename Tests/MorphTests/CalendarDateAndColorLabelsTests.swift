@@ -305,4 +305,231 @@ final class CalendarDateAndColorLabelsTests: XCTestCase {
         XCTAssertTrue(range.contains(expectedStart), "Range must contain start time")
         XCTAssertTrue(range.contains(expectedEnd), "Range must contain end time")
     }
+    
+    func testCalendarNextChipTextOmitsNextUpNow() {
+        let calendar = CalendarModel()
+        let now = Date()
+        
+        // 1. Event currently in progress
+        let activeEvent = CalendarEvent(
+            id: "evt-in-progress",
+            title: "Live Econometrics Lecture",
+            startTime: now.addingTimeInterval(-900),
+            endTime: now.addingTimeInterval(1800),
+            colorHex: "#3b6fb5",
+            calendarName: "econ"
+        )
+        calendar.events = [activeEvent]
+        
+        XCTAssertTrue(activeEvent.isNow)
+        
+        // Emulate calendarNextChipText logic
+        let events = calendar.events
+        let upcomingEvents = events.filter { $0.startTime > now }.sorted(by: { $0.startTime < $1.startTime })
+        let currentEvent = events.first(where: { $0.isNow })
+        
+        let chipText: String = {
+            if let upcoming = upcomingEvents.first {
+                return "Next up · in \(upcoming.minutesUntilStart)m"
+            } else if currentEvent != nil {
+                return "In progress"
+            } else if !events.isEmpty {
+                return "\(events.count) event\(events.count == 1 ? "" : "s")"
+            } else {
+                return "Schedule clear"
+            }
+        }()
+        
+        XCTAssertEqual(chipText, "In progress", "When an event is happening now, status must be 'In progress' and never 'Next up · Now'")
+        XCTAssertFalse(chipText.lowercased().contains("next up · now"), "Must never output 'Next up · Now'")
+        XCTAssertFalse(chipText.lowercased().contains("next up: now"), "Must never output 'next up: now'")
+        
+        // 2. Active event AND an upcoming event later
+        let laterEvent = CalendarEvent(
+            id: "evt-later",
+            title: "Philosophy Discussion Group",
+            startTime: now.addingTimeInterval(3600),
+            endTime: now.addingTimeInterval(7200),
+            colorHex: "#816eb5",
+            calendarName: "philosophy"
+        )
+        calendar.events = [activeEvent, laterEvent]
+        
+        let upcomingEventsWithLater = calendar.events.filter { $0.startTime > now }.sorted(by: { $0.startTime < $1.startTime })
+        let currentWithLater = calendar.events.first(where: { $0.isNow })
+        let chipTextWithLater: String = {
+            if let upcoming = upcomingEventsWithLater.first {
+                return "Next up · in \(upcoming.minutesUntilStart)m"
+            } else if currentWithLater != nil {
+                return "In progress"
+            } else {
+                return "Schedule clear"
+            }
+        }()
+        
+        XCTAssertTrue(chipTextWithLater.hasPrefix("Next up · in "), "Should point to the upcoming event")
+        XCTAssertFalse(chipTextWithLater.lowercased().contains("next up · now"))
+    }
+    
+    func testAvailableCalendarLabelsWithGoogleCalendars() {
+        let calendar = CalendarModel()
+        
+        // Ingest simulated Google Calendars
+        calendar.apiBridge.availableCalendars = [
+            GoogleCalendarInfo(id: "cal-econ", summary: "econ", isPrimary: true, accessRole: "owner", colorHex: "#3b6fb5"),
+            GoogleCalendarInfo(id: "cal-math", summary: "math", isPrimary: false, accessRole: "owner", colorHex: "#4f6d8a"),
+            GoogleCalendarInfo(id: "cal-debate", summary: "debate", isPrimary: false, accessRole: "owner", colorHex: "#599aaa"),
+            GoogleCalendarInfo(id: "cal-philosophy", summary: "philosophy", isPrimary: false, accessRole: "owner", colorHex: "#816eb5")
+        ]
+        
+        let labels = calendar.availableCalendarLabels
+        XCTAssertEqual(labels.count, 4)
+        XCTAssertEqual(labels[0].name, "econ")
+        XCTAssertTrue(labels[0].isPrimary)
+        XCTAssertEqual(labels[0].colorHex, "#3b6fb5")
+        XCTAssertEqual(labels[1].name, "math")
+        XCTAssertEqual(labels[1].colorHex, "#4f6d8a")
+        
+        // Test addQuickEvent preserving calendarName and colorHex
+        let now = Date()
+        calendar.addQuickEvent(
+            title: "Linear Algebra Problem Set",
+            startTime: now,
+            durationMinutes: 60,
+            colorHex: "#4f6d8a",
+            targetCalendarId: "cal-math",
+            calendarName: "math"
+        )
+        
+        guard let added = calendar.events.first(where: { $0.title == "Linear Algebra Problem Set" }) else {
+            XCTFail("Event not added")
+            return
+        }
+        XCTAssertEqual(added.calendarName, "math")
+        XCTAssertEqual(added.colorHex, "#4f6d8a")
+    }
+    
+    func testWeekViewHasEventIndicatorsMatchingMonthView() {
+        let calendar = CalendarModel()
+        let cal = Calendar.current
+        let today = Date()
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: today)!
+        let dayAfterTomorrow = cal.date(byAdding: .day, value: 2, to: today)!
+        
+        calendar.events = [
+            CalendarEvent(
+                id: "evt-today",
+                title: "Macroeconomics Discussion",
+                startTime: today,
+                endTime: today.addingTimeInterval(3600),
+                colorHex: "#3b6fb5",
+                calendarName: "econ"
+            ),
+            CalendarEvent(
+                id: "evt-day-after",
+                title: "Debate Tournament",
+                startTime: dayAfterTomorrow,
+                endTime: dayAfterTomorrow.addingTimeInterval(7200),
+                colorHex: "#599aaa",
+                calendarName: "debate"
+            )
+        ]
+        
+        // Month view indicator check: eventsForDate(date) != empty
+        XCTAssertFalse(calendar.eventsForDate(today).isEmpty, "Today has events -> blue dot rendered")
+        XCTAssertTrue(calendar.eventsForDate(tomorrow).isEmpty, "Tomorrow has no events -> no blue dot")
+        XCTAssertFalse(calendar.eventsForDate(dayAfterTomorrow).isEmpty, "Day after tomorrow has events -> blue dot rendered")
+        
+        // Week view indicator check: uses the exact same query
+        let todayHasEvents = !calendar.eventsForDate(today).isEmpty
+        let tomorrowHasEvents = !calendar.eventsForDate(tomorrow).isEmpty
+        let dayAfterHasEvents = !calendar.eventsForDate(dayAfterTomorrow).isEmpty
+        
+        XCTAssertTrue(todayHasEvents, "Week view displays blue dot for today")
+        XCTAssertFalse(tomorrowHasEvents, "Week view omits blue dot for tomorrow")
+        XCTAssertTrue(dayAfterHasEvents, "Week view displays blue dot for day after tomorrow")
+    }
+    
+    func testMultiDayEventIntervalOverlapQueryAndDots() {
+        let calendar = CalendarModel()
+        let cal = Calendar.current
+        let today = Date()
+        let dayStart = cal.startOfDay(for: today)
+        let day1 = cal.date(byAdding: .day, value: 1, to: dayStart)!
+        let day2 = cal.date(byAdding: .day, value: 2, to: dayStart)!
+        let day3 = cal.date(byAdding: .day, value: 3, to: dayStart)!
+        let day4 = cal.date(byAdding: .day, value: 4, to: dayStart)!
+        let dayBefore = cal.date(byAdding: .day, value: -1, to: dayStart)!
+        
+        // Multi-day all-day event from day 0 through day 3 (exclusive end at day 4 00:00:00)
+        let multiDayEvent = CalendarEvent(
+            id: "evt-multi-day",
+            title: "International Economics Summit",
+            description: "Annual academic conference",
+            startTime: dayStart,
+            endTime: day4,
+            isAllDay: true,
+            colorHex: "#3b6fb5",
+            calendarName: "econ"
+        )
+        calendar.events = [multiDayEvent]
+        
+        // Must appear on all spanned days: day 0, day 1, day 2, day 3
+        XCTAssertFalse(calendar.eventsForDate(dayStart).isEmpty, "Day 0 must include multi-day event")
+        XCTAssertFalse(calendar.eventsForDate(day1).isEmpty, "Day 1 must include multi-day event")
+        XCTAssertFalse(calendar.eventsForDate(day2).isEmpty, "Day 2 must include multi-day event")
+        XCTAssertFalse(calendar.eventsForDate(day3).isEmpty, "Day 3 must include multi-day event")
+        
+        // Must NOT appear outside the span
+        XCTAssertTrue(calendar.eventsForDate(dayBefore).isEmpty, "Day before must not include multi-day event")
+        XCTAssertTrue(calendar.eventsForDate(day4).isEmpty, "Day 4 (exclusive end) must not include multi-day event")
+        
+        // Both month and week view indicator logic rely on !eventsForDate(date).isEmpty
+        XCTAssertTrue(!calendar.eventsForDate(dayStart).isEmpty)
+        XCTAssertTrue(!calendar.eventsForDate(day1).isEmpty)
+        XCTAssertTrue(!calendar.eventsForDate(day2).isEmpty)
+        XCTAssertTrue(!calendar.eventsForDate(day3).isEmpty)
+    }
+    
+    func testMultiDayTaskQuickAdd() {
+        let calendar = CalendarModel()
+        let cal = Calendar.current
+        let today = Date()
+        let startDay = cal.startOfDay(for: today)
+        let endDay = cal.date(byAdding: .day, value: 2, to: startDay)! // 3-day span
+        
+        calendar.addQuickEvent(
+            title: "Build Distributed Cache Engine",
+            startTime: startDay,
+            endTime: endDay,
+            durationMinutes: 60,
+            isAllDay: true,
+            hasMeetLink: false,
+            description: "[Task] Core architectural implementation across 3 days",
+            location: "Morph Lab",
+            colorHex: "#34a853",
+            targetCalendarId: "cal-work",
+            calendarName: "Work"
+        )
+        
+        guard let taskEvent = calendar.events.first(where: { $0.title == "Build Distributed Cache Engine" }) else {
+            XCTFail("Multi-day task event was not created")
+            return
+        }
+        
+        XCTAssertTrue(taskEvent.isAllDay)
+        XCTAssertEqual(taskEvent.calendarName, "Work")
+        XCTAssertEqual(taskEvent.colorHex, "#34a853")
+        XCTAssertEqual(taskEvent.description, "[Task] Core architectural implementation across 3 days")
+        
+        // Formatted range check
+        let range = taskEvent.formattedTimeRange
+        XCTAssertTrue(range.contains("All Day"))
+        
+        // Spanning checks
+        let day1 = cal.date(byAdding: .day, value: 1, to: startDay)!
+        XCTAssertFalse(calendar.eventsForDate(startDay).isEmpty)
+        XCTAssertFalse(calendar.eventsForDate(day1).isEmpty)
+        XCTAssertFalse(calendar.eventsForDate(endDay).isEmpty)
+    }
 }

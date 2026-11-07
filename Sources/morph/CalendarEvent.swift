@@ -116,3 +116,17 @@ public struct GoogleCalendarColor: Identifiable, Hashable, Equatable, Sendable {
         return standardPalette.first(where: { $0.hex.lowercased() == h })?.name
     }
 }
+
+public struct CalendarLabelOption: Identifiable, Hashable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let colorHex: String
+    public let isPrimary: Bool
+    
+    public init(id: String, name: String, colorHex: String, isPrimary: Bool = false) {
+        self.id = id
+        self.name = name
+        self.colorHex = colorHex
+        self.isPrimary = isPrimary
+    }
+}

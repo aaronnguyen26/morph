@@ -521,14 +521,52 @@ public final class CalendarModel: ObservableObject {
     }
     
     public var eventsForSelectedDate: [CalendarEvent] {
-        let cal = Calendar.current
-        return events.filter { cal.isDate($0.startTime, inSameDayAs: selectedDate) }
+        return eventsForDate(selectedDate)
             .sorted(by: { $0.startTime < $1.startTime })
     }
     
     public func eventsForDate(_ date: Date) -> [CalendarEvent] {
         let cal = Calendar.current
-        return events.filter { cal.isDate($0.startTime, inSameDayAs: date) }
+        let dayStart = cal.startOfDay(for: date)
+        let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86400)
+        return events.filter { evt in
+            if cal.isDate(evt.startTime, inSameDayAs: date) {
+                return true
+            }
+            return evt.startTime < dayEnd && evt.endTime > dayStart
+        }
+    }
+    
+    public var availableCalendarLabels: [CalendarLabelOption] {
+        if !apiBridge.availableCalendars.isEmpty {
+            return apiBridge.availableCalendars.map { cal in
+                let color = cal.colorHex ?? (cal.isPrimary ? "#3b6fb5" : "#6ab7ff")
+                return CalendarLabelOption(id: cal.id, name: cal.summary, colorHex: color, isPrimary: cal.isPrimary)
+            }
+        }
+        
+        // Secondary fallback: extract unique calendar names and colors from existing loaded events
+        var seenNames = Set<String>()
+        var options: [CalendarLabelOption] = []
+        for evt in events {
+            if let name = evt.calendarName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty, !seenNames.contains(name.lowercased()) {
+                seenNames.insert(name.lowercased())
+                let hex = evt.colorHex ?? "#6ab7ff"
+                options.append(CalendarLabelOption(id: name.lowercased(), name: name, colorHex: hex, isPrimary: options.isEmpty))
+            }
+        }
+        if !options.isEmpty {
+            return options
+        }
+        
+        // Final fallback: standard Google Calendar palette with recognizable names
+        return [
+            CalendarLabelOption(id: "primary", name: "Personal", colorHex: "#4285f4", isPrimary: true),
+            CalendarLabelOption(id: "work", name: "Work", colorHex: "#34a853", isPrimary: false),
+            CalendarLabelOption(id: "study", name: "Study", colorHex: "#a142f4", isPrimary: false),
+            CalendarLabelOption(id: "focus", name: "Focus", colorHex: "#f4511e", isPrimary: false),
+            CalendarLabelOption(id: "general", name: "General", colorHex: "#039be5", isPrimary: false)
+        ]
     }
     
     public func previousMonth() {
@@ -756,7 +794,8 @@ public final class CalendarModel: ObservableObject {
         description: String? = nil,
         location: String? = nil,
         targetCalendarId: String? = nil,
-        colorHex: String? = nil
+        colorHex: String? = nil,
+        calendarName: String? = nil
     ) {
         let cal = Calendar.current
         let now = Date()
@@ -804,7 +843,8 @@ public final class CalendarModel: ObservableObject {
             isAllDay: isAllDay,
             meetLink: initialMeet,
             location: eventLoc,
-            colorHex: colorHex
+            colorHex: colorHex,
+            calendarName: calendarName
         )
         if !events.contains(where: { $0.id == localEvent.id }) {
             events.append(localEvent)
@@ -824,7 +864,8 @@ public final class CalendarModel: ObservableObject {
                     location: eventLoc,
                     addMeetLink: addMeetLink && !isAllDay,
                     calendarId: targetCalendarId,
-                    colorHex: colorHex
+                    colorHex: colorHex,
+                    calendarName: calendarName
                 ) {
                     await MainActor.run {
                         // Replace optimistic local event with real Google Calendar event ID
@@ -864,28 +905,114 @@ public final class CalendarModel: ObservableObject {
     public func addQuickEvent(
         title: String,
         startTime: Date,
+        endTime: Date? = nil,
         durationMinutes: Int = 30,
         isAllDay: Bool = false,
         hasMeetLink: Bool = false,
+        description: String? = nil,
         location: String? = nil,
         colorHex: String? = nil,
-        targetCalendarId: String? = nil
+        targetCalendarId: String? = nil,
+        calendarName: String? = nil
     ) {
         let cal = Calendar.current
-        let hour = cal.component(.hour, from: startTime)
-        let minute = cal.component(.minute, from: startTime)
         self.selectedDate = startTime
-        self.addQuickEvent(
+        
+        let start: Date
+        let end: Date
+        
+        if isAllDay {
+            let startDay = cal.startOfDay(for: startTime)
+            start = startDay
+            if let specifiedEnd = endTime {
+                let endDayStart = cal.startOfDay(for: specifiedEnd)
+                if endDayStart > startDay {
+                    end = cal.date(byAdding: .day, value: 1, to: endDayStart) ?? endDayStart.addingTimeInterval(86400)
+                } else {
+                    end = cal.date(byAdding: .day, value: 1, to: startDay) ?? startDay.addingTimeInterval(86400)
+                }
+            } else {
+                end = cal.date(byAdding: .day, value: 1, to: startDay) ?? startDay.addingTimeInterval(86400)
+            }
+        } else {
+            start = startTime
+            if let specifiedEnd = endTime, specifiedEnd > startTime {
+                end = specifiedEnd
+            } else {
+                end = startTime.addingTimeInterval(Double(durationMinutes * 60))
+            }
+        }
+        
+        let initialMeet = (hasMeetLink && !isAllDay) ? "https://meet.google.com/new" : nil
+        let eventDesc = description ?? (isAllDay ? "All-Day Event / Task via Morph" : "Created via Morph Dynamic Notch")
+        let eventLoc = location ?? (hasMeetLink && !isAllDay ? "Google Meet" : nil)
+        
+        // Optimistically create local CalendarEvent
+        let localEvent = CalendarEvent(
+            id: "local_\(UUID().uuidString)",
             title: title,
-            durationMinutes: durationMinutes,
-            startHour: hour,
-            startMinute: minute,
+            description: eventDesc,
+            startTime: start,
+            endTime: end,
             isAllDay: isAllDay,
-            addMeetLink: hasMeetLink,
-            location: location,
-            targetCalendarId: targetCalendarId,
-            colorHex: colorHex
+            meetLink: initialMeet,
+            location: eventLoc,
+            colorHex: colorHex,
+            calendarName: calendarName
         )
+        if !events.contains(where: { $0.id == localEvent.id }) {
+            events.append(localEvent)
+            events.sort(by: { $0.startTime < $1.startTime })
+        }
+        evaluateUpcomingAlerts()
+        
+        // 1. Direct Google Calendar REST API event creation (updates user's real Google Calendar)
+        if !Self.isTestingEnvironment {
+            Task {
+                if let apiCreated = await apiBridge.createGoogleCalendarEvent(
+                    title: title,
+                    startTime: start,
+                    endTime: end,
+                    isAllDay: isAllDay,
+                    description: eventDesc,
+                    location: eventLoc,
+                    addMeetLink: hasMeetLink && !isAllDay,
+                    calendarId: targetCalendarId,
+                    colorHex: colorHex,
+                    calendarName: calendarName
+                ) {
+                    await MainActor.run {
+                        self.events.removeAll(where: { $0.id == localEvent.id })
+                        if !self.events.contains(where: { $0.id == apiCreated.id }) {
+                            self.events.append(apiCreated)
+                            self.events.sort(by: { $0.startTime < $1.startTime })
+                        }
+                        self.evaluateUpcomingAlerts()
+                    }
+                }
+            }
+        }
+        
+        // 2. Also save to EventKit if authorized and explicitly enabled (and not running in automated tests)
+        if !Self.isTestingEnvironment,
+           isMacCalendarSyncEnabled,
+           eventKitEngine.isAuthorized,
+           let created = eventKitEngine.createEvent(
+            title: title,
+            startDate: start,
+            endDate: end,
+            description: eventDesc,
+            location: eventLoc,
+            url: (hasMeetLink && !isAllDay) ? URL(string: "https://meet.google.com/new") : nil,
+            matchingEmail: configuredUserEmail
+           ) {
+            self.events.removeAll(where: { $0.id == localEvent.id })
+            if !self.events.contains(where: { $0.id == created.id }) {
+                self.events.append(created)
+                self.events.sort(by: { $0.startTime < $1.startTime })
+            }
+            self.evaluateUpcomingAlerts()
+        }
     }
     
     public func deleteEvent(id: String) {
