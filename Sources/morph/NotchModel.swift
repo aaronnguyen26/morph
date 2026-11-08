@@ -704,9 +704,15 @@ public final class NotchModel: ObservableObject {
     @Published public var glassEditTitle: String = ""
     @Published public var glassEditBody: String = ""
     
-    // Reply State
+    // Reply State & In-Island Intelligence
     @Published public var glassReplyQuery: String = ""
-    @Published public var glassReplyAnswer: String = "Prompts that mention the timer, calendar, music or notes are routed there. Connect a model to answer anything else."
+    @Published public var glassReplyAnswer: String = "Prompts that mention the timer, calendar, music or notes are routed there."
+    @Published public var glassReplyDomainTitle: String = "Morph"
+    @Published public var glassReplyDomainIcon: String? = "sparkles"
+    @Published public var glassReplyDomainColorHex: String? = "#38bdf8"
+    @Published public var glassReplyActionTitle: String? = nil
+    @Published public var glassReplyTargetState: GlassIslandState? = nil
+    @Published public var glassReplyQuickActions: [MorphQuickAction] = []
     @Published public var isGlassReplyLoading: Bool = false
     
     // Prompt Input
@@ -1291,7 +1297,7 @@ public final class NotchModel: ObservableObject {
         case .drops:
             return 284
         case .reply:
-            return 152
+            return glassReplyQuickActions.isEmpty ? 152 : 176
         case .profile:
             return 380
         }
@@ -1325,7 +1331,7 @@ public final class NotchModel: ObservableObject {
         case .drops:
             return featureTintColorHex(.drops)
         case .reply:
-            return "#b79cff"
+            return glassReplyDomainColorHex ?? "#b79cff"
         case .profile:
             return "#a78bfa"
         }
@@ -1333,8 +1339,8 @@ public final class NotchModel: ObservableObject {
     
     public var isPromptPeekActive: Bool {
         guard glassIslandState == .prompt else { return false }
-        let clean = glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !clean.isEmpty
+        guard let peek = promptPeekInfo else { return false }
+        return peek.actionType != "ask" && !peek.title.lowercased().hasPrefix("ask ")
     }
     
     public struct PromptPeekInfo: Equatable {
@@ -1363,6 +1369,12 @@ public final class NotchModel: ObservableObject {
         let q = glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
         let lower = q.lowercased()
+        
+        // Never show a duplicate peek preview when typing questions
+        let isQuestion = q.contains("?") || lower.hasPrefix("what") || lower.hasPrefix("how") || lower.hasPrefix("who") || lower.hasPrefix("when") || lower.hasPrefix("where") || lower.hasPrefix("why") || lower.hasPrefix("is ") || lower.hasPrefix("do ") || lower.hasPrefix("can ") || lower.hasPrefix("does ")
+        if isQuestion {
+            return nil
+        }
         
         // 1. Check form memory storage match (from Supabase or local memory)
         let memories = supabase.searchMemories(query: q)
@@ -1435,7 +1447,7 @@ public final class NotchModel: ObservableObject {
            regex.firstMatch(in: q, options: [], range: NSRange(location: 0, length: q.utf16.count)) != nil {
             return PromptPeekInfo(
                 title: "Save as a note",
-                subtitle: "“\(q.prefix(50))” · stored in Memory",
+                subtitle: "“\(q.prefix(50))”",
                 icon: "doc.text.fill",
                 actionType: "note"
             )
@@ -1494,13 +1506,8 @@ public final class NotchModel: ObservableObject {
             )
         }
         
-        // 8. Default ask
-        return PromptPeekInfo(
-            title: "Ask “\(q.prefix(32))”",
-            subtitle: "Saved to Memory as a prompt",
-            icon: "sparkles",
-            actionType: "ask"
-        )
+        // 8. No duplicate 'ask' peek - keep command bar compact and clean when typing
+        return nil
     }
     
     public var formattedGlassTimerTime: String {
@@ -2744,6 +2751,9 @@ public final class NotchModel: ObservableObject {
             recordFeatureUsage(feature)
         }
         self.glassIslandState = state
+        if state != .reply {
+            self.glassReplyDomainColorHex = nil
+        }
         if state == .idle {
             self.isGlassIslandPinned = false
             self.glassPromptText = ""
@@ -3094,146 +3104,95 @@ public final class NotchModel: ObservableObject {
         
         let lower = q.lowercased()
         
-        // 0A. Supabase Memory Storage Retrieval (Form Copies & Input Data)
-        let memories = supabase.searchMemories(query: q)
-        if let match = memories.first {
-            selectedFormCopyId = match.id
-            isFormCopyDetailOpen = true
-            glassFormMode = .copies
-            glassPromptText = ""
-            setGlassIslandState(.forms)
-            return
-        }
+        // 1. Evaluate with MorphLocalIntelligenceEngine (Action conduction, specific question answers, general navigation)
+        // CRUCIAL: Prompts are NEVER added to memory.
+        let result = MorphLocalIntelligenceEngine.shared.evaluate(query: q, model: self)
         
-        if let matchCopy = formTracker.savedFormCopies.first(where: {
-            $0.formTitle.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0.formTitle)
-        }) {
-            selectedFormCopyId = matchCopy.id
-            isFormCopyDetailOpen = true
-            glassFormMode = .copies
+        switch result.intentType {
+        case .general(let targetState):
             glassPromptText = ""
-            setGlassIslandState(.forms)
-            return
-        }
-        
-        if let matchReceipt = supabase.formReceipts.first(where: {
-            $0.formTitle.localizedCaseInsensitiveContains(q) || q.localizedCaseInsensitiveContains($0.formTitle)
-        }) {
-            selectedFormCopyId = matchReceipt.id
-            isFormCopyDetailOpen = true
-            glassFormMode = .copies
-            glassPromptText = ""
-            setGlassIslandState(.forms)
-            return
-        }
-        
-        // 0B1. Question Input Command: "input", "input answer", "fill question", "input question", "fill this"
-        if lower == "input" || lower == "input answer" || lower == "input question" || lower == "fill question" || lower == "fill this" {
-            _ = formTracker.inputSavedAnswerForActiveQuestion()
-            glassPromptText = ""
-            setGlassIslandState(.idle)
-            return
-        }
-        
-        // 0B. Autofill Command: "autofill", "fill", "fill form"
-        if lower == "autofill" || lower == "fill" || lower == "fill form" {
-            _ = formTracker.autofillActiveForm()
-            glassPromptText = ""
-            setGlassIslandState(.idle)
-            return
-        }
-        
-        // 0C. Forms / Assistant Routing: "form", "forms", "receipt", "history", "judge"
-        let formPattern = #"\b(form|forms|autofill|fill|judge|judging|receipt|receipts|response|responses|history|past)\b"#
-        if let regex = try? NSRegularExpression(pattern: formPattern, options: [.caseInsensitive]),
-           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
-            if lower.contains("receipt") || lower.contains("history") || lower.contains("past") || lower.contains("response") {
-                glassFormMode = .copies
-            } else {
-                glassFormMode = .live
+            if targetState == .calendar {
+                glassSelectedDayIndex = glassTodayDayIndex
+                calendar.goToToday()
             }
+            setGlassIslandState(targetState)
+            
+        case .actionExecuted(let confirmation, let domain, let icon, let tintHex, let actionTitle, let targetState):
+            glassReplyQuery = q
+            glassReplyAnswer = confirmation
+            glassReplyDomainTitle = domain
+            glassReplyDomainIcon = icon
+            glassReplyDomainColorHex = tintHex
+            glassReplyActionTitle = actionTitle
+            glassReplyTargetState = targetState
+            glassReplyQuickActions = []
+            isGlassReplyLoading = false
             glassPromptText = ""
-            setGlassIslandState(.forms)
-            return
-        }
-        
-        // 0D. Drop Shelf Routing: "drop", "drops", "shelf", "drop shelf", "stash", "staged", "files"
-        let dropPattern = #"\b(drop|drops|shelf|stash|staged|files|file shelf)\b"#
-        if let regex = try? NSRegularExpression(pattern: dropPattern, options: [.caseInsensitive]),
-           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
+            setGlassIslandState(.reply)
+            
+        case .specific(let answer, let domain, let icon, let tintHex, let actionTitle, let targetState):
+            glassReplyQuery = q
+            glassReplyAnswer = answer
+            glassReplyDomainTitle = domain
+            glassReplyDomainIcon = icon
+            glassReplyDomainColorHex = tintHex
+            glassReplyActionTitle = actionTitle
+            glassReplyTargetState = targetState
+            glassReplyQuickActions = []
+            isGlassReplyLoading = false
             glassPromptText = ""
-            setGlassIslandState(.drops)
-            return
-        }
-        
-        // 1. Note matching: "note: ...", "remember ...", "jot ..."
-        let notePattern = #"^(?:note|remember|jot)\s*[:\-]?\s*(.+)$"#
-        if let regex = try? NSRegularExpression(pattern: notePattern, options: [.caseInsensitive]),
-           let match = regex.firstMatch(in: q, options: [], range: NSRange(location: 0, length: q.utf16.count)) {
-            if let range = Range(match.range(at: 1), in: q) {
-                let noteText = String(q[range]).trimmingCharacters(in: .whitespacesAndNewlines)
-                let noteTitle = noteText.count > 26 ? String(noteText.prefix(26)).trimmingCharacters(in: .whitespacesAndNewlines) + "…" : noteText
-                let n = GlassNote(title: noteTitle, body: noteText)
-                glassNotes.insert(n, at: 0)
-                glassNotesMode = .list
-                glassPromptText = ""
-                setGlassIslandState(.notes)
-                return
-            }
-        }
-        
-        // 2. Focus / Timer matching: "focus 25", "timer 15", "pomodoro 50"
-        let timerPattern = #"\b(?:focus|timer|pomodoro)\b(?:\D*(\d{1,3}))?"#
-        if let regex = try? NSRegularExpression(pattern: timerPattern, options: [.caseInsensitive]),
-           let match = regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) {
-            var mins = 25
-            if match.numberOfRanges > 1 && match.range(at: 1).location != NSNotFound {
-                if let r = Range(match.range(at: 1), in: lower), let parsed = Int(lower[r]) {
-                    mins = max(1, min(180, parsed))
+            setGlassIslandState(.reply)
+            
+        case .noAction(let message, let quickActions):
+            // Fallback: If query was NOT an action or specific domain question,
+            // check if the user is searching for a past saved form memory or receipt!
+            let isQuestion = q.contains("?") || lower.hasPrefix("what") || lower.hasPrefix("how") || lower.hasPrefix("who") || lower.hasPrefix("when") || lower.hasPrefix("where") || lower.hasPrefix("is ") || lower.hasPrefix("do ")
+            
+            if !isQuestion {
+                let memories = supabase.searchMemories(query: q)
+                if let match = memories.first {
+                    selectedFormCopyId = match.id
+                    isFormCopyDetailOpen = true
+                    glassFormMode = .copies
+                    glassPromptText = ""
+                    setGlassIslandState(.forms)
+                    return
+                }
+                
+                if let matchCopy = formTracker.savedFormCopies.first(where: {
+                    $0.formTitle.localizedCaseInsensitiveContains(q) || (q.count >= 4 && q.localizedCaseInsensitiveContains($0.formTitle))
+                }) {
+                    selectedFormCopyId = matchCopy.id
+                    isFormCopyDetailOpen = true
+                    glassFormMode = .copies
+                    glassPromptText = ""
+                    setGlassIslandState(.forms)
+                    return
+                }
+                
+                if let matchReceipt = supabase.formReceipts.first(where: {
+                    $0.formTitle.localizedCaseInsensitiveContains(q) || (q.count >= 4 && q.localizedCaseInsensitiveContains($0.formTitle))
+                }) {
+                    selectedFormCopyId = matchReceipt.id
+                    isFormCopyDetailOpen = true
+                    glassFormMode = .copies
+                    glassPromptText = ""
+                    setGlassIslandState(.forms)
+                    return
                 }
             }
-            setGlassTimerMinutes(mins)
-            startGlassTimer()
+            
+            glassReplyQuery = q
+            glassReplyAnswer = message
+            glassReplyDomainTitle = "Actions"
+            glassReplyDomainIcon = "slider.horizontal.3"
+            glassReplyDomainColorHex = "#b79cff"
+            glassReplyActionTitle = nil
+            glassReplyTargetState = nil
+            glassReplyQuickActions = quickActions
+            isGlassReplyLoading = false
             glassPromptText = ""
-            setGlassIslandState(.timer)
-            return
-        }
-        
-        // 3. Calendar matching: "calendar", "schedule", "agenda", "meeting", "meetings", "today", "next up"
-        let calPattern = #"\b(calendar|schedule|agenda|meeting|meetings|today|next up)\b"#
-        if let regex = try? NSRegularExpression(pattern: calPattern, options: [.caseInsensitive]),
-           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
-            glassSelectedDayIndex = glassTodayDayIndex
-            calendar.goToToday()
-            glassPromptText = ""
-            setGlassIslandState(.calendar)
-            return
-        }
-        
-        // 4. Music matching: "play", "pause", "music", "song", "track", "skip", "next"
-        let musicPattern = #"\b(play|pause|music|song|track|skip|next)\b"#
-        if let regex = try? NSRegularExpression(pattern: musicPattern, options: [.caseInsensitive]),
-           regex.firstMatch(in: lower, options: [], range: NSRange(location: 0, length: lower.utf16.count)) != nil {
-            if lower.contains("pause") {
-                if isGlassMusicPlaying { toggleGlassMusicPlay() }
-            } else if lower.contains("skip") || lower.contains("next") {
-                skipGlassMusic(1)
-                if !isGlassMusicPlaying { toggleGlassMusicPlay() }
-            } else {
-                if !isGlassMusicPlaying { toggleGlassMusicPlay() }
-            }
-            glassPromptText = ""
-            setGlassIslandState(.music)
-            return
-        }
-        
-        // 5. Default Reply routing
-        glassReplyQuery = q
-        isGlassReplyLoading = true
-        glassPromptText = ""
-        setGlassIslandState(.reply)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.isGlassReplyLoading = false
+            setGlassIslandState(.reply)
         }
     }
 }

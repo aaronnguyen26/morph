@@ -4961,36 +4961,109 @@ public struct MorphIslandView: View {
     
     // MARK: - Reply Panel View (460 x 152 pt)
     private var glassReplyView: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("YOU ASKED")
-                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                .tracking(1.2)
-                .foregroundColor(Color.white.opacity(0.62))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if let icon = model.glassReplyDomainIcon, let hex = model.glassReplyDomainColorHex {
+                    HStack(spacing: 4) {
+                        Image(systemName: icon)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundColor(Color(hex: hex))
+                        Text(model.glassReplyDomainTitle.uppercased())
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundColor(Color(hex: hex))
+                            .tracking(1.0)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Color(hex: hex).opacity(0.14))
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(Color(hex: hex).opacity(0.35), lineWidth: 0.6))
+                }
+                
+                Spacer()
+            }
             
             Text(model.glassReplyQuery.isEmpty ? "What's on today?" : model.glassReplyQuery)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
             
             if model.isGlassReplyLoading {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 5) {
                     Capsule()
-                        .fill(Color.white.opacity(0.25))
-                        .frame(width: 220, height: 8)
+                        .fill(Color.white.opacity(0.20))
+                        .frame(width: 200, height: 7)
                     Capsule()
-                        .fill(Color.white.opacity(0.18))
-                        .frame(width: 150, height: 8)
+                        .fill(Color.white.opacity(0.12))
+                        .frame(width: 140, height: 7)
                 }
-                .padding(.top, 4)
+                .padding(.top, 2)
             } else {
                 Text(model.glassReplyAnswer)
-                    .font(.system(size: 13, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.78))
-                    .lineLimit(2)
+                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                // Interactive Quick Action Suggestions (when no direct action matches)
+                if !model.glassReplyQuickActions.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(model.glassReplyQuickActions) { action in
+                            Button(action: {
+                                MorphHaptics.levelChange()
+                                model.submitGlassIslandPrompt(action.command)
+                            }) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: action.icon)
+                                        .font(.system(size: 8.5, weight: .semibold))
+                                    Text(action.title)
+                                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.12))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.6))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 3)
+                }
+                
+                if let actionTitle = model.glassReplyActionTitle, let targetState = model.glassReplyTargetState {
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        withAnimation(MorphUniversalAnimation.stateExpansion) {
+                            model.setGlassIslandState(targetState)
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Text(actionTitle)
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.14))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.6))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     private var compactStageView: some View {
