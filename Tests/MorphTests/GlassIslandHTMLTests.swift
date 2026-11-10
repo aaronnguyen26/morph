@@ -8,17 +8,35 @@ final class GlassIslandHTMLTests: XCTestCase {
     
     override func setUp() async throws {
         try await super.setUp()
+        let sharedEngine = YouTubeMusicEngine.shared
+        sharedEngine.trackData = YTMTrackData()
+        sharedEngine.isSignedIn = false
+        sharedEngine.isWaitingForSignInCompletion = false
+        sharedEngine.userPlaylists = []
+        sharedEngine.quickPicks = YTMParser.defaultQuickPicks
+        sharedEngine.libraryError = nil
+        sharedEngine.innerTubeOverride = nil
+        
         model = NotchModel()
         model.isGlassIslandEnabled = true
         model.setGlassIslandState(.idle)
     }
     
     override func tearDown() async throws {
-        model.media.engine.trackData = YTMTrackData()
-        model.media.engine.isSignedIn = false
+        let sharedEngine = model.media.engine
+        sharedEngine.trackData = YTMTrackData()
+        sharedEngine.isSignedIn = false
+        sharedEngine.isWaitingForSignInCompletion = false
+        sharedEngine.userPlaylists = []
+        sharedEngine.quickPicks = YTMParser.defaultQuickPicks
+        sharedEngine.libraryError = nil
+        sharedEngine.innerTubeOverride = nil
+        model.media.isWaitingForBrowserSignIn = false
+        model.media.browserAuthStatusMessage = nil
         model.media.isDirectEngineConnected = false
         model.media.isPlaying = false
         model.media.isBrowserConnected = false
+        model.media.networkMonitor.setConnectedForTesting(true)
         model.resetTransientStateOnCollapse()
         model = nil
         try await super.tearDown()
@@ -616,5 +634,166 @@ final class GlassIslandHTMLTests: XCTestCase {
         
         // Track must NOT auto-advance via Swift ticker
         XCTAssertEqual(model.media.trackTitle, "Starboy")
+    }
+    
+    // MARK: - 15. Glass Island & Legacy Music Search Integration Tests
+    
+    @MainActor
+    func testGlassMusicLiveCatalogSearchAndOpeningSongAndArtist() async throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures")
+        let searchDoc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("search.json"))) as? [String: Any])
+        let artistDoc = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("artist.json"))) as? [String: Any])
+        
+        let engine = model.media.engine
+        engine.innerTubeOverride = { endpoint, body in
+            switch endpoint {
+            case "search":
+                return searchDoc
+            case "browse":
+                let id = body["browseId"] as? String ?? ""
+                if id.hasPrefix("VLOLAK") {
+                    throw YouTubeMusicEngine.InnerTubeError.http(404)
+                }
+                return artistDoc
+            default:
+                return [:]
+            }
+        }
+        defer {
+            engine.innerTubeOverride = nil
+            model.media.networkMonitor.setConnectedForTesting(true)
+            model.media.clearCatalogSearch()
+        }
+        
+        model.setGlassIslandState(.music)
+        model.setGlassMusicSubtab(.library)
+        
+        // 1. Typing in Glass Music search triggers debounced catalog search
+        model.glassMusicSearchText = "taylor swift"
+        let deadline = Date().addingTimeInterval(3.0)
+        while model.media.searchResults.isEmpty && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(model.media.searchResults.isEmpty, "Typing into glassMusicSearchText must populate catalog searchResults")
+        XCTAssertTrue(model.media.groupedSearchResults.contains(where: { $0.kind == .song }))
+        XCTAssertTrue(model.media.groupedSearchResults.contains(where: { $0.kind == .artist }))
+        
+        // 2. Clicking an Artist opens glassSelectedPlaylist and asynchronously syncs loaded tracks
+        let artistResult = try XCTUnwrap(model.media.searchResults.first(where: { $0.kind == .artist }))
+        model.openGlassSearchResult(artistResult)
+        XCTAssertEqual(model.glassSelectedPlaylist?.kind, .artist)
+        
+        let trackDeadline = Date().addingTimeInterval(3.0)
+        while (model.glassSelectedPlaylist?.tracks.isEmpty ?? true) && Date() < trackDeadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(model.glassSelectedPlaylist?.tracks.count, 5, "Artist detail in Glass Island must receive asynchronously loaded tracks")
+        
+        // Back button clears glassSelectedPlaylist while preserving the active search query & results
+        model.selectGlassPlaylist(nil)
+        XCTAssertNil(model.glassSelectedPlaylist)
+        XCTAssertEqual(model.glassMusicSearchText, "taylor swift")
+        XCTAssertFalse(model.media.searchResults.isEmpty)
+        
+        // 3. Clicking a Song result plays it immediately
+        let songResult = try XCTUnwrap(model.media.searchResults.first(where: { $0.kind == .song }))
+        model.glassTrackCurrentSeconds = 42
+        model.openGlassSearchResult(songResult)
+        XCTAssertEqual(model.media.trackTitle, songResult.title)
+        XCTAssertTrue(model.media.isPlaying)
+        XCTAssertTrue(model.isGlassMusicPlaying)
+        XCTAssertEqual(model.glassTrackCurrentSeconds, 0)
+        
+        // 4. Single-character submit works via submitGlassMusicSearch()
+        model.media.clearCatalogSearch()
+        model.glassMusicSearchText = "A"
+        model.submitGlassMusicSearch()
+        let singleDeadline = Date().addingTimeInterval(3.0)
+        while model.media.searchResults.isEmpty && Date() < singleDeadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(model.media.searchResults.isEmpty, "Submitting single-character search must query YouTube Music")
+        
+        // 5. Render both Glass Music search view and Legacy MediaView cleanly
+        let glassView = MorphIslandView(model: model)
+        XCTAssertNotNil(glassView.body)
+        let legacyView = MediaView(media: model.media, model: model)
+        XCTAssertNotNil(legacyView.body)
+        
+        // 6. Clearing search text clears catalog results
+        model.glassMusicSearchText = ""
+        let clearDeadline = Date().addingTimeInterval(1.0)
+        while !model.media.searchResults.isEmpty && Date() < clearDeadline {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(model.media.searchResults.isEmpty)
+        
+        // 7. Offline song search tap triggers offline handling without faking playback
+        model.media.networkMonitor.setConnectedForTesting(false)
+        model.media.isPlaying = false
+        model._simulatedGlassMusicPlaying = false
+        model.openGlassSearchResult(songResult)
+        XCTAssertFalse(model.isGlassMusicPlaying)
+        model.media.networkMonitor.setConnectedForTesting(true)
+    }
+    
+    @MainActor
+    func testGlassIslandSlashSearchDurationAndBoundsSafety() {
+        model.isGlassIslandEnabled = true
+        let sm = ShortcutManager.shared
+        sm.configure(model: model, controller: nil)
+        
+        let slashEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            characters: "/",
+            charactersIgnoringModifiers: "/",
+            isARepeat: false,
+            keyCode: 44
+        )!
+        
+        // 1. Even while background music is playing, '/' on .notes in Glass Island must not trigger music search
+        model.setGlassIslandState(.notes)
+        model.media.isPlaying = true
+        XCTAssertFalse(sm.handleKeyEvent(slashEvent))
+        
+        // 2. When on .music in Glass Island (even while paused), '/' opens library search & requests focus
+        model.media.pause()
+        model.setGlassIslandState(.music)
+        model.setGlassMusicSubtab(.playing)
+        let prevReq = model.focusGlassMusicSearchRequestID
+        XCTAssertTrue(sm.handleKeyEvent(slashEvent))
+        XCTAssertEqual(model.glassMusicSubtab, .library)
+        XCTAssertTrue(model.shouldFocusGlassMusicSearch)
+        XCTAssertEqual(model.focusGlassMusicSearchRequestID, prevReq + 1)
+        
+        // 3. seekGlassMusic prioritizes active media.duration over glassTracks fallback, and survives out-of-range index
+        model.glassTrackIndex = 999
+        XCTAssertNil(model.currentGlassTrack)
+        model.media.duration = 420
+        model.seekGlassMusic(to: 300)
+        XCTAssertEqual(model.media.currentTime, 300, accuracy: 0.01)
+        XCTAssertEqual(model.glassTrackCurrentSeconds, 300)
+        
+        // syncGlassTracks clamps out-of-range glassTrackIndex back to 0
+        model.syncGlassTracks(from: [YTMPlaylistItem(id: "t1", title: "A", artist: "B", videoId: "vid1")])
+        XCTAssertEqual(model.glassTrackIndex, 0)
+        
+        // 4. toggleGlassMusicPlay when signed out & empty tracks must not fake playing
+        model.media.pause()
+        model._simulatedGlassMusicPlaying = false
+        model.media.trackTitle = ""
+        model.media.isSignedIn = false
+        model.media.quickPicks = []
+        model.glassTracks = []
+        model.toggleGlassMusicPlay()
+        XCTAssertFalse(model._simulatedGlassMusicPlaying)
+        XCTAssertTrue(model.media.isWaitingForBrowserSignIn)
     }
 }

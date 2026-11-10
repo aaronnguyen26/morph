@@ -2,6 +2,7 @@ import Cocoa
 import WebKit
 import SwiftUI
 import Combine
+import CryptoKit
 
 public enum YTMRepeatMode: String, Codable, CaseIterable {
     case off
@@ -399,6 +400,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     public func loadGoogleSignIn() {
         self.isWaitingForSignInCompletion = true
+        guard !MorphEnvironment.isTestingEnvironment else { return }
         // Direct Google Sign-In endpoint that redirects back to YouTube Music once completed
         let signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
         if let url = URL(string: signInURLString) {
@@ -773,18 +775,26 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     // MARK: - Direct Playback Commands
     public func play() {
+        trackData.isPlaying = true
         let script = """
         (function() {
+            window._morphUserPaused = false;
+            var didPlay = false;
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.playVideo === 'function') {
-                try { p.playVideo(); } catch(e) {}
+                try {
+                    p.playVideo();
+                    didPlay = true;
+                } catch(e) {}
             }
             var v = document.querySelector('video');
             if (v && v.paused) {
                 var wasMuted = v.muted;
                 var playPromise = v.play();
                 if (playPromise !== undefined) {
-                    playPromise.catch(function() {
+                    playPromise.then(function() {
+                        didPlay = true;
+                    }).catch(function() {
                         // WebKit autoplay rejection: unlock via muted autoplay then restore mute state
                         v.muted = true;
                         v.play().then(function() {
@@ -793,21 +803,21 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             }, 150);
                         }).catch(function(){});
                     });
+                } else {
+                    didPlay = true;
                 }
             }
-            // Strict player-bar play button targeting to prevent clicking navigation links like "Playlists"
-            var btn = document.querySelector('ytmusic-player-bar #play-pause-button') ||
-                      document.querySelector('#play-pause-button') ||
-                      document.querySelector('ytmusic-player-bar tp-yt-paper-icon-button#play-pause-button') ||
-                      document.querySelector('ytmusic-player-bar [aria-label*="Play" i]') ||
-                      document.querySelector('ytmusic-player-bar [aria-label*="Phát" i]');
-            if (btn) {
-                var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
-                if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1 || label === '') {
-                    btn.click();
-                    if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
-                        var inner = btn.querySelector('button, #button');
-                        if (inner) inner.click();
+            // Strict player-bar play button targeting: only click if direct play did not start
+            if (!didPlay) {
+                var btn = document.querySelector('ytmusic-player-bar #play-pause-button') ||
+                          document.querySelector('#play-pause-button') ||
+                          document.querySelector('ytmusic-player-bar tp-yt-paper-icon-button#play-pause-button') ||
+                          document.querySelector('ytmusic-player-bar [aria-label*="Play" i]') ||
+                          document.querySelector('ytmusic-player-bar [aria-label*="Phát" i]');
+                if (btn) {
+                    var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
+                    if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1) {
+                        btn.click();
                     }
                 }
             }
@@ -816,17 +826,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var firstPlay = document.querySelector('ytmusic-responsive-list-item-renderer #play-button, ytmusic-two-row-item-renderer #play-button, ytmusic-play-button-renderer #button, #play-button');
                 if (firstPlay) {
                     firstPlay.click();
-                    if (firstPlay.tagName && firstPlay.tagName.toLowerCase().indexOf('-') === -1) {
-                        var firstInner = firstPlay.querySelector('button, #button');
-                        if (firstInner) firstInner.click();
-                    }
                 }
             }
             if (navigator.mediaSession) {
                 navigator.mediaSession.playbackState = 'playing';
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 150);
+                setTimeout(function() { window.morphSendUpdate(true); }, 50);
             }
         })();
         """
@@ -834,36 +840,38 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func pause() {
+        trackData.isPlaying = false
+        if #available(macOS 11.3, *) {
+            webView.pauseAllMediaPlayback()
+        }
         let script = """
         (function() {
+            window._morphUserPaused = true;
+            _morphTransitionPending = false;
+            _morphWasPlayingBeforeTransition = false;
+            if (typeof _morphTransitionTimer !== 'undefined' && _morphTransitionTimer) {
+                clearTimeout(_morphTransitionTimer);
+                _morphTransitionTimer = null;
+            }
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.pauseVideo === 'function') {
-                try { p.pauseVideo(); } catch(e) {}
+                try {
+                    p.pauseVideo();
+                } catch(e) {}
             }
             var videos = document.querySelectorAll('video, audio');
             for (var i = 0; i < videos.length; i++) {
-                try { videos[i].pause(); } catch(e) {}
-            }
-            var btn = document.querySelector('ytmusic-player-bar #play-pause-button') ||
-                      document.querySelector('#play-pause-button') ||
-                      document.querySelector('ytmusic-player-bar tp-yt-paper-icon-button#play-pause-button') ||
-                      document.querySelector('ytmusic-player-bar [aria-label*="Pause" i]') ||
-                      document.querySelector('ytmusic-player-bar [aria-label*="Tạm dừng" i]');
-            if (btn) {
-                var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
-                if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1 || label === '') {
-                    btn.click();
-                    if (btn.tagName && btn.tagName.toLowerCase().indexOf('-') === -1) {
-                        var inner = btn.querySelector('button, #button');
-                        if (inner) inner.click();
+                try {
+                    if (!videos[i].paused) {
+                        videos[i].pause();
                     }
-                }
+                } catch(e) {}
             }
             if (navigator.mediaSession) {
                 navigator.mediaSession.playbackState = 'paused';
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 150);
+                window.morphSendUpdate(true);
             }
         })();
         """
@@ -871,31 +879,36 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func stop() {
+        trackData.isPlaying = false
+        trackData.currentTime = 0
+        if #available(macOS 11.3, *) {
+            webView.pauseAllMediaPlayback()
+        }
         let script = """
         (function() {
+            window._morphUserPaused = true;
+            _morphTransitionPending = false;
+            _morphWasPlayingBeforeTransition = false;
+            if (typeof _morphTransitionTimer !== 'undefined' && _morphTransitionTimer) {
+                clearTimeout(_morphTransitionTimer);
+                _morphTransitionTimer = null;
+            }
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.stopVideo === 'function') {
-                p.stopVideo();
+                try { p.stopVideo(); } catch(e) {}
             }
             var videos = document.querySelectorAll('video, audio');
             for (var i = 0; i < videos.length; i++) {
-                videos[i].pause();
-                try { videos[i].currentTime = 0; } catch(e) {}
-            }
-            var btn = document.querySelector('#play-pause-button') || 
-                      document.querySelector('ytmusic-player-bar #play-pause-button') ||
-                      document.querySelector('tp-yt-paper-icon-button#play-pause-button');
-            if (btn) {
-                var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
-                if (label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1) {
-                    btn.click();
-                }
+                try {
+                    videos[i].pause();
+                    videos[i].currentTime = 0;
+                } catch(e) {}
             }
             if (navigator.mediaSession) {
                 navigator.mediaSession.playbackState = 'none';
             }
             if (typeof window.morphSendUpdate === 'function') {
-                setTimeout(window.morphSendUpdate, 150);
+                setTimeout(function() { window.morphSendUpdate(true); }, 50);
             }
         })();
         """
@@ -913,6 +926,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func ensurePlayback() {
         let script = """
         (function() {
+            if (window._morphUserPaused) return;
             try {
                 if (typeof dismissModalsAndEnableAutoplay === 'function') {
                     dismissModalsAndEnableAutoplay();
@@ -1396,6 +1410,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         
         let script = """
         (function() {
+            window._morphUserPaused = false;
             var targetIdx = \(index);
             var targetVid = \(vidArg);
             var targetTitle = \(titleArg);
@@ -1485,11 +1500,21 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     /// Test seam: when set, replaces the WebKit-backed network call.
     public var innerTubeOverride: (@MainActor @Sendable (String, [String: Any]) async throws -> [String: Any])?
+    /// Test seam: when set, replaces URLSession for direct HTTP InnerTube calls.
+    public var urlSessionOverride: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
+    
+    private var isWebViewReadyForInnerTube: Bool {
+        guard let host = webView.url?.host else { return false }
+        return host.hasSuffix("music.youtube.com") && !webView.isLoading
+    }
     
     private func waitUntilReady(timeout: TimeInterval = 12) async throws {
+        if MorphEnvironment.isTestingEnvironment && innerTubeOverride == nil && !isWebViewReadyForInnerTube {
+            throw InnerTubeError.notReady
+        }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let host = webView.url?.host, host.hasSuffix("music.youtube.com"), !webView.isLoading {
+            if isWebViewReadyForInnerTube {
                 return
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -1536,7 +1561,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         do {
             result = try await webView.callAsyncJavaScript(js, arguments: ["endpoint": endpoint, "bodyJSON": bodyJSON], in: nil, contentWorld: .page)
         } catch {
-            let msg = error.localizedDescription
+            let nsErr = error as NSError
+            let jsMsg = (nsErr.userInfo["WKJavaScriptExceptionMessage"] as? String) ?? ""
+            let msg = jsMsg.isEmpty ? error.localizedDescription : "\(jsMsg) \(error.localizedDescription)"
             if let range = msg.range(of: #"HTTP (\d{3})"#, options: .regularExpression),
                let code = Int(msg[range].dropFirst(5)) {
                 throw InnerTubeError.http(code)
@@ -1551,10 +1578,88 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         return json
     }
     
+    /// Calls InnerTube directly via URLSession with WEB_REMIX headers (and WebKit session cookies if signed in)
+    /// so catalog search and public browse work immediately even when WKWebView has not finished booting.
+    private func directInnerTubeHTTP(_ endpoint: String, body: [String: Any]) async throws -> [String: Any] {
+        guard let url = URL(string: "https://music.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false") else {
+            throw InnerTubeError.invalidResponse
+        }
+        var payload = body
+        payload["context"] = [
+            "client": [
+                "clientName": "WEB_REMIX",
+                "clientVersion": "1.20250310.01.00",
+                "hl": "en",
+                "gl": "US"
+            ]
+        ]
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://music.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue("67", forHTTPHeaderField: "X-Youtube-Client-Name")
+        request.setValue("1.20250310.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
+        request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        request.setValue(kCustomUserAgent, forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        
+        if urlSessionOverride == nil && !MorphEnvironment.isTestingEnvironment {
+            let allCookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+            let now = Date()
+            let ytmCookies = allCookies.filter { cookie in
+                if let exp = cookie.expiresDate, exp < now { return false }
+                let d = cookie.domain.lowercased()
+                return d == "music.youtube.com" || d == ".music.youtube.com" || d == ".youtube.com" || d == "youtube.com"
+            }
+            if !ytmCookies.isEmpty {
+                request.setValue(ytmCookies.map { "\($0.name)=\($0.value)" }.joined(separator: "; "), forHTTPHeaderField: "Cookie")
+                if let sapisid = ytmCookies.first(where: { $0.name == "SAPISID" || $0.name == "__Secure-3PAPISID" || $0.name == "__Secure-1PAPISID" })?.value {
+                    let ts = Int(Date().timeIntervalSince1970)
+                    let digest = Insecure.SHA1.hash(data: Data("\(ts) \(sapisid) https://music.youtube.com".utf8))
+                    let hex = digest.map { String(format: "%02x", $0) }.joined()
+                    request.setValue("SAPISIDHASH \(ts)_\(hex)", forHTTPHeaderField: "Authorization")
+                }
+            }
+        }
+        
+        let (data, response): (Data, URLResponse)
+        if let override = urlSessionOverride {
+            (data, response) = try await override(request)
+        } else if MorphEnvironment.isTestingEnvironment {
+            throw InnerTubeError.notReady
+        } else {
+            (data, response) = try await URLSession.shared.data(for: request)
+        }
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw InnerTubeError.http(http.statusCode)
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw InnerTubeError.invalidResponse
+        }
+        return json
+    }
+    
+    /// Uses WebKit when ready on music.youtube.com, otherwise calls direct HTTP immediately (and falls back on error)
+    /// so searches and browsing never block for 12s waiting on WKWebView.
+    private func publicInnerTube(_ endpoint: String, body: [String: Any]) async throws -> [String: Any] {
+        if let override = innerTubeOverride {
+            return try await override(endpoint, body)
+        }
+        if urlSessionOverride != nil || !isWebViewReadyForInnerTube {
+            return try await directInnerTubeHTTP(endpoint, body: body)
+        }
+        do {
+            return try await innerTube(endpoint, body: body)
+        } catch {
+            return try await directInnerTubeHTTP(endpoint, body: body)
+        }
+    }
+    
     // MARK: Library playlists
     public func fetchRealUserPlaylists() {
-        Task { @MainActor in
-            await self.refreshLibraryPlaylists()
+        Task { @MainActor [weak self] in
+            await self?.refreshLibraryPlaylists()
         }
     }
     
@@ -1592,8 +1697,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     // MARK: Quick Picks
     public func fetchQuickPicks() {
-        Task { @MainActor in
-            await self.refreshQuickPicks()
+        Task { @MainActor [weak self] in
+            await self?.refreshQuickPicks()
         }
     }
     
@@ -1602,7 +1707,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         quickPicksError = nil
         defer { isLoadingQuickPicks = false }
         do {
-            let doc = try await innerTube("browse", body: ["browseId": "FEmusic_home"])
+            let doc = try await publicInnerTube("browse", body: ["browseId": "FEmusic_home"])
             let parsed = YTMParser.parseQuickPicks(doc)
             if !parsed.isEmpty {
                 self.quickPicks = parsed
@@ -1639,7 +1744,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     private func loadAllPages(browseId: String, maxTracks: Int = 1500) async throws -> YTMTrackPage {
         print("[Morph YTM] loadAllPages requesting browseId: '\(browseId)'")
-        let doc = try await innerTube("browse", body: ["browseId": browseId])
+        let doc = try await publicInnerTube("browse", body: ["browseId": browseId])
         var page = YTMParser.parseTrackPage(doc)
         var token = page.continuation
         var lastToken: String?
@@ -1647,7 +1752,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         while let t = token, t != lastToken, page.tracks.count < maxTracks, guardCount < 40 {
             lastToken = t
             guardCount += 1
-            let next = YTMParser.parseTrackPage(try await innerTube("browse", body: ["continuation": t]), startIndex: page.tracks.count)
+            let next = YTMParser.parseTrackPage(try await publicInnerTube("browse", body: ["continuation": t]), startIndex: page.tracks.count)
             if next.tracks.isEmpty { break }
             page.tracks += next.tracks
             token = next.continuation
@@ -1680,12 +1785,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func searchCatalog(_ query: String) async throws -> [YTMSearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
-        let doc = try await innerTube("search", body: ["query": q])
+        let doc = try await publicInnerTube("search", body: ["query": q])
         return YTMParser.parseSearch(doc)
     }
     
     // MARK: Direct playback by video id
-    public func play(videoId: String, listId: String? = nil, fallbackToRadio: Bool = true) {
+    public func play(videoId: String, listId: String? = nil, fallbackToRadio: Bool = false) {
         guard !MorphEnvironment.isTestingEnvironment else { return }
         let vid = videoId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !vid.isEmpty else { return }
@@ -1696,7 +1801,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             cleanList = String(l.dropFirst(2))
         }
         
-        // Continuous Playback Guarantee: If no playlist is provided and fallbackToRadio is true, default to song's Radio (RDAMVM<videoId>)
+        // Continuous Playback: Only fallback to radio if explicitly requested
         if (cleanList == nil || cleanList?.isEmpty == true) && fallbackToRadio {
             cleanList = "RDAMVM\(vid)"
         }
@@ -1705,6 +1810,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let listArg = cleanList.map { "'\($0)'" } ?? "null"
         let script = """
         (function() {
+            window._morphUserPaused = false;
             var vid = '\(vid)';
             var listId = \(listArg);
             
@@ -1713,7 +1819,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             if (p) {
                 try {
                     if (typeof p.loadVideoById === 'function') {
-                        if (listId && listId.length > 0) {
+                        // Direct Song Guarantee: never let RDAMVM automix radio hijack or reorder the first song played!
+                        if (listId && listId.length > 0 && listId.indexOf('RDAMVM') === -1) {
                             try {
                                 p.loadVideoById({ videoId: vid, list: listId });
                             } catch(e1) {
@@ -1724,7 +1831,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                         played = true;
                     } else if (typeof p.loadVideoByPlayerVars === 'function') {
-                        p.loadVideoByPlayerVars({ videoId: vid, list: listId });
+                        if (listId && listId.length > 0 && listId.indexOf('RDAMVM') === -1) {
+                            p.loadVideoByPlayerVars({ videoId: vid, list: listId });
+                        } else {
+                            p.loadVideoByPlayerVars({ videoId: vid });
+                        }
                         played = true;
                     }
                     if (typeof p.playVideo === 'function') {
@@ -1759,11 +1870,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     document.body.appendChild(link);
                     link.click();
                     link.remove();
+                    played = true;
                 } catch(eNav) {}
             }
-            // Fallback inside page: navigate to absolute canonical URL (never relative, which throws SyntaxError in WebKit)
-            var target = 'https://music.youtube.com/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
-            window.location.href = target;
+            if (!played) {
+                // Fallback inside page: navigate to absolute canonical URL (never relative, which throws SyntaxError in WebKit)
+                var target = 'https://music.youtube.com/watch?v=' + encodeURIComponent(vid) + (listId ? ('&list=' + encodeURIComponent(listId)) : '');
+                window.location.href = target;
+            }
             return false;
         })();
         """
@@ -1789,6 +1903,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func playPlaylistSong(index: Int) {
         let script = """
         (function() {
+            window._morphUserPaused = false;
             var items = document.querySelectorAll('ytmusic-responsive-list-item-renderer');
             if (items && items.length > \(index)) {
                 var target = items[\(index)];
@@ -1808,6 +1923,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func playEntirePlaylist() {
         let script = """
         (function() {
+            window._morphUserPaused = false;
             var playBtn = document.querySelector('ytmusic-play-button-renderer #button, ytmusic-responsive-header-renderer #play-button, #play-button, tp-yt-paper-button.play-button');
             if (playBtn) {
                 var inner = playBtn.querySelector('button, #button');
@@ -1837,6 +1953,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         
         // Auto-click the first playable track or album in search results
         let autoPlayScript = """
+        window._morphUserPaused = false;
         var checkCount = 0;
         var checkInterval = setInterval(function() {
             checkCount++;
@@ -1981,12 +2098,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         end tell
         """
         
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: chromeScript) {
-            let output = scriptObject.executeAndReturnError(&error)
-            if error == nil && output.booleanValue {
-                return true
-            }
+        if MorphAppleScriptRunner.runBoolean(chromeScript, timeout: 2.5) {
+            return true
         }
         
         // 2. Safari
@@ -2010,12 +2123,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         end tell
         """
         
-        var safariError: NSDictionary?
-        if let safariScriptObject = NSAppleScript(source: safariScript) {
-            let output = safariScriptObject.executeAndReturnError(&safariError)
-            if safariError == nil && output.booleanValue {
-                return true
-            }
+        if MorphAppleScriptRunner.runBoolean(safariScript, timeout: 2.5) {
+            return true
         }
         
         return false
@@ -2046,14 +2155,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             end tell
             """
             
-            var rawCookies = ""
-            var error: NSDictionary?
-            if let scriptObject = NSAppleScript(source: chromeCookieScript) {
-                let output = scriptObject.executeAndReturnError(&error)
-                if error == nil, let val = output.stringValue, !val.isEmpty {
-                    rawCookies = val
-                }
-            }
+            var rawCookies = MorphAppleScriptRunner.run(chromeCookieScript, timeout: 2.5) ?? ""
             
             // Check Safari if Chrome didn't have cookies
             if rawCookies.isEmpty {
@@ -2071,13 +2173,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     return ""
                 end tell
                 """
-                var safariError: NSDictionary?
-                if let scriptObject = NSAppleScript(source: safariCookieScript) {
-                    let output = scriptObject.executeAndReturnError(&safariError)
-                    if safariError == nil, let val = output.stringValue, !val.isEmpty {
-                        rawCookies = val
-                    }
-                }
+                rawCookies = MorphAppleScriptRunner.run(safariCookieScript, timeout: 2.5) ?? ""
             }
             
             guard !rawCookies.isEmpty else { return }
@@ -2365,7 +2461,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var playerEl = document.getElementById('movie_player') || document.querySelector('#movie_player');
                 
                 var isPlaying = false;
-                if (videoEl) {
+                if (window._morphUserPaused) {
+                    isPlaying = false;
+                } else if (videoEl) {
                     // Direct truth from video element: playing iff not paused, not ended, has frames (readyState >= 2), and not seeking
                     isPlaying = (!videoEl.paused && !videoEl.ended && videoEl.readyState >= 2 && !videoEl.seeking);
                 } else if (playerEl && typeof playerEl.getPlayerState === 'function') {
@@ -2719,6 +2817,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var _morphTransitionTimer = null;
 
             function ensureActivePlayback() {
+                if (window._morphUserPaused) return;
                 try {
                     dismissModalsAndEnableAutoplay();
                     var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
@@ -2746,11 +2845,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
 
             function startTransitionWatchdog() {
+                if (window._morphUserPaused) return;
                 _morphTransitionPending = true;
                 if (_morphTransitionTimer) clearTimeout(_morphTransitionTimer);
                 [100, 300, 700, 1300, 2000].forEach(function(d) {
                     setTimeout(function() {
-                        if (_morphTransitionPending) {
+                        if (_morphTransitionPending && !window._morphUserPaused) {
                             ensureActivePlayback();
                             var v = document.querySelector('video');
                             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
@@ -2883,6 +2983,20 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
             
             function attachVideoListeners() {
+                if (navigator.mediaSession && typeof navigator.mediaSession.setActionHandler === 'function' && !navigator.mediaSession._morphIntercepted) {
+                    navigator.mediaSession._morphIntercepted = true;
+                    var _origSet = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
+                    navigator.mediaSession.setActionHandler = function(action, handler) {
+                        return _origSet(action, function(details) {
+                            if (action === 'play' && window._morphUserPaused) {
+                                return; // Suppress web-level unpause if Morph user intentionally paused
+                            }
+                            if (typeof handler === 'function') {
+                                handler(details);
+                            }
+                        });
+                    };
+                }
                 var v = document.querySelector('video');
                 if (v && !v._morphListeners) {
                     v._morphListeners = true;
@@ -2892,7 +3006,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange', 'loadedmetadata', 'canplay'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
                             dismissModalsAndEnableAutoplay();
-                            if ((evt === 'loadedmetadata' || evt === 'canplay') && _morphTransitionPending) {
+                            if ((evt === 'loadedmetadata' || evt === 'canplay') && _morphTransitionPending && !window._morphUserPaused) {
                                 ensureActivePlayback();
                             }
                             if (evt === 'timeupdate') {
@@ -2962,7 +3076,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     // Continuous playback: dismiss any "Still watching?" modals and keep autoplay active
                     v.addEventListener('timeupdate', function() {
                         dismissModalsAndEnableAutoplay();
-                        if (_morphTransitionPending) {
+                        if (_morphTransitionPending && !window._morphUserPaused) {
                             ensureActivePlayback();
                         }
                     });
@@ -2972,7 +3086,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var _morphMutationTimeout = null;
             var observer = new MutationObserver(function() {
                 attachVideoListeners();
-                if (_morphTransitionPending) {
+                if (_morphTransitionPending && !window._morphUserPaused) {
                     ensureActivePlayback();
                 }
                 if (!_morphMutationTimeout) {
@@ -2996,7 +3110,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             setInterval(function() {
                 attachVideoListeners();
                 dismissModalsAndEnableAutoplay();
-                if (_morphTransitionPending) {
+                if (_morphTransitionPending && !window._morphUserPaused) {
                     ensureActivePlayback();
                 }
                 window.morphSendUpdate(false);

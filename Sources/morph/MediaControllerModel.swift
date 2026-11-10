@@ -69,9 +69,29 @@ public final class MediaControllerModel: ObservableObject {
     private var playbackHistory: [YTMPlaylistItem] = []
     private var lastProcessedQueueIds: [String] = []
     private var lastProcessedTrackSignature: String = ""
+    private var lastProcessedTrackTitle: String = ""
+    @Published public var userIntentionallyPaused: Bool = false
     private var stalledPlaybackCount: Int = 0
     private var lastObservedPlaybackTime: Double? = nil
     public var isTestingSimulation: Bool = false
+    
+    public struct TargetTrack: Equatable {
+        public let title: String
+        public let artist: String
+        public let videoId: String?
+        public let thumbnailURL: String?
+        
+        public init(title: String, artist: String, videoId: String? = nil, thumbnailURL: String? = nil) {
+            self.title = title
+            self.artist = artist
+            self.videoId = videoId
+            self.thumbnailURL = thumbnailURL
+        }
+    }
+    @Published public var pendingTargetTrack: TargetTrack? = nil
+    @Published public var trackTransitionLockoutUntil: Date? = nil
+    private var stalePreviousTitle: String = ""
+    private var lastTrackEndedTime: Date? = nil
     
     // Offline status & Downloads management
     public let networkMonitor: NetworkMonitor
@@ -109,6 +129,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isWaitingForBrowserSignIn: Bool = false
     @Published public var browserAuthStatusMessage: String? = nil
     private var searchTask: Task<Void, Never>?
+    public private(set) var activeCatalogQuery: String = ""
     private var trackLoadTask: Task<Void, Never>?
     
     /// User-centric YouTube Music offline tracks (from the user's actual YouTube Music library and queue).
@@ -141,7 +162,7 @@ public final class MediaControllerModel: ObservableObject {
         self.engine = engine
         self.systemAudio = systemAudio
         self.networkMonitor = networkMonitor
-        self.isOffline = !networkMonitor.isConnected || !networkMonitor.isWifiConnected
+        self.isOffline = !networkMonitor.isConnected
         
         let initialCached = YTMUserOfflineStore.shared.getOfflineTracks()
         if !initialCached.isEmpty && !MorphEnvironment.isTestingEnvironment {
@@ -241,11 +262,37 @@ public final class MediaControllerModel: ObservableObject {
                 
                 // If YouTube Music is playing or has track data, prioritize direct engine
                 if !data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0 {
+                    let dataTitleNorm = Self.normalizeTitle(data.title)
+                    
+                    // Exact Track Starting Lockout: prevent stale WebKit updates from previous song from overwriting new track
+                    if let lockout = self.trackTransitionLockoutUntil, Date() < lockout {
+                        if !self.stalePreviousTitle.isEmpty && dataTitleNorm == self.stalePreviousTitle {
+                            // Stale update from prior track: ignore
+                            return
+                        }
+                    }
+                    self.trackTransitionLockoutUntil = nil
+                    self.stalePreviousTitle = ""
+                    self.pendingTargetTrack = nil
+                    
                     let wasPlaying = self.isPlaying
                     self.trackTitle = data.title
                     self.artistName = data.artist.isEmpty ? "YouTube Music" : data.artist
-                    self.albumArtURL = data.albumArtURL
-                    self.isPlaying = data.isPlaying
+                    if let art = data.albumArtURL, !art.isEmpty {
+                        self.albumArtURL = art
+                    }
+                    if self.userIntentionallyPaused {
+                        self.isPlaying = false
+                        if data.isPlaying {
+                            let eng = self.engine
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, self.userIntentionallyPaused, eng.trackData.isPlaying else { return }
+                                eng.pause()
+                            }
+                        }
+                    } else {
+                        self.isPlaying = data.isPlaying
+                    }
                     if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.8 {
                         // In-flight seek-to-zero lockout: protect against stale updates
                         if data.currentTime > 3.0 && data.title == self.trackTitle {
@@ -262,7 +309,7 @@ public final class MediaControllerModel: ObservableObject {
                     self.duration = data.duration
                     
                     // Stalled playback watchdog: if playing and has duration, but currentTime remains frozen at 0:
-                    if data.isPlaying && data.duration > 0 {
+                    if !self.userIntentionallyPaused && data.isPlaying && data.duration > 0 {
                         if data.currentTime <= 0.05 && self.lastObservedPlaybackTime != nil && self.lastObservedPlaybackTime! <= 0.05 {
                             self.stalledPlaybackCount += 1
                             if self.stalledPlaybackCount >= 1 && (!self.isTestingEnvironment || self.isTestingSimulation) {
@@ -278,13 +325,14 @@ public final class MediaControllerModel: ObservableObject {
                     }
                     
                     // Auto-correct YouTube Music player if web player drifted from the correlated volume
-                    if abs(data.volume - self.volume) > 0.08 && !self.isTestingEnvironment && self.duration > 0 {
-                        if self.isDirectEngineActive {
+                    let isIncomingDirectActive = !data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0
+                    if abs(data.volume - self.volume) > 0.08 && !self.isTestingEnvironment && data.duration > 0 {
+                        if isIncomingDirectActive {
                             self.engine.setVolume(self.volume)
                         }
                     }
-                    if data.isMuted != self.isMuted && !self.isTestingEnvironment && self.duration > 0 {
-                        if self.isDirectEngineActive {
+                    if data.isMuted != self.isMuted && !self.isTestingEnvironment && data.duration > 0 {
+                        if isIncomingDirectActive {
                             self.engine.setMuted(self.isMuted)
                         }
                     }
@@ -311,11 +359,15 @@ public final class MediaControllerModel: ObservableObject {
                     self.sourceName = "YouTube Music Direct"
                     self.isDirectEngineConnected = self.engine.isSignedIn || (!data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0) || data.isPlaying
                     
+                    let trackTitleChanged = (!self.lastProcessedTrackTitle.isEmpty && data.title != self.lastProcessedTrackTitle)
+                    self.lastProcessedTrackTitle = data.title
+                    
                     let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
                     let trackChanged = (currentSignature != self.lastProcessedTrackSignature)
                     if queueChanged || trackChanged {
                         // Watchdog: If previous state was playing and new track loaded in paused state at 0s, resume immediately!
-                        if wasPlaying && !data.isPlaying && data.duration > 0 && !self.isTestingEnvironment {
+                        // Guarded: Must be an actual track change (not a play/pause toggle), currentTime <= 1.0, and user did NOT intentionally pause!
+                        if wasPlaying && !data.isPlaying && data.currentTime <= 1.0 && data.duration > 0 && trackTitleChanged && !self.userIntentionallyPaused && !self.isTestingEnvironment {
                             self.engine.ensurePlayback()
                         }
                         self.lastProcessedTrackSignature = currentSignature
@@ -401,6 +453,7 @@ public final class MediaControllerModel: ObservableObject {
         
         // Debounced YouTube Music catalog search driven by the playlist search field.
         $playlistSearchQuery
+            .dropFirst()
             .removeDuplicates()
             .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
             .sink { [weak self] query in
@@ -453,56 +506,80 @@ public final class MediaControllerModel: ObservableObject {
         return String(format: "%d:%02d", mins, secs)
     }
     
+    public var isEffectivelyPlaying: Bool {
+        if userIntentionallyPaused {
+            return false
+        }
+        return isPlaying || engine.trackData.isPlaying
+    }
+    
+    private var lastPlayPauseToggleTime: Date = .distantPast
+    
     public func play() {
+        userIntentionallyPaused = false
         isPlaying = true
-        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
-            engine.play()
-            engine.setVolume(volume)
-            if isMuted {
-                engine.setMuted(true)
-            }
-        } else {
+        engine.play()
+        engine.setVolume(volume)
+        if isMuted {
+            engine.setMuted(true)
+        }
+        if isBrowserConnected && !isDirectEngineActive {
             executeBrowserPlay()
         }
     }
     
     public func pause() {
+        userIntentionallyPaused = true
         isPlaying = false
-        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
-            engine.pause()
-        } else {
+        engine.pause()
+        if isBrowserConnected && !isDirectEngineActive {
             executeBrowserPause()
         }
     }
     
-    public func togglePlayPause() {
-        if isPlaying {
-            pause()
-        } else {
-            play()
-        }
-    }
-    
     public func stop() {
+        userIntentionallyPaused = true
         isPlaying = false
         currentTime = 0
-        if isDirectEngineActive || isDirectEngineConnected || !isBrowserConnected {
-            engine.stop()
-        } else {
+        engine.stop()
+        if isBrowserConnected && !isDirectEngineActive {
             executeBrowserStop()
         }
     }
     
-    public func togglePlay() {
-        if isPlaying {
+    public func togglePlay(force: Bool = false) {
+        let now = Date()
+        if !MorphEnvironment.isTestingEnvironment && !force {
+            guard now.timeIntervalSince(lastPlayPauseToggleTime) > 0.3 else { return }
+            lastPlayPauseToggleTime = now
+        }
+        
+        if isEffectivelyPlaying {
             pause()
         } else {
             play()
         }
     }
     
+    public func togglePlayPause() {
+        togglePlay()
+    }
+    
     public func handleTrackEnded(force: Bool = false) {
         guard (!isTestingEnvironment && !isTestingSimulation) || force else { return }
+        
+        // Exact Track Guarantee: If a new song was just started, ignore any stale ended event from the previous song!
+        if !force, let lockout = trackTransitionLockoutUntil, Date() < lockout {
+            return
+        }
+        
+        // Debounce track ended triggers to prevent double advance
+        let now = Date()
+        if !force, let last = lastTrackEndedTime, now.timeIntervalSince(last) < 1.5 {
+            return
+        }
+        lastTrackEndedTime = now
+        
         if repeatMode == .one {
             currentTime = 0
             lastSeekToZeroTime = Date()
@@ -700,6 +777,7 @@ public final class MediaControllerModel: ObservableObject {
             triggerOfflineHandling(for: vibe)
             return
         }
+        userIntentionallyPaused = false
         isPlaying = true
         engine.playVibe(vibe)
     }
@@ -713,6 +791,7 @@ public final class MediaControllerModel: ObservableObject {
             triggerOfflineHandling(for: query)
             return
         }
+        userIntentionallyPaused = false
         isPlaying = true
         engine.playSearch(query: query)
     }
@@ -811,8 +890,8 @@ public final class MediaControllerModel: ObservableObject {
         Publishers.CombineLatest3(networkMonitor.$isConnected, networkMonitor.$isWifiConnected, engine.$isOffline)
             .sink { [weak self] isConnected, isWifiConnected, engineOffline in
                 guard let self = self else { return }
-                // Detect when user disconnects from Wi-Fi or loses connectivity
-                let currentlyOffline = !isConnected || !isWifiConnected || (engineOffline && !isConnected)
+                // Detect when user loses internet connectivity (works over Wi-Fi, Ethernet, USB, or VPN)
+                let currentlyOffline = !isConnected || (engineOffline && !isConnected)
                 let prevOffline = self.isOffline
                 self.isOffline = currentlyOffline
                 
@@ -934,18 +1013,19 @@ public final class MediaControllerModel: ObservableObject {
         trackLoadTask?.cancel()
         isLoadingTracks = true
         tracksError = nil
+        let eng = engine
         trackLoadTask = Task { @MainActor [weak self] in
-            guard let self = self else { return }
             do {
-                let page = try await self.engine.loadTracks(for: pl)
-                guard !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
+                let page = try await eng.loadTracks(for: pl)
+                guard let self = self, !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
                 self.applyLoadedTracks(page, to: pl)
                 self.tracksError = page.tracks.isEmpty ? "No songs found in this \(pl.kind == .artist ? "artist" : "playlist")." : nil
+                self.isLoadingTracks = false
             } catch {
-                guard !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
+                guard let self = self, !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
                 self.tracksError = error.localizedDescription
+                self.isLoadingTracks = false
             }
-            self.isLoadingTracks = false
         }
     }
     
@@ -1010,12 +1090,57 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func refreshQuickPicks() {
+        let eng = engine
         Task { @MainActor in
-            await engine.refreshQuickPicks()
+            await eng.refreshQuickPicks()
         }
     }
     
-    public func playQuickPick(_ track: YTMPlaylistItem, startRadio: Bool = true) {
+    /// Guaranteed Exact Track Playback:
+    /// Explicitly loads and plays `track` while guaranteeing that:
+    /// 1. Its title, artist, and cover thumbnail are set immediately.
+    /// 2. Stale WebKit updates from previous tracks are ignored.
+    /// 3. In-flight ended events from previous tracks cannot skip to another track.
+    /// 4. Radio automix queues (RDAMVM) are NEVER used to hijack direct playback.
+    public func startExactTrack(_ track: YTMPlaylistItem, listId: String? = nil) {
+        if !trackTitle.isEmpty && trackTitle != "YouTube Music" && Self.normalizeTitle(trackTitle) != Self.normalizeTitle(track.title) {
+            stalePreviousTitle = Self.normalizeTitle(trackTitle)
+            trackTransitionLockoutUntil = Date().addingTimeInterval(2.5)
+        } else {
+            stalePreviousTitle = ""
+            trackTransitionLockoutUntil = nil
+        }
+        
+        trackTitle = track.title
+        artistName = track.artist.isEmpty ? "YouTube Music" : track.artist
+        if let thumb = track.thumbnailURL, !thumb.isEmpty {
+            albumArtURL = thumb
+        }
+        currentTime = 0
+        isPlaying = true
+        userIntentionallyPaused = false
+        
+        pendingTargetTrack = TargetTrack(
+            title: track.title,
+            artist: track.artist,
+            videoId: track.videoId,
+            thumbnailURL: track.thumbnailURL
+        )
+        if trackTransitionLockoutUntil == nil {
+            trackTransitionLockoutUntil = Date().addingTimeInterval(2.5)
+        }
+        
+        if let vid = track.videoId, !vid.isEmpty {
+            engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
+        } else {
+            let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+            if !query.isEmpty {
+                playSearch(query)
+            }
+        }
+    }
+    
+    public func playQuickPick(_ track: YTMPlaylistItem, startRadio: Bool = false) {
         if isOffline {
             triggerOfflineHandling(for: track.title)
             return
@@ -1027,19 +1152,13 @@ public final class MediaControllerModel: ObservableObject {
             }
             return
         }
-        trackTitle = track.title
-        artistName = track.artist.isEmpty ? "YouTube Music" : track.artist
-        albumArtURL = track.thumbnailURL
-        isPlaying = true
-        currentTime = 0
-        duration = 0
         
         for i in 0..<quickPicks.count {
             quickPicks[i].isPlaying = (quickPicks[i].id == track.id || quickPicks[i].videoId == vid)
         }
         
         let radioListId = startRadio ? "RDAMVM\(vid)" : nil
-        engine.play(videoId: vid, listId: radioListId)
+        startExactTrack(track, listId: radioListId)
         syncPlayingTrackWithPlaylists()
     }
     
@@ -1173,9 +1292,13 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func markPlaying(_ item: YTMPlaylistItem) {
+        userIntentionallyPaused = false
         trackTitle = item.title
         if !item.artist.isEmpty {
             artistName = item.artist
+        }
+        if let thumb = item.thumbnailURL, !thumb.isEmpty {
+            albumArtURL = thumb
         }
         currentTime = 0
         isPlaying = true
@@ -1389,13 +1512,13 @@ public final class MediaControllerModel: ObservableObject {
             } else if let matchIdx = playlist.firstIndex(where: { $0.id == item.id || ($0.title == item.title && $0.artist == item.artist) }) {
                 engine.playQueueIndex(matchIdx, videoId: item.videoId, title: item.title, artist: item.artist)
             } else if let vid = item.videoId, !vid.isEmpty {
-                engine.play(videoId: vid, fallbackToRadio: false)
+                startExactTrack(item, listId: nil)
             } else {
                 playSearch("\(item.title) \(item.artist)")
             }
         } else if let vid = item.videoId, !vid.isEmpty {
             // Direct playback of the exact clicked track in the playlist container (without radio hijack)
-            engine.play(videoId: vid, listId: selectedPlaybackListId, fallbackToRadio: false)
+            startExactTrack(item, listId: selectedPlaybackListId)
         } else {
             // Never blindly click random DOM list items on unrelated pages; search and play exact track
             playSearch("\(item.title) \(item.artist)")
@@ -1454,18 +1577,20 @@ public final class MediaControllerModel: ObservableObject {
     
     public func refreshPlaylists() {
         isLoadingPlaylists = true
+        let eng = engine
         Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            await self.engine.refreshLibraryPlaylists()
-            self.isLoadingPlaylists = false
+            await eng.refreshLibraryPlaylists()
+            self?.isLoadingPlaylists = false
         }
     }
     
     // MARK: - YouTube Music catalog search (songs / artists / albums / playlists)
-    func runCatalogSearch(_ rawQuery: String) {
+    public func runCatalogSearch(_ rawQuery: String, allowSingleCharacter: Bool = false) {
         searchTask?.cancel()
         let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard q.count >= 2 else {
+        activeCatalogQuery = q
+        let minLen = allowSingleCharacter ? 1 : 2
+        guard q.count >= minLen else {
             searchResults = []
             isSearchingCatalog = false
             catalogSearchError = nil
@@ -1473,21 +1598,20 @@ public final class MediaControllerModel: ObservableObject {
         }
         isSearchingCatalog = true
         catalogSearchError = nil
+        let eng = engine
         searchTask = Task { @MainActor [weak self] in
-            guard let self = self else { return }
             do {
-                let results = try await self.engine.searchCatalog(q)
-                guard !Task.isCancelled,
-                      self.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
+                let results = try await eng.searchCatalog(q)
+                guard let self = self, !Task.isCancelled, self.activeCatalogQuery == q else { return }
                 self.searchResults = results
                 self.catalogSearchError = results.isEmpty ? "No results on YouTube Music for \"\(q)\"." : nil
+                self.isSearchingCatalog = false
             } catch {
-                guard !Task.isCancelled,
-                      self.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == q else { return }
+                guard let self = self, !Task.isCancelled, self.activeCatalogQuery == q else { return }
                 self.searchResults = []
                 self.catalogSearchError = error.localizedDescription
+                self.isSearchingCatalog = false
             }
-            self.isSearchingCatalog = false
         }
     }
     
@@ -1496,7 +1620,7 @@ public final class MediaControllerModel: ObservableObject {
         let order: [YTMSearchKind] = [.song, .artist, .album, .playlist, .video]
         return order.compactMap { k in
             let items = searchResults.filter { $0.kind == k }
-            return items.isEmpty ? nil : (kind: k, items: Array(items.prefix(k == .song ? 6 : 4)))
+            return items.isEmpty ? nil : (kind: k, items: Array(items.prefix(k == .song ? 8 : 5)))
         }
     }
     
@@ -1509,11 +1633,7 @@ public final class MediaControllerModel: ObservableObject {
         switch result.kind {
         case .song, .video:
             guard let track = result.asTrack else { return }
-            trackTitle = track.title
-            if !track.artist.isEmpty { artistName = track.artist }
-            currentTime = 0
-            isPlaying = true
-            if let vid = track.videoId { engine.play(videoId: vid) }
+            startExactTrack(track)
         case .artist, .album, .playlist:
             if let pl = result.asPlaylist {
                 selectPlaylist(pl)
@@ -1528,12 +1648,17 @@ public final class MediaControllerModel: ObservableObject {
         playlistSearchQuery = query
     }
     
-    public func clearPlaylistSearch() {
+    public func clearCatalogSearch() {
         searchTask?.cancel()
-        playlistSearchQuery = ""
+        activeCatalogQuery = ""
         searchResults = []
         isSearchingCatalog = false
         catalogSearchError = nil
+    }
+    
+    public func clearPlaylistSearch() {
+        playlistSearchQuery = ""
+        clearCatalogSearch()
     }
     
     public var nowPlayingQueuePlaylist: YTMPlaylist {
@@ -1570,6 +1695,8 @@ public final class MediaControllerModel: ObservableObject {
         let qIdx = Int(item.id) ?? playlist.firstIndex(where: { $0.id == item.id })
         if let idx = qIdx {
             engine.playQueueIndex(idx, videoId: item.videoId, title: item.title, artist: item.artist)
+        } else if let vid = item.videoId, !vid.isEmpty {
+            startExactTrack(item, listId: nil)
         } else {
             playSearch(item.title + " " + item.artist)
         }
@@ -1687,7 +1814,7 @@ public final class MediaControllerModel: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self, !self.isTestingEnvironment else { return }
-                    if !self.engine.trackData.isPlaying {
+                    if !self.engine.trackData.isPlaying && !self.userIntentionallyPaused && !self.isDirectEngineActive {
                         await self.pollBrowserState()
                     }
                 }
@@ -1786,13 +1913,13 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func pollBrowserState() async {
-        guard !isTestingEnvironment else { return }
+        guard !isTestingEnvironment, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
         
         // 1. Instant WindowServer Scan (sub-millisecond, covers Polar, Chrome, Safari, etc.)
         let wsDetection = detectYouTubeMusicInWindowServer()
         if wsDetection.found {
             await MainActor.run {
-                guard !self.engine.trackData.isPlaying else { return }
+                guard !self.engine.trackData.isPlaying, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
                 self.isBrowserConnected = true
                 self.isSignedIn = true
                 self.sourceName = "YouTube Music • \(wsDetection.browser)"
@@ -1800,7 +1927,9 @@ public final class MediaControllerModel: ObservableObject {
                 if !wsDetection.trackTitle.isEmpty {
                     self.trackTitle = wsDetection.trackTitle
                     self.artistName = wsDetection.artistName.isEmpty ? "YouTube Music" : wsDetection.artistName
-                    self.isPlaying = true
+                    if !self.userIntentionallyPaused {
+                        self.isPlaying = true
+                    }
                     self.syncPlayingTrackWithPlaylists()
                 } else if self.trackTitle.isEmpty {
                     self.trackTitle = "YouTube Music Connected"
@@ -1812,10 +1941,11 @@ public final class MediaControllerModel: ObservableObject {
         
         // 2. Multi-browser AppleScript Tab Inspection (for scriptable browsers with tabs)
         let scriptResult = await scanScriptableBrowserTabs()
-        guard !isTestingEnvironment, !engine.trackData.isPlaying else { return }
+        guard !isTestingEnvironment, !engine.trackData.isPlaying, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
         
         if scriptResult.found {
             await MainActor.run {
+                guard !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
                 self.isBrowserConnected = true
                 self.isSignedIn = true
                 self.sourceName = "YouTube Music • \(scriptResult.browser)"
@@ -1852,14 +1982,7 @@ public final class MediaControllerModel: ObservableObject {
                     end tell
                     return ""
                     """
-                    var error: NSDictionary?
-                    if let appleScript = NSAppleScript(source: script) {
-                        let res = appleScript.executeAndReturnError(&error).stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                        if !res.isEmpty {
-                            return res
-                        }
-                    }
-                    return nil
+                    return MorphAppleScriptRunner.run(script, timeout: 2.0)
                 }
                 
                 if chromeRunning, let title = runCheck(appName: "Google Chrome") {
@@ -1889,7 +2012,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func parseTabTitle(_ rawTitle: String, source: String) {
-        guard !engine.trackData.isPlaying else { return }
+        guard !engine.trackData.isPlaying, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
         self.sourceName = source
         self.isBrowserConnected = true
         self.isSignedIn = true
@@ -1920,13 +2043,14 @@ public final class MediaControllerModel: ObservableObject {
         } else {
             self.trackTitle = clean
         }
-        self.isPlaying = true
+        if !self.userIntentionallyPaused {
+            self.isPlaying = true
+        }
         self.syncPlayingTrackWithPlaylists()
     }
     
     private func executeBrowserPlayPause() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1945,7 +2069,6 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserPlay() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1964,7 +2087,6 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserPause() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -1983,7 +2105,6 @@ public final class MediaControllerModel: ObservableObject {
     
     private func executeBrowserStop() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        Self.postSystemMediaKey(key: 16)
         let script = """
         tell application "Google Chrome"
             repeat with w in windows
@@ -2142,10 +2263,7 @@ public final class MediaControllerModel: ObservableObject {
         guard !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty else { return }
         
         Task.detached(priority: .utility) {
-            var error: NSDictionary?
-            if let script = NSAppleScript(source: scriptSource) {
-                script.executeAndReturnError(&error)
-            }
+            _ = MorphAppleScriptRunner.run(scriptSource, timeout: 2.5)
         }
     }
 }

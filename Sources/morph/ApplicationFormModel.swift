@@ -5847,30 +5847,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     }
     
     public static func executeAppleScript(_ source: String) -> String? {
-        if let script = NSAppleScript(source: source) {
-            var errorDict: NSDictionary?
-            let desc = script.executeAndReturnError(&errorDict)
-            if errorDict == nil, let val = desc.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !val.isEmpty {
-                return val
-            }
-        }
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", source]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            if proc.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !str.isEmpty {
-                    return str
-                }
-            }
-        } catch {}
-        return nil
+        return MorphAppleScriptRunner.run(source, timeout: 3.0)
     }
 }
 

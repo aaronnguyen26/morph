@@ -183,13 +183,14 @@ public enum YTMParser {
     
     static func musicVideoType(of item: [String: Any]) -> String? {
         firstString(in: item["overlay"], key: "musicVideoType")
+            ?? firstString(in: item, key: "musicVideoType")
     }
     
     /// Parses one `musicResponsiveListItemRenderer` into a playable track.
     static func track(from item: [String: Any], index: Int) -> YTMPlaylistItem? {
         guard let vid = videoId(of: item) else { return nil }
-        let title = runs(flexText(item, 0)).first?["text"] as? String ?? ""
-        guard !title.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        let title = text(flexText(item, 0)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return nil }
         
         var artist = ""
         var duration = ""
@@ -313,7 +314,7 @@ public enum YTMParser {
         }
         for item in collect(doc, key: "musicResponsiveListItemRenderer") {
             let bid = dict(dict(item["navigationEndpoint"])?["browseEndpoint"])?["browseId"] as? String ?? ""
-            let title = runs(flexText(item, 0)).first?["text"] as? String ?? ""
+            let title = text(flexText(item, 0)).trimmingCharacters(in: .whitespacesAndNewlines)
             add(browseId: bid, title: title, subtitle: text(flexText(item, 1)), thumb: thumbnail(item["thumbnail"]))
         }
         return (out, continuation(in: doc))
@@ -338,38 +339,57 @@ public enum YTMParser {
     }
     
     static func searchResult(fromItem item: [String: Any], index: Int) -> YTMSearchResult? {
-        let title = runs(flexText(item, 0)).first?["text"] as? String ?? ""
+        let title = text(flexText(item, 0)).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
-        let subtitle = cleanedSubtitle(text(flexText(item, 1)))
+        let rawByline = text(flexText(item, 1))
+        let bylineSegments = segments(rawByline)
+        let subtitle = cleanedSubtitle(rawByline)
         let thumb = thumbnail(item["thumbnail"])
         
-        if let nav = dict(item["navigationEndpoint"]), let k = kind(forPageType: pageType(of: nav)),
+        if let nav = dict(item["navigationEndpoint"]) ?? dict(item["onTap"]),
+           let k = kind(forPageType: pageType(of: nav)),
            let bid = dict(nav["browseEndpoint"])?["browseId"] as? String {
             return YTMSearchResult(id: "\(k.rawValue):\(bid)", kind: k, title: title, subtitle: subtitle, thumbnailURL: thumb, browseId: bid)
         }
         
         let mvt = musicVideoType(of: item) ?? ""
-        if mvt.contains("PODCAST") { return nil }
+        let leadingType = bylineSegments.first?.lowercased() ?? ""
+        if mvt.contains("PODCAST") || leadingType == "episode" || leadingType == "podcast" { return nil }
         guard let vid = videoId(of: item) else { return nil }
-        let isSong = mvt.isEmpty || mvt.contains("ATV")
+        let isSong = mvt.isEmpty ? (leadingType != "video") : mvt.contains("ATV")
         // Songs show "Artist • Album • 3:45"; keep artist + album and drop durations / play counts.
-        let cleaned = segments(text(flexText(item, 1))).filter { !typeWords.contains($0.lowercased()) && !isDuration($0) && !isPlayCount($0) }
+        let cleaned = bylineSegments.filter { !typeWords.contains($0.lowercased()) && !isDuration($0) && !isPlayCount($0) }
         let sub = cleaned.prefix(2).joined(separator: " • ")
         return YTMSearchResult(id: "\(isSong ? "song" : "video"):\(vid)", kind: isSong ? .song : .video, title: title, subtitle: sub, thumbnailURL: thumb, videoId: vid)
     }
     
     static func searchResult(fromCard card: [String: Any]) -> YTMSearchResult? {
-        let title = runs(card["title"]).first?["text"] as? String ?? ""
+        let header = dict(dict(card["header"])?["musicCardShelfHeaderBasicRenderer"])
+        let titleNode = card["title"] ?? header?["title"]
+        let subtitleNode = card["subtitle"] ?? header?["subtitle"]
+        let title = text(titleNode).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return nil }
-        let subtitle = cleanedSubtitle(text(card["subtitle"]))
+        let subtitleRaw = text(subtitleNode)
+        let subtitle = cleanedSubtitle(subtitleRaw)
         let thumb = thumbnail(card["thumbnail"])
-        let nav = dict(runs(card["title"]).first?["navigationEndpoint"]) ?? dict(card["onTap"])
+        let nav = dict(runs(titleNode).first?["navigationEndpoint"]) ?? dict(card["onTap"])
         if let nav = nav, let bid = dict(nav["browseEndpoint"])?["browseId"] as? String {
             let k = kind(forPageType: pageType(of: nav)) ?? .playlist
             return YTMSearchResult(id: "\(k.rawValue):\(bid)", kind: k, title: title, subtitle: subtitle, thumbnailURL: thumb, browseId: bid)
         }
-        if let vid = dict(nav?["watchEndpoint"])?["videoId"] as? String {
-            return YTMSearchResult(id: "song:\(vid)", kind: .song, title: title, subtitle: subtitle, thumbnailURL: thumb, videoId: vid)
+        let cardOverlay = card["thumbnailOverlay"] ?? card["overlay"]
+        let mvt = firstString(in: nav, key: "musicVideoType")
+            ?? firstString(in: cardOverlay, key: "musicVideoType")
+            ?? ""
+        let leadingType = segments(subtitleRaw).first?.lowercased() ?? ""
+        if mvt.contains("PODCAST") || leadingType == "episode" || leadingType == "podcast" { return nil }
+        if let vid = (dict(nav?["watchEndpoint"])?["videoId"] as? String)
+            ?? firstString(in: nav, key: "videoId")
+            ?? firstString(in: cardOverlay, key: "videoId") {
+            let isSong = mvt.isEmpty ? (leadingType != "video") : mvt.contains("ATV")
+            let cleaned = segments(subtitleRaw).filter { !typeWords.contains($0.lowercased()) && !isDuration($0) && !isPlayCount($0) }
+            let sub = cleaned.prefix(2).joined(separator: " • ")
+            return YTMSearchResult(id: "\(isSong ? "song" : "video"):\(vid)", kind: isSong ? .song : .video, title: title, subtitle: sub, thumbnailURL: thumb, videoId: vid)
         }
         return nil
     }
@@ -381,10 +401,21 @@ public enum YTMParser {
         func push(_ r: YTMSearchResult?) {
             if let r = r, seen.insert(r.id).inserted { results.append(r) }
         }
-        if let card = collect(doc, key: "musicCardShelfRenderer").first {
-            push(searchResult(fromCard: card))
-        }
         var idx = 0
+        if let card = collect(doc, key: "musicCardShelfRenderer").first {
+            let topCard = searchResult(fromCard: card)
+            push(topCard)
+            for item in collect(card["contents"], key: "musicResponsiveListItemRenderer") {
+                if var parsed = searchResult(fromItem: item, index: idx) {
+                    if let artistCard = topCard, artistCard.kind == .artist,
+                       (parsed.kind == .song || parsed.kind == .video), parsed.subtitle.isEmpty {
+                        parsed.subtitle = artistCard.title
+                    }
+                    push(parsed)
+                }
+                idx += 1
+            }
+        }
         for item in collect(doc, key: "musicResponsiveListItemRenderer") {
             push(searchResult(fromItem: item, index: idx))
             idx += 1

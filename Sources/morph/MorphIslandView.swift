@@ -28,6 +28,7 @@ public struct MorphIslandView: View {
     @State private var draftEventColorHex: String = "#3b6fb5"
     @FocusState private var isSpotlightFocused: Bool
     @FocusState private var isPillEditFocused: Bool
+    @FocusState private var isGlassMusicSearchFocused: Bool
     @Namespace private var navTabNamespace
     
     public init(model: NotchModel, onMouseEnter: @escaping () -> Void = {}, onMouseExit: @escaping () -> Void = {}) {
@@ -4010,7 +4011,7 @@ public struct MorphIslandView: View {
                             .foregroundColor(Color.white.opacity(0.65))
                         
                         let currentSec = model.media.currentTime > 0 ? model.media.currentTime : Double(model.glassTrackCurrentSeconds)
-                        let totalDur = max(1, model.media.duration > 0 ? model.media.duration : Double(model.glassTracks.isEmpty ? 180 : model.glassTracks[model.glassTrackIndex].duration))
+                        let totalDur = max(1, model.media.duration > 0 ? model.media.duration : Double(model.currentGlassTrack?.duration ?? 180))
                         Slider(
                             value: Binding(
                                 get: { currentSec },
@@ -4270,20 +4271,48 @@ public struct MorphIslandView: View {
     
     private var glassMusicLibraryView: some View {
         VStack(spacing: 8) {
-            // Search Bar (.find)
+            // Search Bar (searches YouTube Music catalog + user library)
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.70))
+                    .foregroundColor(isGlassMusicSearchFocused ? Color(hex: "#ff7ab8") : Color.white.opacity(0.70))
                 
-                TextField("Search songs and artists", text: $model.glassMusicSearchText)
+                TextField("Search songs, artists, albums", text: $model.glassMusicSearchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundColor(.white)
+                    .focused($isGlassMusicSearchFocused)
+                    .onAppear {
+                        if model.shouldFocusGlassMusicSearch {
+                            model.shouldFocusGlassMusicSearch = false
+                            DispatchQueue.main.async {
+                                isGlassMusicSearchFocused = true
+                            }
+                        }
+                    }
+                    .onChange(of: model.focusGlassMusicSearchRequestID) { _, _ in
+                        if model.shouldFocusGlassMusicSearch {
+                            model.shouldFocusGlassMusicSearch = false
+                            DispatchQueue.main.async {
+                                isGlassMusicSearchFocused = true
+                            }
+                        }
+                    }
+                    .onSubmit {
+                        model.submitGlassMusicSearch()
+                    }
+                
+                if model.media.isSearchingCatalog {
+                    ProgressView()
+                        .scaleEffect(0.55)
+                        .frame(width: 14, height: 14)
+                }
                 
                 if !model.glassMusicSearchText.isEmpty {
                     Button(action: {
                         model.glassMusicSearchText = ""
+                        model.selectGlassPlaylist(nil)
+                        model.media.clearCatalogSearch()
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 12))
@@ -4296,15 +4325,28 @@ public struct MorphIslandView: View {
             .frame(height: 34)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(0.10))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.24), lineWidth: 0.8))
+                    .fill(Color.white.opacity(isGlassMusicSearchFocused ? 0.14 : 0.10))
+                    .overlay(
+                        Capsule().stroke(
+                            isGlassMusicSearchFocused ? Color(hex: "#ff7ab8").opacity(0.55) : Color.white.opacity(0.24),
+                            lineWidth: 0.8
+                        )
+                    )
             )
+            .contentShape(Capsule())
+            .onTapGesture {
+                isGlassMusicSearchFocused = true
+                if let ctrl = MorphController.shared, !MorphEnvironment.isTestingEnvironment {
+                    NSApp.activate(ignoringOtherApps: true)
+                    ctrl.panel.makeKeyAndOrderFront(nil)
+                }
+            }
             
-            // Content
-            if !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                glassLibrarySearchResultsView
-            } else if let selectedPlaylist = model.glassSelectedPlaylist {
+            // Content: opened container (e.g. Artist / Album / Playlist) takes priority so Back returns to search results
+            if let selectedPlaylist = model.glassSelectedPlaylist {
                 glassPlaylistDetailView(playlist: selectedPlaylist)
+            } else if !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                glassLibrarySearchResultsView
             } else {
                 glassPlaylistGridView
             }
@@ -4312,30 +4354,202 @@ public struct MorphIslandView: View {
     }
     
     private var glassLibrarySearchResultsView: some View {
-        let results = model.glassFilteredLibraryTracks
+        let trimmed = model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let localTracks = model.glassFilteredLibraryTracks
+        let catalogGroups = model.media.groupedSearchResults
+        
         return Group {
-            if results.isEmpty {
-                VStack(spacing: 6) {
-                    Spacer()
-                    Text("Nothing in your library matches that")
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.60))
-                    Spacer()
-                }
-            } else {
+            if !localTracks.isEmpty || !catalogGroups.isEmpty {
                 ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(results) { track in
-                            glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
-                                MorphHaptics.levelChange()
-                                model.playGlassLibraryTrack(track)
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        if !localTracks.isEmpty {
+                            glassSearchSectionHeader("IN YOUR LIBRARY")
+                            ForEach(localTracks) { track in
+                                glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
+                                    MorphHaptics.levelChange()
+                                    model.playGlassLibraryTrack(track)
+                                }
                             }
+                        }
+                        
+                        if model.media.isSearchingCatalog && catalogGroups.isEmpty {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 14, height: 14)
+                                Text("Searching YouTube Music...")
+                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.65))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                        }
+                        
+                        ForEach(Array(catalogGroups.enumerated()), id: \.offset) { _, group in
+                            glassSearchSectionHeader(group.kind.sectionTitle.uppercased())
+                            ForEach(group.items) { result in
+                                glassSearchResultRow(result)
+                            }
+                        }
+                        
+                        if catalogGroups.isEmpty, let err = model.media.catalogSearchError, !model.media.isSearchingCatalog {
+                            VStack(spacing: 6) {
+                                Text(err)
+                                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.60))
+                                    .multilineTextAlignment(.center)
+                                Button(action: {
+                                    MorphHaptics.levelChange()
+                                    model.submitGlassMusicSearch()
+                                }) {
+                                    Text("Search YouTube Music Again")
+                                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 5)
+                                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                         }
                     }
                     .padding(.vertical, 2)
                 }
+            } else if model.media.isSearchingCatalog {
+                VStack(spacing: 8) {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Text("Searching YouTube Music for \"\(trimmed)\"...")
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.68))
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: model.media.isOffline ? "wifi.slash" : "magnifyingglass")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.40))
+                    Text(model.media.isOffline
+                         ? "Offline — no local matches for \"\(trimmed)\""
+                         : (model.media.catalogSearchError ?? "No results on YouTube Music for \"\(trimmed)\""))
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                    
+                    if !model.media.isOffline {
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            model.submitGlassMusicSearch()
+                        }) {
+                            Text("Search Again")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 5)
+                                .background(Color.white)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             }
         }
+    }
+    
+    private func glassSearchSectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .heavy, design: .rounded))
+            .foregroundColor(Color.white.opacity(0.45))
+            .tracking(1.2)
+            .padding(.top, 4)
+            .padding(.horizontal, 4)
+    }
+    
+    private func isSearchResultActive(_ result: YTMSearchResult) -> Bool {
+        guard result.kind == .song || result.kind == .video else { return false }
+        let curTitle = model.glassMusicTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let resTitle = result.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !curTitle.isEmpty && !resTitle.isEmpty && curTitle == resTitle
+    }
+    
+    private func glassSearchResultRow(_ result: YTMSearchResult) -> some View {
+        let isCurrentlyPlaying = isSearchResultActive(result)
+        let isPlayable = (result.kind == .song || result.kind == .video)
+        let subtitleText: String = {
+            if !result.subtitle.isEmpty { return result.subtitle }
+            switch result.kind {
+            case .artist: return "Artist"
+            case .album: return "Album"
+            case .playlist: return "Playlist"
+            case .video: return "Video"
+            case .song: return "Song"
+            }
+        }()
+        
+        return Button(action: {
+            MorphHaptics.levelChange()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                model.openGlassSearchResult(result)
+            }
+        }) {
+            HStack(spacing: 10) {
+                glassCoverThumbnail(
+                    url: result.thumbnailURL,
+                    size: 34,
+                    cornerRadius: result.kind == .artist ? 17 : 10,
+                    fallbackIcon: result.kind.iconName
+                )
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(result.title)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Text(subtitleText)
+                        .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.62))
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                if isCurrentlyPlaying {
+                    GlassIslandEqualizerView(isPlaying: model.isGlassMusicPlaying, height: 12, barColor: Color(hex: "#ff7ab8"))
+                        .padding(.trailing, 4)
+                } else {
+                    Image(systemName: isPlayable ? "play.fill" : "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.55))
+                        .padding(.trailing, 4)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isCurrentlyPlaying ? Color.white.opacity(0.18) : Color.white.opacity(0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(
+                                isCurrentlyPlaying ? Color(hex: "#ff7ab8").opacity(0.60) : Color.white.opacity(0.12),
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help(isPlayable ? "Play \(result.title)" : "Open \(result.title)")
     }
     
     private func glassPlaylistDetailView(playlist: YTMPlaylist) -> some View {
@@ -4344,7 +4558,7 @@ public struct MorphIslandView: View {
                 Button(action: {
                     MorphHaptics.levelChange()
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        model.glassSelectedPlaylist = nil
+                        model.selectGlassPlaylist(nil)
                     }
                 }) {
                     Image(systemName: "chevron.left")
@@ -4354,18 +4568,26 @@ public struct MorphIslandView: View {
                         .background(Circle().fill(Color.white.opacity(0.12)))
                 }
                 .buttonStyle(.plain)
-                .help("Back to playlists")
+                .help("Back")
                 
-                glassCoverThumbnail(url: playlist.thumbnailURL, size: 36, cornerRadius: 10)
+                glassCoverThumbnail(
+                    url: playlist.thumbnailURL,
+                    size: 36,
+                    cornerRadius: playlist.kind == .artist ? 18 : 10,
+                    fallbackIcon: playlist.kind == .artist ? "person.fill" : "music.note"
+                )
                 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(playlist.title)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .lineLimit(1)
-                    Text("\(playlist.tracks.count) songs")
+                    Text(model.media.isLoadingTracks && playlist.tracks.isEmpty
+                         ? "Loading songs..."
+                         : (playlist.tracks.isEmpty && !playlist.subtitle.isEmpty ? playlist.subtitle : "\(playlist.tracks.count) songs"))
                         .font(.system(size: 11.5, weight: .regular, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.62))
+                        .lineLimit(1)
                 }
                 
                 Spacer()
@@ -4403,16 +4625,53 @@ public struct MorphIslandView: View {
             }
             .frame(height: 36)
             
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(playlist.tracks) { track in
-                        glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
-                            MorphHaptics.levelChange()
-                            model.playGlassLibraryTrack(track)
+            if model.media.isLoadingTracks && playlist.tracks.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    ProgressView()
+                        .scaleEffect(0.85)
+                    Text("Loading songs...")
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.65))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else if playlist.tracks.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Text(model.media.tracksError ?? "No songs available in this \(playlist.kind == .artist ? "artist" : "playlist").")
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        model.media.loadTracksForSelectedPlaylist()
+                    }) {
+                        Text("Retry")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 5)
+                            .background(Color.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(playlist.tracks) { track in
+                            glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
+                                MorphHaptics.levelChange()
+                                model.playGlassLibraryTrack(track)
+                            }
                         }
                     }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
             }
         }
     }
@@ -4722,7 +4981,7 @@ public struct MorphIslandView: View {
         )
     }
     
-    private func glassCoverThumbnail(url: String?, size: CGFloat, cornerRadius: CGFloat) -> some View {
+    private func glassCoverThumbnail(url: String?, size: CGFloat, cornerRadius: CGFloat, fallbackIcon: String? = nil) -> some View {
         ZStack {
             if let urlStr = url, let imgUrl = URL(string: urlStr) {
                 AsyncImage(url: imgUrl) { phase in
@@ -4730,13 +4989,13 @@ public struct MorphIslandView: View {
                         image.resizable()
                             .aspectRatio(contentMode: .fill)
                     } else {
-                        fallbackGradientTile(size: size, cornerRadius: cornerRadius)
+                        fallbackGradientTile(size: size, cornerRadius: cornerRadius, fallbackIcon: fallbackIcon)
                     }
                 }
                 .frame(width: size, height: size)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             } else {
-                fallbackGradientTile(size: size, cornerRadius: cornerRadius)
+                fallbackGradientTile(size: size, cornerRadius: cornerRadius, fallbackIcon: fallbackIcon)
             }
         }
         .frame(width: size, height: size)
@@ -4746,16 +5005,23 @@ public struct MorphIslandView: View {
         )
     }
     
-    private func fallbackGradientTile(size: CGFloat, cornerRadius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [Color(hex: "#ff5fa8"), Color(hex: "#6a5cff"), Color(hex: "#16d9c5")],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+    private func fallbackGradientTile(size: CGFloat, cornerRadius: CGFloat, fallbackIcon: String? = nil) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Color(hex: "#ff5fa8"), Color(hex: "#6a5cff"), Color(hex: "#16d9c5")],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
-            )
-            .frame(width: size, height: size)
+            if let icon = fallbackIcon {
+                Image(systemName: icon)
+                    .font(.system(size: max(11, size * 0.38), weight: .bold))
+                    .foregroundColor(.white.opacity(0.88))
+            }
+        }
+        .frame(width: size, height: size)
     }
     
     private func glassTrackRow(track: YTMPlaylistItem, isCurrentlyPlaying: Bool, onSelect: @escaping () -> Void) -> some View {

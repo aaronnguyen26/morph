@@ -606,12 +606,21 @@ public final class NotchModel: ObservableObject {
     @Published public var glassMusicSubtab: GlassMusicSubtab = .playing
     @Published public var glassMusicSearchText: String = ""
     @Published public var glassSelectedPlaylist: YTMPlaylist? = nil
+    @Published public var shouldFocusGlassMusicSearch: Bool = false
+    @Published public var focusGlassMusicSearchRequestID: Int = 0
     @Published public var glassTracks: [GlassTrack] = []
     @Published public var glassTrackIndex: Int = 0
     @Published public var glassTrackCurrentSeconds: Int = 0
     @Published public var _simulatedGlassMusicPlaying: Bool = false
+    
+    public var currentGlassTrack: GlassTrack? {
+        guard !glassTracks.isEmpty, glassTrackIndex >= 0, glassTrackIndex < glassTracks.count else {
+            return nil
+        }
+        return glassTracks[glassTrackIndex]
+    }
     public var isGlassMusicPlaying: Bool {
-        get { media.isPlaying || _simulatedGlassMusicPlaying }
+        get { media.isEffectivelyPlaying || _simulatedGlassMusicPlaying }
         set {
             if newValue {
                 media.play()
@@ -1523,8 +1532,8 @@ public final class NotchModel: ObservableObject {
         if media.isBrowserConnected {
             return "YouTube Music Connected"
         }
-        if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
-            return glassTracks[glassTrackIndex].title
+        if let track = currentGlassTrack {
+            return track.title
         }
         return "No Track Playing"
     }
@@ -1536,8 +1545,8 @@ public final class NotchModel: ObservableObject {
         if media.isBrowserConnected {
             return media.sourceName
         }
-        if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
-            return glassTracks[glassTrackIndex].artist
+        if let track = currentGlassTrack {
+            return track.artist
         }
         return media.isSignedIn ? "YouTube Music" : "Sign in to YouTube Music"
     }
@@ -1550,7 +1559,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public var formattedGlassTrackDuration: String {
-        let dur = Int(media.duration > 0 ? media.duration : TimeInterval(glassTracks.isEmpty ? 0 : glassTracks[glassTrackIndex].duration))
+        let dur = Int(media.duration > 0 ? media.duration : TimeInterval(currentGlassTrack?.duration ?? 0))
         if dur <= 0 {
             return "--:--"
         }
@@ -2371,6 +2380,9 @@ public final class NotchModel: ObservableObject {
         }
         if !converted.isEmpty {
             self.glassTracks = converted
+            if glassTrackIndex < 0 || glassTrackIndex >= converted.count {
+                glassTrackIndex = 0
+            }
         }
     }
     
@@ -2412,6 +2424,51 @@ public final class NotchModel: ObservableObject {
             .sink { [weak self] queue in
                 guard let self = self, self.media.quickPicks.isEmpty else { return }
                 self.syncGlassTracks(from: queue)
+            }
+            .store(in: &cancellables)
+            
+        // Automatically sync simulated glass playing state with real playback
+        media.$isPlaying
+            .sink { [weak self] playing in
+                if !playing {
+                    self?._simulatedGlassMusicPlaying = false
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Drive live YouTube Music catalog search from Glass Island music search bar
+        let trimmedGlassMusicSearch = $glassMusicSearchText
+            .dropFirst()
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .removeDuplicates()
+        
+        trimmedGlassMusicSearch
+            .sink { [weak self] trimmed in
+                guard let self = self else { return }
+                if self.glassSelectedPlaylist != nil {
+                    self.selectGlassPlaylist(nil)
+                }
+                if trimmed.count < 2 {
+                    self.media.clearCatalogSearch()
+                }
+            }
+            .store(in: &cancellables)
+        
+        trimmedGlassMusicSearch
+            .debounce(for: .milliseconds(350), scheduler: DispatchQueue.main)
+            .sink { [weak self] trimmed in
+                guard let self = self, trimmed.count >= 2 else { return }
+                guard self.media.activeCatalogQuery != trimmed else { return }
+                self.media.runCatalogSearch(trimmed)
+            }
+            .store(in: &cancellables)
+        
+        media.$selectedPlaylist
+            .sink { [weak self] updated in
+                guard let self = self, let updated = updated else { return }
+                if self.glassSelectedPlaylist?.id == updated.id && self.glassSelectedPlaylist != updated {
+                    self.glassSelectedPlaylist = updated
+                }
             }
             .store(in: &cancellables)
             
@@ -2914,32 +2971,45 @@ public final class NotchModel: ObservableObject {
     
     // MARK: - Glass Island Music Methods
     public func toggleGlassMusicPlay() {
-        if isGlassMusicPlaying {
+        if isGlassMusicPlaying || media.isEffectivelyPlaying {
             media.pause()
             _simulatedGlassMusicPlaying = false
         } else {
-            if media.trackTitle.isEmpty || !media.isPlaying {
-                // If not currently playing, start the active track or first recommendation
-                if !glassTracks.isEmpty && glassTrackIndex < glassTracks.count {
-                    let track = glassTracks[glassTrackIndex]
-                    if let vid = track.videoId, !vid.isEmpty {
-                        media.engine.play(videoId: vid)
-                    } else if !track.title.isEmpty {
-                        media.playSearch("\(track.title) \(track.artist)")
+            var didTriggerPlayback = false
+            if media.trackTitle.isEmpty {
+                // If not currently loaded, start the active Glass track or first recommendation with exact cover/title sync
+                if let track = currentGlassTrack {
+                    let item = YTMPlaylistItem(
+                        id: track.id.uuidString,
+                        title: track.title,
+                        artist: track.artist,
+                        duration: String(format: "%d:%02d", track.duration / 60, track.duration % 60),
+                        isPlaying: true,
+                        videoId: track.videoId,
+                        thumbnailURL: track.thumbnailURL
+                    )
+                    if !track.title.isEmpty || (track.videoId?.isEmpty == false) {
+                        media.startExactTrack(item, listId: nil)
                     } else {
                         media.play()
                     }
+                    didTriggerPlayback = true
                 } else if let firstPick = media.quickPicks.first {
                     media.playQuickPick(firstPick)
+                    didTriggerPlayback = media.isPlaying
                 } else if media.isSignedIn {
                     media.playQuickVibe("supermix")
+                    didTriggerPlayback = true
                 } else {
                     media.openSignIn()
                 }
             } else {
                 media.play()
+                didTriggerPlayback = true
             }
-            _simulatedGlassMusicPlaying = true
+            if didTriggerPlayback || media.isPlaying {
+                _simulatedGlassMusicPlaying = true
+            }
         }
         glassMusicTimer?.invalidate()
         glassMusicTimer = nil
@@ -2959,16 +3029,25 @@ public final class NotchModel: ObservableObject {
     
     public func skipGlassMusic(_ delta: Int = 1) {
         if !glassTracks.isEmpty {
-            glassTrackIndex = (glassTrackIndex + delta + glassTracks.count) % glassTracks.count
-            let track = glassTracks[glassTrackIndex]
-            if let vid = track.videoId, !vid.isEmpty {
-                media.engine.play(videoId: vid)
-            } else if !track.title.isEmpty {
-                media.playSearch("\(track.title) \(track.artist)")
-            } else if delta > 0 {
-                media.nextTrack()
-            } else {
-                media.previousTrack()
+            let safeIndex = (glassTrackIndex >= 0 && glassTrackIndex < glassTracks.count) ? glassTrackIndex : 0
+            glassTrackIndex = (safeIndex + delta + glassTracks.count) % glassTracks.count
+            if let track = currentGlassTrack {
+                let item = YTMPlaylistItem(
+                    id: track.id.uuidString,
+                    title: track.title,
+                    artist: track.artist,
+                    duration: String(format: "%d:%02d", track.duration / 60, track.duration % 60),
+                    isPlaying: true,
+                    videoId: track.videoId,
+                    thumbnailURL: track.thumbnailURL
+                )
+                if !track.title.isEmpty || (track.videoId?.isEmpty == false) {
+                    media.startExactTrack(item, listId: nil)
+                } else if delta > 0 {
+                    media.nextTrack()
+                } else {
+                    media.previousTrack()
+                }
             }
         } else if delta > 0 {
             media.nextTrack()
@@ -2987,7 +3066,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public func seekGlassMusic(to seconds: Int) {
-        let curDur = Double(!glassTracks.isEmpty ? glassTracks[glassTrackIndex].duration : (media.duration > 0 ? Int(media.duration) : 180))
+        let curDur = Double(media.duration > 0 ? Int(media.duration) : (currentGlassTrack?.duration ?? 180))
         let fraction = curDur > 0 ? Double(seconds) / curDur : 0
         media.seek(to: fraction)
         media.currentTime = Double(seconds)
@@ -3000,6 +3079,11 @@ public final class NotchModel: ObservableObject {
     
     public func selectGlassPlaylist(_ playlist: YTMPlaylist?) {
         glassSelectedPlaylist = playlist
+        if let pl = playlist {
+            media.selectPlaylist(pl)
+        } else if media.isLoadingTracks {
+            media.backToPlaylists()
+        }
     }
     
     public var glassAllLibraryTracks: [YTMPlaylistItem] {
@@ -3046,13 +3130,18 @@ public final class NotchModel: ObservableObject {
     public func playGlassLibraryTrack(_ track: YTMPlaylistItem) {
         glassTrackCurrentSeconds = 0
         if let pl = glassSelectedPlaylist {
-            media.selectPlaylist(pl)
+            if media.selectedPlaylist?.id != pl.id {
+                media.selectPlaylist(pl)
+            }
             media.playSongInSelectedPlaylist(track)
+        } else if let vid = track.videoId, !vid.isEmpty, !media.isOffline {
+            media.startExactTrack(track, listId: nil)
         } else {
             media.playQueueTrack(track)
         }
-        _simulatedGlassMusicPlaying = true
-        media.isPlaying = true
+        if !media.isOffline && media.isPlaying {
+            _simulatedGlassMusicPlaying = true
+        }
     }
     
     public func playGlassSelectedPlaylistAll(shuffle: Bool = false) {
@@ -3063,8 +3152,38 @@ public final class NotchModel: ObservableObject {
             media.toggleShuffle()
         }
         media.playEntireSelectedPlaylist()
-        _simulatedGlassMusicPlaying = true
-        media.isPlaying = true
+        if !media.isOffline && media.isPlaying {
+            _simulatedGlassMusicPlaying = true
+        }
+    }
+    
+    public func submitGlassMusicSearch() {
+        let trimmed = glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        glassSelectedPlaylist = nil
+        guard !trimmed.isEmpty else {
+            media.clearCatalogSearch()
+            return
+        }
+        media.runCatalogSearch(trimmed, allowSingleCharacter: true)
+    }
+    
+    public func openGlassSearchResult(_ result: YTMSearchResult) {
+        switch result.kind {
+        case .song, .video:
+            if media.isOffline {
+                media.openSearchResult(result)
+                return
+            }
+            glassTrackCurrentSeconds = 0
+            media.openSearchResult(result)
+            if media.isPlaying {
+                _simulatedGlassMusicPlaying = true
+            }
+        case .artist, .album, .playlist:
+            if let pl = result.asPlaylist {
+                selectGlassPlaylist(pl)
+            }
+        }
     }
     
     // MARK: - Glass Island Notes Methods

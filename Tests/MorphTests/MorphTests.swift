@@ -2490,6 +2490,15 @@ final class MorphTests: XCTestCase {
     // MARK: - Mini Player YouTube Music Sign-In, Data Sync & Calendar Integration Tests
     @MainActor
     func testMiniPlayerYouTubeMusicSignInAndCalendarIntegration() {
+        defer {
+            let shared = YouTubeMusicEngine.shared
+            shared.isSignedIn = false
+            shared.isWaitingForSignInCompletion = false
+            shared.trackData = YTMTrackData()
+            shared.userPlaylists = []
+            shared.quickPicks = YTMParser.defaultQuickPicks
+            shared.libraryError = nil
+        }
         let model = NotchModel()
         model.isExpanded = true
         model.selectedTab = .music

@@ -699,5 +699,240 @@ final class YTMInnerTubeTests: XCTestCase {
         media.openPlayerWindow()
         // Must execute cleanly without error
     }
+    
+    // MARK: - Search Bug Fixes (Parser, Direct HTTP InnerTube, Ethernet, ActiveQuery)
+    
+    func testParseSearchHandlesMultiRunTitlesTopCardContentsVideosAndHeaderFallback() throws {
+        let fixtureResults = YTMParser.parseSearch(try fixture("search"))
+        let cleveland = fixtureResults.first(where: { $0.title == "Cleveland!" })
+        let patientZero = fixtureResults.first(where: { $0.title == "Patient Zero" })
+        XCTAssertNotNil(cleveland, "Songs inside top artist card contents must be parsed")
+        XCTAssertNotNil(patientZero, "All songs inside top artist card contents must be parsed")
+        XCTAssertEqual(cleveland?.subtitle, "Taylor Swift", "Sub-songs inside an artist top card must inherit the artist name")
+        XCTAssertEqual(patientZero?.subtitle, "Taylor Swift")
+        XCTAssertFalse(fixtureResults.contains(where: { $0.title.contains("Candace") || $0.title.contains("Woke Up Alone") }),
+                       "Podcast episodes must be excluded from music search results")
+        
+        let syntheticDoc: [String: Any] = [
+            "contents": [
+                "tabbedSearchResultsRenderer": [
+                    "tabs": [[
+                        "tabRenderer": [
+                            "content": [
+                                "sectionListRenderer": [
+                                    "contents": [
+                                        [
+                                            "musicCardShelfRenderer": [
+                                                "header": [
+                                                    "musicCardShelfHeaderBasicRenderer": [
+                                                        "title": ["runs": [["text": "Featured "], ["text": "Top Hit"]]],
+                                                        "subtitle": ["runs": [["text": "Video"], ["text": " • "], ["text": "Official Artist"], ["text": " • "], ["text": "4:12"], ["text": " • "], ["text": "15M views"]]]
+                                                    ]
+                                                ],
+                                                "onTap": [
+                                                    "watchEndpoint": [
+                                                        "videoId": "TOPVID123",
+                                                        "watchEndpointMusicSupportedConfigs": [
+                                                            "watchEndpointMusicConfig": [
+                                                                "musicVideoType": "MUSIC_VIDEO_TYPE_OMV"
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ],
+                                        [
+                                            "itemSectionRenderer": [
+                                                "contents": [
+                                                    [
+                                                        "musicResponsiveListItemRenderer": [
+                                                            "flexColumns": [
+                                                                [
+                                                                    "musicResponsiveListItemFlexColumnRenderer": [
+                                                                        "text": ["runs": [["text": "Part One "], ["text": "(Acoustic)"]]]
+                                                                    ]
+                                                                ],
+                                                                [
+                                                                    "musicResponsiveListItemFlexColumnRenderer": [
+                                                                        "text": ["runs": [["text": "Song"], ["text": " • "], ["text": "Duo Artist"], ["text": " • "], ["text": "3:15"]]]
+                                                                    ]
+                                                                ]
+                                                            ],
+                                                            "playlistItemData": ["videoId": "SONG_MULTI"]
+                                                        ]
+                                                    ],
+                                                    [
+                                                        "musicResponsiveListItemRenderer": [
+                                                            "flexColumns": [
+                                                                [
+                                                                    "musicResponsiveListItemFlexColumnRenderer": [
+                                                                        "text": ["runs": [["text": "Live Clip"]]]
+                                                                    ]
+                                                                ],
+                                                                [
+                                                                    "musicResponsiveListItemFlexColumnRenderer": [
+                                                                        "text": ["runs": [["text": "Video"], ["text": " • "], ["text": "Clip Artist"], ["text": " • "], ["text": "2:50"], ["text": " • "], ["text": "9M views"]]]
+                                                                    ]
+                                                                ]
+                                                            ],
+                                                            "overlay": [
+                                                                "musicItemThumbnailOverlayRenderer": [
+                                                                    "content": [
+                                                                        "musicPlayButtonRenderer": [
+                                                                            "playNavigationEndpoint": [
+                                                                                "watchEndpoint": [
+                                                                                    "videoId": "VID_CLIP_1",
+                                                                                    "watchEndpointMusicSupportedConfigs": [
+                                                                                        "watchEndpointMusicConfig": [
+                                                                                            "musicVideoType": "MUSIC_VIDEO_TYPE_UGC"
+                                                                                        ]
+                                                                                    ]
+                                                                                ]
+                                                                            ]
+                                                                        ]
+                                                                    ]
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]]
+                ]
+            ]
+        ]
+        let parsed = YTMParser.parseSearch(syntheticDoc)
+        let top = parsed.first(where: { $0.videoId == "TOPVID123" })
+        XCTAssertEqual(top?.title, "Featured Top Hit")
+        XCTAssertEqual(top?.kind, .video, "OMV top card must classify as .video")
+        XCTAssertEqual(top?.subtitle, "Official Artist", "Card subtitle must strip type words, duration, and view counts")
+        
+        let multiSong = parsed.first(where: { $0.videoId == "SONG_MULTI" })
+        XCTAssertEqual(multiSong?.title, "Part One (Acoustic)", "Multi-run song title must be joined completely")
+        XCTAssertEqual(multiSong?.kind, .song)
+        XCTAssertEqual(multiSong?.subtitle, "Duo Artist")
+        
+        let clip = parsed.first(where: { $0.videoId == "VID_CLIP_1" })
+        XCTAssertEqual(clip?.kind, .video, "UGC video list item must classify as .video")
+        XCTAssertEqual(clip?.subtitle, "Clip Artist")
+    }
+    
+    @MainActor
+    func testDirectHTTPInnerTubeSearchAndBrowseWhenWebKitNotReady() async throws {
+        actor RequestLog {
+            var requests: [URLRequest] = []
+            func append(_ req: URLRequest) { requests.append(req) }
+            func all() -> [URLRequest] { requests }
+        }
+        
+        let searchData = try JSONSerialization.data(withJSONObject: try fixture("search"))
+        let playlistData = try JSONSerialization.data(withJSONObject: try fixture("playlist"))
+        let recorder = RequestLog()
+        
+        let engine = YouTubeMusicEngine()
+        engine.urlSessionOverride = { request in
+            await recorder.append(request)
+            let urlStr = request.url?.absoluteString ?? ""
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if urlStr.contains("/youtubei/v1/browse") {
+                return (playlistData, response)
+            }
+            return (searchData, response)
+        }
+        
+        // Search must succeed immediately even though engine's WKWebView never loaded music.youtube.com
+        let results = try await engine.searchCatalog("taylor swift")
+        XCTAssertFalse(results.isEmpty)
+        XCTAssertTrue(results.contains(where: { $0.title == "Taylor Swift" && $0.kind == .artist }))
+        XCTAssertTrue(results.contains(where: { $0.title == "Cleveland!" && $0.kind == .song }))
+        
+        // Browse must succeed over direct HTTP fallback as well
+        let pl = YTMPlaylist(id: "PLtest", title: "Test", browseId: "VLPLtest", kind: .playlist)
+        let page = try await engine.loadTracks(for: pl)
+        XCTAssertGreaterThanOrEqual(page.tracks.count, 5)
+        
+        let recorded = await recorder.all()
+        XCTAssertGreaterThanOrEqual(recorded.count, 2, "Expected search + browse requests (plus optional continuation)")
+        let searchReq = recorded[0]
+        XCTAssertEqual(searchReq.url?.absoluteString, "https://music.youtube.com/youtubei/v1/search?prettyPrint=false")
+        XCTAssertEqual(searchReq.value(forHTTPHeaderField: "X-Youtube-Client-Name"), "67")
+        let bodyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: searchReq.httpBody ?? Data()) as? [String: Any])
+        XCTAssertEqual(bodyJSON["query"] as? String, "taylor swift")
+        let ctx = try XCTUnwrap((bodyJSON["context"] as? [String: Any])?["client"] as? [String: Any])
+        XCTAssertEqual(ctx["clientName"] as? String, "WEB_REMIX")
+        XCTAssertTrue(recorded.dropFirst().allSatisfy { $0.url?.absoluteString == "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false" })
+        
+        // Verify HTTP error status surfaces cleanly
+        engine.urlSessionOverride = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
+            return (Data(), response)
+        }
+        do {
+            _ = try await engine.searchCatalog("error case")
+            XCTFail("Expected HTTP 500 error to be thrown")
+        } catch let error as YouTubeMusicEngine.InnerTubeError {
+            if case .http(let status) = error {
+                XCTAssertEqual(status, 500)
+            } else {
+                XCTFail("Expected .http(500), got \(error)")
+            }
+        }
+    }
+    
+    @MainActor
+    func testWiredEthernetConnectionEnablesSearchAndOnlineMode() {
+        let networkMonitor = NetworkMonitor()
+        networkMonitor.setConnectedForTesting(true, wifi: false)
+        
+        XCTAssertTrue(networkMonitor.isConnected)
+        XCTAssertFalse(networkMonitor.isWifiConnected)
+        
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: MockSystemAudioService(), networkMonitor: networkMonitor)
+        
+        XCTAssertFalse(media.isOffline, "Wired Ethernet / USB-tethered Macs (isConnected=true, isWifiConnected=false) must NOT be treated as offline")
+        XCTAssertTrue(media.availableRightDeckSections.contains(.search))
+        XCTAssertFalse(media.availableRightDeckSections.contains(.downloads))
+        
+        networkMonitor.setConnectedForTesting(false)
+        XCTAssertTrue(media.isOffline)
+        
+        networkMonitor.setConnectedForTesting(true, wifi: false)
+        XCTAssertFalse(media.isOffline, "Reconnecting via Ethernet must restore online mode")
+    }
+    
+    @MainActor
+    func testMediaControllerSingleCharSubmitAndQueueTrackVideoId() async throws {
+        let (media, _) = try makeStubbedModel()
+        media.runCatalogSearch("Q", allowSingleCharacter: true)
+        await waitUntil { !media.isSearchingCatalog && !media.searchResults.isEmpty }
+        XCTAssertFalse(media.searchResults.isEmpty, "Direct runCatalogSearch(allowSingleCharacter: true) must populate results even without mutating playlistSearchQuery")
+        XCTAssertNil(media.catalogSearchError)
+        
+        let item = YTMPlaylistItem(id: "external_song_id", title: "Cruel Summer", artist: "Taylor Swift", videoId: "aC9HkZW2hZk", thumbnailURL: "https://example.com/art.jpg")
+        media.playQueueTrack(item)
+        XCTAssertEqual(media.trackTitle, "Cruel Summer")
+        XCTAssertEqual(media.artistName, "Taylor Swift")
+        XCTAssertTrue(media.isPlaying)
+    }
+    
+    @MainActor
+    func testDirectPlaybackScriptsClearUserPausedFlag() {
+        let engine = YouTubeMusicEngine()
+        
+        engine.playQueueIndex(0, videoId: "abc", title: "Track", artist: "Artist")
+        XCTAssertTrue(engine.lastEvaluatedScript?.contains("window._morphUserPaused = false;") == true)
+        
+        engine.playPlaylistSong(index: 0)
+        XCTAssertTrue(engine.lastEvaluatedScript?.contains("window._morphUserPaused = false;") == true)
+        
+        engine.playEntirePlaylist()
+        XCTAssertTrue(engine.lastEvaluatedScript?.contains("window._morphUserPaused = false;") == true)
+    }
 }
 

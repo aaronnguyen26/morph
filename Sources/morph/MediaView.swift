@@ -284,16 +284,25 @@ public struct MediaView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 8.5, weight: .medium, design: .rounded))
                 .foregroundColor(theme.textPrimary)
-                .onSubmit {
-                    let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        media.playSearch(trimmed)
+                .focused($songSearchFocused)
+                .onAppear { songSearchFocused = true }
+                .onChange(of: searchQuery) { _, newValue in
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    media.playlistSearchQuery = newValue
+                    if trimmed.isEmpty {
+                        media.clearCatalogSearch()
+                    } else if !media.isOffline && media.rightDeckSection != .search {
+                        media.selectRightDeckSection(.search)
                     }
+                }
+                .onSubmit {
+                    submitLeftDeckSearch()
                 }
             
             if !searchQuery.isEmpty {
                 Button(action: {
                     searchQuery = ""
+                    media.clearPlaylistSearch()
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 8))
@@ -303,10 +312,7 @@ public struct MediaView: View {
             }
             
             Button(action: {
-                let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    media.playSearch(trimmed)
-                }
+                submitLeftDeckSearch()
             }) {
                 Text("Search")
                     .font(.system(size: 7.5, weight: .bold))
@@ -326,6 +332,18 @@ public struct MediaView: View {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .stroke(theme.hairlineBorder, lineWidth: 0.5)
         )
+    }
+    
+    private func submitLeftDeckSearch() {
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if media.isOffline {
+            media.triggerOfflineHandling(for: trimmed)
+            return
+        }
+        media.playlistSearchQuery = trimmed
+        media.selectRightDeckSection(.search)
+        media.runCatalogSearch(trimmed, allowSingleCharacter: true)
     }
     
     // 1. Album Art & Metadata
@@ -391,6 +409,9 @@ public struct MediaView: View {
             }
         }
         .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Album cover for \(media.trackTitle.isEmpty ? "Current Track" : media.trackTitle) by \(media.artistName.isEmpty ? "YouTube Music" : media.artistName)")
+        .accessibilityAddTraits(.isImage)
     }
     
     private var trackActionPills: some View {
@@ -398,6 +419,12 @@ public struct MediaView: View {
             Button(action: {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                     isSearching.toggle()
+                    songSearchFocused = isSearching
+                    if isSearching && !media.isOffline {
+                        if media.rightDeckSection != .search && media.selectedPlaylist == nil {
+                            media.selectRightDeckSection(.search)
+                        }
+                    }
                 }
             }) {
                 Image(systemName: isSearching ? "xmark.circle.fill" : "magnifyingglass")
@@ -554,6 +581,19 @@ public struct MediaView: View {
                 Text(media.formattedDuration)
                     .font(.system(size: 8, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.textTertiary)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback Scrubber")
+        .accessibilityValue("\(effectiveCurrentTime) of \(media.formattedDuration)")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                media.seekRelative(deltaSeconds: 5)
+            case .decrement:
+                media.seekRelative(deltaSeconds: -5)
+            @unknown default:
+                break
             }
         }
     }
@@ -755,6 +795,23 @@ public struct MediaView: View {
             Text("\(Int(effectiveVolume * 100))%")
                 .font(.system(size: 7.5, weight: .medium, design: .monospaced))
                 .foregroundColor(theme.textTertiary)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Volume Control")
+        .accessibilityValue("\(Int(effectiveVolume * 100)) percent")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                let newVol = min(1.0, media.volume + 0.05)
+                media.setVolume(newVol)
+                media.triggerVolumeHUD()
+            case .decrement:
+                let newVol = max(0.0, media.volume - 0.05)
+                media.setVolume(newVol)
+                media.triggerVolumeHUD()
+            @unknown default:
+                break
+            }
         }
     }
     
@@ -1015,12 +1072,12 @@ public struct MediaView: View {
         
         return Button(action: {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                media.playQuickPick(track, startRadio: true)
+                media.playQuickPick(track, startRadio: false)
             }
         }) {
             HStack(spacing: 7) {
                 // Artwork thumbnail with squircle
-                artworkThumb(url: track.thumbnailURL, size: 24, fallbackIcon: "music.note")
+                artworkThumb(url: track.thumbnailURL, size: 24, fallbackIcon: "music.note", accessibilityTitle: track.title)
                 
                 // Track metadata
                 VStack(alignment: .leading, spacing: 1) {
@@ -1179,7 +1236,7 @@ public struct MediaView: View {
         }) {
             HStack(spacing: 6) {
                 // Artwork thumbnail
-                artworkThumb(url: track.thumbnailURL, size: 22, fallbackIcon: "music.note")
+                artworkThumb(url: track.thumbnailURL, size: 22, fallbackIcon: "music.note", accessibilityTitle: track.title)
                 
                 // Track metadata
                 VStack(alignment: .leading, spacing: 1) {
@@ -1483,7 +1540,7 @@ public struct MediaView: View {
                 .onSubmit {
                     let q = media.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !q.isEmpty {
-                        media.runCatalogSearch(q)
+                        media.runCatalogSearch(q, allowSingleCharacter: true)
                     }
                 }
             
@@ -1540,6 +1597,13 @@ public struct MediaView: View {
                         .multilineTextAlignment(.center)
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity)
+                } else if media.searchResults.isEmpty && media.playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("Type a song, artist, album, or playlist to search YouTube Music.")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundColor(theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
                 }
                 
                 ForEach(Array(media.groupedSearchResults.enumerated()), id: \.offset) { _, group in
@@ -1570,7 +1634,7 @@ public struct MediaView: View {
             }
         }) {
             HStack(spacing: 8) {
-                artworkThumb(url: result.thumbnailURL, size: 26, circle: result.kind == .artist, fallbackIcon: result.kind.iconName)
+                artworkThumb(url: result.thumbnailURL, size: 26, circle: result.kind == .artist, fallbackIcon: result.kind.iconName, accessibilityTitle: result.title)
                 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(result.title)
@@ -1604,7 +1668,7 @@ public struct MediaView: View {
         .help(result.kind == .song || result.kind == .video ? "Play \(result.title)" : "Open \(result.title)")
     }
     
-    private func artworkThumb(url: String?, size: CGFloat, circle: Bool = false, fallbackIcon: String) -> some View {
+    private func artworkThumb(url: String?, size: CGFloat, circle: Bool = false, fallbackIcon: String, accessibilityTitle: String? = nil) -> some View {
         let shape = RoundedRectangle(cornerRadius: circle ? size / 2 : 6, style: .continuous)
         return ZStack {
             shape
@@ -1630,6 +1694,12 @@ public struct MediaView: View {
             }
         }
         .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            accessibilityTitle.map { "\($0) artwork" }
+            ?? "Album cover for \(media.trackTitle.isEmpty ? "Current Track" : media.trackTitle) by \(media.artistName.isEmpty ? "YouTube Music" : media.artistName)"
+        )
+        .accessibilityAddTraits(.isImage)
     }
     
     private var quickPicksPlaylistCardRow: some View {
@@ -2128,7 +2198,7 @@ public struct MediaView: View {
                             .foregroundColor(theme.textPrimary)
                             .frame(width: 14)
                     } else if let thumb = song.thumbnailURL {
-                        artworkThumb(url: thumb, size: 20, fallbackIcon: "music.note")
+                        artworkThumb(url: thumb, size: 20, fallbackIcon: "music.note", accessibilityTitle: song.title)
                     } else {
                         Text("\(index + 1)")
                             .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -2189,6 +2259,8 @@ public struct MediaView: View {
         }
         .buttonStyle(.plain)
         .help("Play \(song.title)")
+        .accessibilityLabel("\(song.title) by \(song.artist.isEmpty ? "YouTube Music" : song.artist)")
+        .accessibilityHint("Plays this song.")
         .contextMenu {
             Button(action: {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {

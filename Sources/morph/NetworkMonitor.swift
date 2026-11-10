@@ -16,10 +16,11 @@ public final class NetworkMonitor: ObservableObject {
         didSet {
             if let override = overrideIsConnected {
                 self.isConnected = override
-                self.isWifiConnected = override
+                self.isWifiConnected = overrideIsWifiConnected ?? override
             }
         }
     }
+    private var overrideIsWifiConnected: Bool? = nil
     
     private var monitor: NWPathMonitor?
     private let monitorQueue = DispatchQueue(label: "com.morph.networkmonitor", qos: .utility)
@@ -38,7 +39,7 @@ public final class NetworkMonitor: ObservableObject {
                 guard let self = self else { return }
                 if let override = self.overrideIsConnected {
                     self.isConnected = override
-                    self.isWifiConnected = override
+                    self.isWifiConnected = self.overrideIsWifiConnected ?? override
                 } else {
                     let satisfied = (path.status == .satisfied)
                     self.isConnected = satisfied
@@ -57,9 +58,10 @@ public final class NetworkMonitor: ObservableObject {
         monitor = nil
     }
     
-    public func setConnectedForTesting(_ connected: Bool) {
+    public func setConnectedForTesting(_ connected: Bool, wifi: Bool? = nil) {
+        self.overrideIsWifiConnected = wifi
         self.overrideIsConnected = connected
         self.isConnected = connected
-        self.isWifiConnected = connected
+        self.isWifiConnected = wifi ?? connected
     }
 }

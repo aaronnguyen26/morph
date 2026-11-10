@@ -41,9 +41,20 @@ public final class ShortcutManager: NSObject, ObservableObject {
         
         setupMainMenu()
         setupKeyboardMonitors()
+        setupBackgroundMediaKeyTap()
+        NowPlayingManager.shared.configure(media: model.media)
     }
     
     public func removeMonitors() {
+        if let port = eventTapPort {
+            CGEvent.tapEnable(tap: port, enable: false)
+            CFMachPortInvalidate(port)
+            eventTapPort = nil
+        }
+        if let source = eventTapRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            eventTapRunLoopSource = nil
+        }
         if let local = localKeyMonitor {
             NSEvent.removeMonitor(local)
             localKeyMonitor = nil
@@ -237,21 +248,268 @@ public final class ShortcutManager: NSObject, ObservableObject {
         NSApplication.shared.mainMenu = mainMenu
     }
     
+    // MARK: - Global CGEventTap (Background Media & Function Keys)
+    private var eventTapPort: CFMachPort?
+    private var eventTapRunLoopSource: CFRunLoopSource?
+    
+    public func setupBackgroundMediaKeyTap() {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        guard eventTapPort == nil else { return }
+        
+        // Listen to keyDown (type 10) and systemDefined (type 14)
+        let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << 14)
+        let selfPointer = Unmanaged.passUnretained(self).toOpaque()
+        
+        let callback: CGEventTapCallBack = { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
+            guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+            let manager = Unmanaged<ShortcutManager>.fromOpaque(refcon).takeUnretainedValue()
+            return manager.handleBackgroundTapEvent(proxy: proxy, type: type, event: event)
+        }
+        
+        var tapPort = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: selfPointer
+        )
+        if tapPort == nil {
+            tapPort = CGEvent.tapCreate(
+                tap: .cghidEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: mask,
+                callback: callback,
+                userInfo: selfPointer
+            )
+        }
+        if tapPort == nil {
+            tapPort = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .listenOnly,
+                eventsOfInterest: mask,
+                callback: callback,
+                userInfo: selfPointer
+            )
+        }
+        if tapPort == nil {
+            tapPort = CGEvent.tapCreate(
+                tap: .cghidEventTap,
+                place: .headInsertEventTap,
+                options: .listenOnly,
+                eventsOfInterest: mask,
+                callback: callback,
+                userInfo: selfPointer
+            )
+        }
+        
+        if let port = tapPort {
+            self.eventTapPort = port
+            let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
+            self.eventTapRunLoopSource = source
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            CGEvent.tapEnable(tap: port, enable: true)
+        }
+    }
+    
+    private var isSwallowingCurrentMediaTap: Bool = false
+    
+    @discardableResult
+    public func handleBackgroundTapEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let port = eventTapPort {
+                CGEvent.tapEnable(tap: port, enable: true)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        
+        // 1. NSSystemDefined (type 14) - Hardware Media Keys (F7, F8, F9, NX_KEYTYPE_PLAY = 16)
+        if type.rawValue == 14 {
+            if let nsEvent = NSEvent(cgEvent: event), nsEvent.subtype.rawValue == 8 {
+                let data1 = nsEvent.data1
+                let keyCode = Int32((data1 & 0xFFFF0000) >> 16)
+                let keyFlags = Int32(data1 & 0x0000FFFF)
+                let isKeyDown = (((keyFlags & 0xFF00) >> 8)) == 0xA
+                
+                switch keyCode {
+                case 16: // NX_KEYTYPE_PLAY (F8 Play / Pause)
+                    if isKeyDown {
+                        let wasPlaying = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true)
+                        isSwallowingCurrentMediaTap = wasPlaying
+                        executeOnMainSync {
+                            self.togglePlayPause()
+                        }
+                        if wasPlaying {
+                            return nil // Swallowed so other players don't react and macOS doesn't echo
+                        }
+                    } else if isSwallowingCurrentMediaTap {
+                        isSwallowingCurrentMediaTap = false
+                        return nil // Swallow the keyUp corresponding to the swallowed keyDown
+                    }
+                case 17, 19: // NX_KEYTYPE_NEXT / NX_KEYTYPE_FAST (F9 Next)
+                    let wasPlaying = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true)
+                    if isKeyDown {
+                        executeOnMainSync {
+                            self.nextTrack()
+                        }
+                    }
+                    if wasPlaying {
+                        return nil
+                    }
+                case 18, 20: // NX_KEYTYPE_PREVIOUS / NX_KEYTYPE_REWIND (F7 Previous)
+                    let wasPlaying = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true)
+                    if isKeyDown {
+                        executeOnMainSync {
+                            self.prevTrack()
+                        }
+                    }
+                    if wasPlaying {
+                        return nil
+                    }
+                default:
+                    break
+                }
+            }
+        }
+        // 2. KeyDown (type 10) - Function Keys (Fn+F7/F8/F9 or standard F7/F8/F9)
+        else if type == .keyDown {
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            let flags = event.flags
+            let isCmd = flags.contains(.maskCommand)
+            let isCtrl = flags.contains(.maskControl)
+            let isOpt = flags.contains(.maskAlternate)
+            
+            if !isCmd && !isCtrl && !isOpt {
+                switch keyCode {
+                case 100: // F8 Function Key
+                    let wasPlaying = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true)
+                    executeOnMainSync {
+                        self.togglePlayPause()
+                    }
+                    if wasPlaying {
+                        return nil
+                    }
+                case 101: // F9 Function Key
+                    let wasPlaying = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true)
+                    executeOnMainSync {
+                        self.nextTrack()
+                    }
+                    if wasPlaying {
+                        return nil
+                    }
+                case 98: // F7 Function Key
+                    let wasPlaying = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true)
+                    executeOnMainSync {
+                        self.prevTrack()
+                    }
+                    if wasPlaying {
+                        return nil
+                    }
+                default:
+                    break
+                }
+            }
+        }
+        
+        return Unmanaged.passUnretained(event)
+    }
+    
+    private func executeOnMainSync(_ action: @escaping @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                action()
+            }
+        } else {
+            DispatchQueue.main.async {
+                action()
+            }
+        }
+    }
+    
     // MARK: - Key Event Monitors
     private func setupKeyboardMonitors() {
-        // Local Monitor: Captures key events directed to Morph
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+        // Local Monitor: Captures key events and hardware media keys directed to Morph
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .systemDefined]) { [weak self] event in
             guard let self = self else { return event }
+            if event.type == .systemDefined {
+                if self.handleSystemDefinedEvent(event) {
+                    return nil
+                }
+                return event
+            }
             if self.handleKeyEvent(event) {
                 return nil // Event consumed
             }
             return event
         }
         
-        // Global Monitor: Captures global hotkeys from anywhere on macOS
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+        // Global Monitor: Captures global hotkeys and hardware media keys from anywhere on macOS
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .systemDefined]) { [weak self] event in
             guard let self = self else { return }
+            if event.type == .systemDefined {
+                // If active CGEventTap is installed, it already intercepts and swallows systemDefined events
+                guard self.eventTapPort == nil else { return }
+                Task { @MainActor in
+                    self.handleSystemDefinedEvent(event)
+                }
+                return
+            }
+            if self.eventTapPort != nil {
+                let keyCode = event.keyCode
+                if keyCode == 98 || keyCode == 100 || keyCode == 101 {
+                    // Function keys F7, F8, F9 already handled and swallowed by event tap
+                    return
+                }
+            }
             self.handleGlobalKeyEvent(event)
+        }
+    }
+    
+    // MARK: - Hardware Media Keys Handling (.systemDefined NX_KEYTYPE events)
+    /// Handles physical Mac keyboard media keys (F7, F8, F9, volume, mute) sent via NSEvent.EventType.systemDefined
+    @discardableResult
+    public func handleSystemDefinedEvent(_ event: NSEvent) -> Bool {
+        guard event.type == .systemDefined, event.subtype.rawValue == 8 else { return false }
+        
+        let data1 = event.data1
+        let keyCode = Int32((data1 & 0xFFFF0000) >> 16)
+        let keyFlags = Int32(data1 & 0x0000FFFF)
+        let isKeyDown = (((keyFlags & 0xFF00) >> 8)) == 0xA
+        
+        guard isKeyDown else { return false }
+        
+        switch keyCode {
+        case 16: // NX_KEYTYPE_PLAY (F8 Play / Pause)
+            togglePlayPause()
+            lastTriggeredShortcut = (model?.media.isEffectivelyPlaying == true || model?.isGlassMusicPlaying == true) ? "F8 Playing" : "F8 Paused"
+            return true
+            
+        case 17, 19: // NX_KEYTYPE_NEXT / NX_KEYTYPE_FAST (F9 Next Track)
+            nextTrack()
+            lastTriggeredShortcut = "F9 Next"
+            return true
+            
+        case 18, 20: // NX_KEYTYPE_PREVIOUS / NX_KEYTYPE_REWIND (F7 Previous Track)
+            prevTrack()
+            lastTriggeredShortcut = "F7 Previous"
+            return true
+            
+        case 0: // NX_KEYTYPE_SOUND_UP
+            volUp()
+            return true
+            
+        case 1: // NX_KEYTYPE_SOUND_DOWN
+            volDown()
+            return true
+            
+        case 7: // NX_KEYTYPE_MUTE
+            toggleMute()
+            return true
+            
+        default:
+            return false
         }
     }
     
@@ -279,7 +537,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
             }
             if isF8 {
                 togglePlayPause()
-                lastTriggeredShortcut = model.media.isPlaying ? "F8 Playing" : "F8 Paused"
+                lastTriggeredShortcut = (model.media.isEffectivelyPlaying || model.isGlassMusicPlaying) ? "F8 Playing" : "F8 Paused"
                 return true
             }
             if isF9 {
@@ -571,6 +829,9 @@ public final class ShortcutManager: NSObject, ObservableObject {
         // 4. YouTube Music & Media Direct Controls (active when not typing in a text field)
         if !isCmd && !isCtrl && !isOpt && !isEditingText && !model.isCommandBarPresented {
             let isMusicContext: Bool = {
+                if model.isGlassIslandEnabled {
+                    return model.glassIslandState == .music
+                }
                 if model.selectedTab == .music { return true }
                 if model.compactHUDMode == .mediaOnly { return true }
                 if case .music = model.activeIntermediaryStage { return true }
@@ -909,11 +1170,75 @@ public final class ShortcutManager: NSObject, ObservableObject {
         lastTriggeredShortcut = "⌘R Synced"
     }
     
+    private var lastPlayPauseShortcutTime: Date = .distantPast
+    private var lastResolvedAction: String = ""
+    private var lastCommandTimestamp: Date = .distantPast
+    public var forceDebounceInTests: Bool = false
+    
     // Playback Controls
     @objc public func togglePlayPause() {
         guard let model = model else { return }
-        model.media.togglePlay()
-        lastTriggeredShortcut = model.media.isPlaying ? "⌘⏎ Playing" : "⌘⏎ Paused"
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastCommandTimestamp)
+        if !MorphEnvironment.isTestingEnvironment || forceDebounceInTests {
+            // Guard against duplicate event echos from media key monitors & mediaremoted XPC dispatch
+            guard elapsed >= 0.65 else { return }
+        }
+        
+        let isCurrentlyPlaying = model.isGlassMusicPlaying || model.media.isEffectivelyPlaying
+        if isCurrentlyPlaying {
+            pauseMusic()
+        } else {
+            playMusic()
+        }
+    }
+    
+    @objc public func pauseMusic() {
+        guard let model = model else { return }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastCommandTimestamp)
+        if !MorphEnvironment.isTestingEnvironment || forceDebounceInTests {
+            // Duplicate pause suppression
+            if lastResolvedAction == "pause" && elapsed < 0.65 {
+                return
+            }
+        }
+        
+        lastCommandTimestamp = now
+        lastResolvedAction = "pause"
+        lastPlayPauseShortcutTime = now
+        
+        model.media.pause()
+        model._simulatedGlassMusicPlaying = false
+        lastTriggeredShortcut = "F8 Paused"
+    }
+    
+    @objc public func playMusic() {
+        guard let model = model else { return }
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastCommandTimestamp)
+        if !MorphEnvironment.isTestingEnvironment || forceDebounceInTests {
+            // Duplicate play suppression
+            if lastResolvedAction == "play" && elapsed < 0.65 {
+                return
+            }
+            // Strict Directional Lockout: If user just paused, do NOT allow an in-flight toggle/play echo to resurrect playback!
+            if lastResolvedAction == "pause" && elapsed < 0.65 {
+                return
+            }
+        }
+        
+        lastCommandTimestamp = now
+        lastResolvedAction = "play"
+        lastPlayPauseShortcutTime = now
+        
+        if !model.media.trackTitle.isEmpty {
+            model.media.play()
+            model._simulatedGlassMusicPlaying = true
+        } else {
+            model.toggleGlassMusicPlay()
+        }
+        lastTriggeredShortcut = "F8 Playing"
     }
     
     @objc public func nextTrack() {
@@ -983,7 +1308,12 @@ public final class ShortcutManager: NSObject, ObservableObject {
     
     @objc public func openMusicSearch() {
         guard let model = model else { return }
-        if model.media.selectedPlaylist != nil {
+        if model.isGlassIslandEnabled {
+            model.setGlassIslandState(.music)
+            model.setGlassMusicSubtab(.library)
+            model.shouldFocusGlassMusicSearch = true
+            model.focusGlassMusicSearchRequestID += 1
+        } else if model.media.selectedPlaylist != nil {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                 model.media.isSearchingSongs = true
             }

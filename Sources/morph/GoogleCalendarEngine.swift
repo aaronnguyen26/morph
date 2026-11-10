@@ -239,12 +239,8 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         end tell
         """
         
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: chromeScript) {
-            let output = scriptObject.executeAndReturnError(&error)
-            if error == nil && output.booleanValue {
-                return true
-            }
+        if MorphAppleScriptRunner.runBoolean(chromeScript, timeout: 2.5) {
+            return true
         }
         
         // Check Safari for existing Google Calendar / Accounts tabs and activate/reuse
@@ -266,12 +262,8 @@ public final class GoogleCalendarEngine: NSObject, ObservableObject, WKNavigatio
         end tell
         """
         
-        var safariError: NSDictionary?
-        if let safariScriptObject = NSAppleScript(source: safariScript) {
-            let output = safariScriptObject.executeAndReturnError(&safariError)
-            if safariError == nil && output.booleanValue {
-                return true
-            }
+        if MorphAppleScriptRunner.runBoolean(safariScript, timeout: 2.5) {
+            return true
         }
         
         return false
