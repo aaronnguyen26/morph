@@ -92,6 +92,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var trackTransitionLockoutUntil: Date? = nil
     private var stalePreviousTitle: String = ""
     private var lastTrackEndedTime: Date? = nil
+    private var playResumeLockoutUntil: Date? = nil
     
     // Offline status & Downloads management
     public let networkMonitor: NetworkMonitor
@@ -282,6 +283,7 @@ public final class MediaControllerModel: ObservableObject {
                         self.albumArtURL = art
                     }
                     if self.userIntentionallyPaused {
+                        self.playResumeLockoutUntil = nil
                         self.isPlaying = false
                         if data.isPlaying {
                             let eng = self.engine
@@ -290,8 +292,21 @@ public final class MediaControllerModel: ObservableObject {
                                 eng.pause()
                             }
                         }
+                    } else if data.isPlaying {
+                        self.isPlaying = true
+                    } else if let lockout = self.playResumeLockoutUntil, Date() < lockout {
+                        // Hold resumed UI state and nudge WebKit out of offscreen buffering/suspension while unpausing settles
+                        self.isPlaying = true
+                        if !self.isTestingEnvironment || self.isTestingSimulation {
+                            let eng = self.engine
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.userIntentionallyPaused, let activeLock = self.playResumeLockoutUntil, Date() < activeLock else { return }
+                                eng.ensurePlayback()
+                            }
+                        }
                     } else {
-                        self.isPlaying = data.isPlaying
+                        self.playResumeLockoutUntil = nil
+                        self.isPlaying = false
                     }
                     if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.8 {
                         // In-flight seek-to-zero lockout: protect against stale updates
@@ -517,6 +532,7 @@ public final class MediaControllerModel: ObservableObject {
     
     public func play() {
         userIntentionallyPaused = false
+        playResumeLockoutUntil = Date().addingTimeInterval(1.8)
         isPlaying = true
         engine.play()
         engine.setVolume(volume)
@@ -526,24 +542,35 @@ public final class MediaControllerModel: ObservableObject {
         if isBrowserConnected && !isDirectEngineActive {
             executeBrowserPlay()
         }
+        if !isTestingEnvironment {
+            NowPlayingManager.shared.updateNowPlayingInfo()
+        }
     }
     
     public func pause() {
+        playResumeLockoutUntil = nil
         userIntentionallyPaused = true
         isPlaying = false
         engine.pause()
         if isBrowserConnected && !isDirectEngineActive {
             executeBrowserPause()
         }
+        if !isTestingEnvironment {
+            NowPlayingManager.shared.updateNowPlayingInfo()
+        }
     }
     
     public func stop() {
+        playResumeLockoutUntil = nil
         userIntentionallyPaused = true
         isPlaying = false
         currentTime = 0
         engine.stop()
         if isBrowserConnected && !isDirectEngineActive {
             executeBrowserStop()
+        }
+        if !isTestingEnvironment {
+            NowPlayingManager.shared.updateNowPlayingInfo()
         }
     }
     
@@ -1119,6 +1146,7 @@ public final class MediaControllerModel: ObservableObject {
         currentTime = 0
         isPlaying = true
         userIntentionallyPaused = false
+        playResumeLockoutUntil = Date().addingTimeInterval(1.8)
         
         pendingTargetTrack = TargetTrack(
             title: track.title,
@@ -2050,75 +2078,77 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private func executeBrowserPlayPause() {
-        guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "document.querySelector('video') ? (document.querySelector('video').paused ? document.querySelector('video').play() : document.querySelector('video').pause()) : null;"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs(
+            "var v = document.querySelector('video'); if (v) { if (v.paused || v.ended) { v.play(); } else { v.pause(); } }"
+        )
     }
     
     private func executeBrowserPlay() {
-        guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "var v = document.querySelector('video'); if (v && v.paused) { v.play(); }"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs(
+            "(function() { var p = document.getElementById('movie_player') || document.querySelector('#movie_player'); if (p && typeof p.playVideo === 'function') { try { p.playVideo(); } catch(e) {} } var v = document.querySelector('video'); if (v && (v.paused || v.ended)) { var pr = v.play(); if (pr && typeof pr.catch === 'function') { pr.catch(function(){ var b = document.querySelector('ytmusic-player-bar #play-pause-button, #play-pause-button'); if (b) { var l = (b.getAttribute('aria-label') || b.getAttribute('title') || '').toLowerCase(); if ((l.indexOf('play') !== -1 || l.indexOf('ph\\u00e1t') !== -1 || l.indexOf('resume') !== -1) && l.indexOf('pause') === -1) { b.click(); } } }); } } })();"
+        )
     }
     
     private func executeBrowserPause() {
-        guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); }"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs(
+            "(function() { var p = document.getElementById('movie_player') || document.querySelector('#movie_player'); if (p && typeof p.pauseVideo === 'function') { try { p.pauseVideo(); } catch(e) {} } var v = document.querySelector('video'); if (v && !v.paused) { v.pause(); } })();"
+        )
     }
     
     private func executeBrowserStop() {
+        runBrowserJavaScriptAcrossTabs(
+            "(function() { var p = document.getElementById('movie_player') || document.querySelector('#movie_player'); if (p && typeof p.stopVideo === 'function') { try { p.stopVideo(); } catch(e) {} } var v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = 0; } })();"
+        )
+    }
+    
+    private func runBrowserJavaScriptAcrossTabs(_ jsCode: String) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "var v = document.querySelector('video'); if (v) { v.pause(); v.currentTime = 0; }"
-                        end try
-                    end if
+        let escapedJS = jsCode
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+        let chromiumApps: [(bundleId: String, appName: String)] = [
+            ("com.google.Chrome", "Google Chrome"),
+            ("com.brave.Browser", "Brave Browser"),
+            ("com.microsoft.edgemac", "Microsoft Edge"),
+            ("company.thebrowser.Browser", "Arc")
+        ]
+        var appScripts: [String] = []
+        for entry in chromiumApps where !NSRunningApplication.runningApplications(withBundleIdentifier: entry.bundleId).isEmpty {
+            appScripts.append("""
+            tell application "\(entry.appName)"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if (URL of t) contains "music.youtube.com" then
+                            try
+                                execute t javascript "\(escapedJS)"
+                            end try
+                        end if
+                    end repeat
                 end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+            end tell
+            """)
+        }
+        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty {
+            appScripts.append("""
+            tell application "Safari"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if (URL of t) contains "music.youtube.com" then
+                            try
+                                do JavaScript "\(escapedJS)" in t
+                            end try
+                        end if
+                    end repeat
+                end repeat
+            end tell
+            """)
+        }
+        guard !appScripts.isEmpty else { return }
+        let combinedScript = appScripts.joined(separator: "\n")
+        Task.detached(priority: .utility) {
+            _ = MorphAppleScriptRunner.run(combinedScript, timeout: 2.5)
+        }
     }
     
     private func executeBrowserNextTrack() {

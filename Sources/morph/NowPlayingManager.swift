@@ -56,7 +56,7 @@ public final class NowPlayingManager: NSObject, ObservableObject {
         commandCenter.togglePlayPauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.addTarget { _ in
             Task { @MainActor in
-                ShortcutManager.shared.togglePlayPause()
+                ShortcutManager.shared.performTogglePlayPause(fromRemoteCommand: true)
             }
             return .success
         }
@@ -64,7 +64,7 @@ public final class NowPlayingManager: NSObject, ObservableObject {
         commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.addTarget { _ in
             Task { @MainActor in
-                ShortcutManager.shared.playMusic()
+                ShortcutManager.shared.performPlayMusic(fromRemoteCommand: true)
             }
             return .success
         }
@@ -72,7 +72,7 @@ public final class NowPlayingManager: NSObject, ObservableObject {
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.pauseCommand.addTarget { _ in
             Task { @MainActor in
-                ShortcutManager.shared.pauseMusic()
+                ShortcutManager.shared.performPauseMusic(fromRemoteCommand: true)
             }
             return .success
         }
@@ -80,7 +80,7 @@ public final class NowPlayingManager: NSObject, ObservableObject {
         commandCenter.stopCommand.isEnabled = true
         commandCenter.stopCommand.addTarget { [weak manager] _ in
             Task { @MainActor [weak manager] in
-                ShortcutManager.shared.pauseMusic()
+                ShortcutManager.shared.performPauseMusic(fromRemoteCommand: true)
                 manager?.media?.stop()
             }
             return .success

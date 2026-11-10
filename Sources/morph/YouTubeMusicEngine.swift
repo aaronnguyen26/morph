@@ -331,6 +331,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public private(set) var webView: WKWebView!
     private var playerWindow: NSWindow?
     private var windowDelegate: PlayerWindowDelegate?
+    private var resumeRetryWorkItems: [DispatchWorkItem] = []
+    private var isResumeRequested: Bool = false
     
     private let kHandlerName = "morphYTM"
     private let kYTMURL = "https://music.youtube.com"
@@ -602,6 +604,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists,
             isSignedIn: self.isSignedIn
         )
+        if playing {
+            self.isResumeRequested = false
+        }
         
         // Auto-sync playlists and quick picks immediately when transitioning from not signed in to signed in
         if self.isSignedIn && !previousSignedIn {
@@ -774,27 +779,60 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     // MARK: - Direct Playback Commands
+    private func cancelResumeRetries() {
+        for item in resumeRetryWorkItems {
+            item.cancel()
+        }
+        resumeRetryWorkItems.removeAll()
+    }
+    
+    private func scheduleResumeRetries() {
+        cancelResumeRetries()
+        isResumeRequested = true
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        for delay in [0.25, 0.65, 1.25] {
+            let workItem = DispatchWorkItem { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self = self, self.isResumeRequested else { return }
+                    self.ensurePlaybackAndSync()
+                }
+            }
+            resumeRetryWorkItems.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+    }
+    
+    public func ensurePlaybackAndSync() {
+        ensurePlayback()
+        evaluate("if (typeof window.morphSendUpdate === 'function') { window.morphSendUpdate(true); }")
+    }
+    
     public func play() {
+        isResumeRequested = true
         trackData.isPlaying = true
         let script = """
         (function() {
             window._morphUserPaused = false;
-            var didPlay = false;
+            window._morphPauseLockoutUntil = 0;
+            window._morphResumeLockoutUntil = Date.now() + 1400;
+            if (typeof dismissModalsAndEnableAutoplay === 'function') {
+                dismissModalsAndEnableAutoplay();
+            }
+            if (typeof window._morphResumeAudioContexts === 'function') {
+                window._morphResumeAudioContexts();
+            }
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.playVideo === 'function') {
                 try {
                     p.playVideo();
-                    didPlay = true;
                 } catch(e) {}
             }
             var v = document.querySelector('video');
-            if (v && v.paused) {
+            if (v && (v.paused || v.ended)) {
                 var wasMuted = v.muted;
                 var playPromise = v.play();
                 if (playPromise !== undefined) {
-                    playPromise.then(function() {
-                        didPlay = true;
-                    }).catch(function() {
+                    playPromise.catch(function() {
                         // WebKit autoplay rejection: unlock via muted autoplay then restore mute state
                         v.muted = true;
                         v.play().then(function() {
@@ -803,21 +841,23 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             }, 150);
                         }).catch(function(){});
                     });
-                } else {
-                    didPlay = true;
                 }
             }
-            // Strict player-bar play button targeting: only click if direct play did not start
-            if (!didPlay) {
+            // Only click player-bar play button if playback genuinely did not start and the control says Play (never click a Pause button)
+            var isActuallyPlaying = (v && !v.paused && !v.ended) || (p && typeof p.getPlayerState === 'function' && p.getPlayerState() === 1);
+            if (!isActuallyPlaying) {
                 var btn = document.querySelector('ytmusic-player-bar #play-pause-button') ||
                           document.querySelector('#play-pause-button') ||
                           document.querySelector('ytmusic-player-bar tp-yt-paper-icon-button#play-pause-button') ||
                           document.querySelector('ytmusic-player-bar [aria-label*="Play" i]') ||
                           document.querySelector('ytmusic-player-bar [aria-label*="Phát" i]');
                 if (btn) {
-                    var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '').toLowerCase();
-                    if (label.indexOf('play') !== -1 || label.indexOf('phát') !== -1) {
-                        btn.click();
+                    var innerBtn = btn.querySelector('button, #button') || btn;
+                    var label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || innerBtn.getAttribute('aria-label') || innerBtn.getAttribute('title') || '').toLowerCase();
+                    var saysPause = label.indexOf('pause') !== -1 || label.indexOf('tạm dừng') !== -1 || label.indexOf('stop') !== -1;
+                    var saysPlay = label.indexOf('play') !== -1 || label.indexOf('phát') !== -1 || label.indexOf('resume') !== -1;
+                    if (saysPlay && !saysPause) {
+                        (innerBtn || btn).click();
                     }
                 }
             }
@@ -828,25 +868,31 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     firstPlay.click();
                 }
             }
+            if (typeof startTransitionWatchdog === 'function') {
+                startTransitionWatchdog();
+            }
             if (navigator.mediaSession) {
                 navigator.mediaSession.playbackState = 'playing';
             }
             if (typeof window.morphSendUpdate === 'function') {
+                window.morphSendUpdate(true);
                 setTimeout(function() { window.morphSendUpdate(true); }, 50);
             }
         })();
         """
         evaluate(script)
+        scheduleResumeRetries()
     }
     
     public func pause() {
+        isResumeRequested = false
+        cancelResumeRetries()
         trackData.isPlaying = false
-        if #available(macOS 11.3, *) {
-            webView.pauseAllMediaPlayback()
-        }
         let script = """
         (function() {
             window._morphUserPaused = true;
+            window._morphResumeLockoutUntil = 0;
+            window._morphPauseLockoutUntil = Date.now() + 1400;
             _morphTransitionPending = false;
             _morphWasPlayingBeforeTransition = false;
             if (typeof _morphTransitionTimer !== 'undefined' && _morphTransitionTimer) {
@@ -876,17 +922,21 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         })();
         """
         evaluate(script)
-    }
-    
-    public func stop() {
-        trackData.isPlaying = false
-        trackData.currentTime = 0
         if #available(macOS 11.3, *) {
             webView.pauseAllMediaPlayback()
         }
+    }
+    
+    public func stop() {
+        isResumeRequested = false
+        cancelResumeRetries()
+        trackData.isPlaying = false
+        trackData.currentTime = 0
         let script = """
         (function() {
             window._morphUserPaused = true;
+            window._morphResumeLockoutUntil = 0;
+            window._morphPauseLockoutUntil = Date.now() + 1400;
             _morphTransitionPending = false;
             _morphWasPlayingBeforeTransition = false;
             if (typeof _morphTransitionTimer !== 'undefined' && _morphTransitionTimer) {
@@ -913,6 +963,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         })();
         """
         evaluate(script)
+        if #available(macOS 11.3, *) {
+            webView.pauseAllMediaPlayback()
+        }
     }
     
     public func togglePlay() {
@@ -928,6 +981,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         (function() {
             if (window._morphUserPaused) return;
             try {
+                if (typeof window._morphResumeAudioContexts === 'function') {
+                    window._morphResumeAudioContexts();
+                }
                 if (typeof dismissModalsAndEnableAutoplay === 'function') {
                     dismissModalsAndEnableAutoplay();
                 }
@@ -1811,6 +1867,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let script = """
         (function() {
             window._morphUserPaused = false;
+            window._morphPauseLockoutUntil = 0;
+            window._morphResumeLockoutUntil = Date.now() + 1400;
+            if (typeof window._morphResumeAudioContexts === 'function') {
+                window._morphResumeAudioContexts();
+            }
             var vid = '\(vid)';
             var listId = \(listArg);
             
@@ -1883,8 +1944,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         """
         
         // If webView is already on music.youtube.com, evaluate the script
+        trackData.isPlaying = true
         if let host = webView.url?.host, host.hasSuffix("music.youtube.com") {
             evaluate(script)
+            scheduleResumeRetries()
         } else {
             // Initial cold load: construct full watch URL
             var comps = URLComponents(string: "https://music.youtube.com/watch")!
@@ -1901,9 +1964,15 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
 
     public func playPlaylistSong(index: Int) {
+        trackData.isPlaying = true
         let script = """
         (function() {
             window._morphUserPaused = false;
+            window._morphPauseLockoutUntil = 0;
+            window._morphResumeLockoutUntil = Date.now() + 1400;
+            if (typeof window._morphResumeAudioContexts === 'function') {
+                window._morphResumeAudioContexts();
+            }
             var items = document.querySelectorAll('ytmusic-responsive-list-item-renderer');
             if (items && items.length > \(index)) {
                 var target = items[\(index)];
@@ -1918,12 +1987,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         })();
         """
         evaluate(script)
+        scheduleResumeRetries()
     }
     
     public func playEntirePlaylist() {
+        trackData.isPlaying = true
         let script = """
         (function() {
             window._morphUserPaused = false;
+            window._morphPauseLockoutUntil = 0;
+            window._morphResumeLockoutUntil = Date.now() + 1400;
+            if (typeof window._morphResumeAudioContexts === 'function') {
+                window._morphResumeAudioContexts();
+            }
             var playBtn = document.querySelector('ytmusic-play-button-renderer #button, ytmusic-responsive-header-renderer #play-button, #play-button, tp-yt-paper-button.play-button');
             if (playBtn) {
                 var inner = playBtn.querySelector('button, #button');
@@ -1941,6 +2017,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         })();
         """
         evaluate(script)
+        scheduleResumeRetries()
     }
     
     public func playSearch(query: String) {
@@ -1949,11 +2026,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
               let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://music.youtube.com/search?q=\(encoded)") else { return }
         
+        trackData.isPlaying = true
         self.webView.load(URLRequest(url: url))
         
         // Auto-click the first playable track or album in search results
         let autoPlayScript = """
         window._morphUserPaused = false;
+        window._morphPauseLockoutUntil = 0;
+        window._morphResumeLockoutUntil = Date.now() + 1400;
         var checkCount = 0;
         var checkInterval = setInterval(function() {
             checkCount++;
@@ -2409,6 +2489,45 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     });
                 }
             } catch(e) {}
+            
+            // 6. Track Web Audio API AudioContexts so Morph can resume suspended contexts on F8 resume
+            try {
+                window._morphAudioContexts = window._morphAudioContexts || [];
+                window._morphResumeAudioContexts = function() {
+                    try {
+                        var list = window._morphAudioContexts || [];
+                        for (var i = 0; i < list.length; i++) {
+                            var ctx = list[i];
+                            if (ctx && ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+                                ctx.resume().catch(function(){});
+                            }
+                        }
+                    } catch(e) {}
+                };
+                var _morphWrapAudioCtx = function(OrigCtor) {
+                    if (!OrigCtor || OrigCtor._morphWrapped) return OrigCtor;
+                    var Wrapped = function() {
+                        var instance = Reflect.construct(OrigCtor, arguments, new.target || Wrapped);
+                        try {
+                            if (window._morphAudioContexts.length > 8) {
+                                window._morphAudioContexts.shift();
+                            }
+                            window._morphAudioContexts.push(instance);
+                        } catch(e) {}
+                        return instance;
+                    };
+                    Wrapped.prototype = OrigCtor.prototype;
+                    try { Object.setPrototypeOf(Wrapped, OrigCtor); } catch(e) {}
+                    Wrapped._morphWrapped = true;
+                    return Wrapped;
+                };
+                if (typeof window.AudioContext === 'function') {
+                    window.AudioContext = _morphWrapAudioCtx(window.AudioContext);
+                }
+                if (typeof window.webkitAudioContext === 'function') {
+                    window.webkitAudioContext = _morphWrapAudioCtx(window.webkitAudioContext);
+                }
+            } catch(e) {}
         })();
         """
     }
@@ -2819,6 +2938,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             function ensureActivePlayback() {
                 if (window._morphUserPaused) return;
                 try {
+                    if (typeof window._morphResumeAudioContexts === 'function') {
+                        window._morphResumeAudioContexts();
+                    }
                     dismissModalsAndEnableAutoplay();
                     var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
                     var v = document.querySelector('video');
@@ -2988,8 +3110,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     var _origSet = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
                     navigator.mediaSession.setActionHandler = function(action, handler) {
                         return _origSet(action, function(details) {
-                            if (action === 'play' && window._morphUserPaused) {
+                            if (action === 'play' && (window._morphUserPaused || Date.now() < (window._morphPauseLockoutUntil || 0))) {
                                 return; // Suppress web-level unpause if Morph user intentionally paused
+                            }
+                            if ((action === 'pause' || action === 'stop') && !window._morphUserPaused && Date.now() < (window._morphResumeLockoutUntil || 0)) {
+                                return; // Suppress OS/WebKit.GPU TogglePlayPause bounce right after Morph resumed playback
                             }
                             if (typeof handler === 'function') {
                                 handler(details);
@@ -3006,6 +3131,21 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange', 'loadedmetadata', 'canplay'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
                             dismissModalsAndEnableAutoplay();
+                            if (evt === 'play' && (window._morphUserPaused || Date.now() < (window._morphPauseLockoutUntil || 0))) {
+                                try {
+                                    v.pause();
+                                    var pLock = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                                    if (pLock && typeof pLock.pauseVideo === 'function') {
+                                        pLock.pauseVideo();
+                                    }
+                                } catch(e) {}
+                                window.morphSendUpdate(true);
+                                return;
+                            }
+                            if (evt === 'pause' && !window._morphUserPaused && Date.now() < (window._morphResumeLockoutUntil || 0)) {
+                                ensureActivePlayback();
+                                return;
+                            }
                             if ((evt === 'loadedmetadata' || evt === 'canplay') && _morphTransitionPending && !window._morphUserPaused) {
                                 ensureActivePlayback();
                             }

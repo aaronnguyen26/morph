@@ -480,18 +480,37 @@ final class MusicPlayerAccessibilityAndPlaybackTests: XCTestCase {
     }
     
     func testBackgroundTapPassesThroughWhenMusicIsNotPlaying() {
-        // Given Morph is not playing
-        model.media.pause()
+        // Given Morph is genuinely idle (no active or paused media session)
+        mockEngine.trackData = YTMTrackData()
+        model.media.trackTitle = ""
+        model.media.artistName = ""
+        model.media.duration = 0
+        model.media.isPlaying = false
+        model.media.userIntentionallyPaused = false
+        model.media.isDirectEngineConnected = false
+        model.media.isBrowserConnected = false
+        model._simulatedGlassMusicPlaying = false
+        model.isExpanded = false
+        model.activeBackgroundTaskPill = .none
         XCTAssertFalse(model.media.isEffectivelyPlaying)
+        XCTAssertFalse(shortcutManager.hasControllableMediaSession(for: model))
         
-        let cgEvent = makeSystemDefinedCGEvent(key: 16, down: true)
         let dummyProxy = unsafeBitCast(Unmanaged.passUnretained(self).toOpaque(), to: CGEventTapProxy.self)
+        let cgDown = makeSystemDefinedCGEvent(key: 16, down: true)
+        let cgUp = makeSystemDefinedCGEvent(key: 16, down: false)
+        let fnDown = makeKeyDownCGEvent(keyCode: 100)
         
-        // When F8 is clicked while Morph is idle
-        let result = shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: CGEventType(rawValue: 14)!, event: cgEvent)
+        // When F8 is clicked while Morph owns no media session
+        let resultDown = shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: CGEventType(rawValue: 14)!, event: cgDown)
+        let resultUp = shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: CGEventType(rawValue: 14)!, event: cgUp)
+        let resultFn = shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: .keyDown, event: fnDown)
         
-        // Then event is passed through to let other system players handle it
-        XCTAssertNotNil(result, "Background F8 event must pass through when Morph is not playing")
+        // Then events pass through untouched to let other system players handle them without starting Morph
+        XCTAssertNotNil(resultDown, "Background F8 keyDown must pass through when Morph has no active or paused session")
+        XCTAssertNotNil(resultUp, "Background F8 keyUp must pass through when Morph has no active or paused session")
+        XCTAssertNotNil(resultFn, "Background virtual F8 must pass through when Morph has no active or paused session")
+        XCTAssertFalse(model.media.isPlaying, "Pass-through F8 must not hijack Morph playback when idle")
+        XCTAssertFalse(model.isGlassMusicPlaying)
     }
     
     // MARK: - 8. Regression Tests for Background F8 Lag / Watchdog Loop Prevention
@@ -759,5 +778,166 @@ final class MusicPlayerAccessibilityAndPlaybackTests: XCTestCase {
         let timedOut = MorphAppleScriptRunner.run("delay 5", timeout: 0.2)
         XCTAssertNil(timedOut)
         XCTAssertLessThan(Date().timeIntervalSince(start), 2.0)
+    }
+    
+    // MARK: - 11. Background F8 Resume After Pause & Anti-Bounce Verification
+    
+    func testBackgroundTapF8PauseThenResumeSystemMediaKeyRoundTrip() {
+        // Given Morph is collapsed in the background and playing a loaded track
+        model.isExpanded = false
+        model.media.trackTitle = "Night Dancer"
+        model.media.artistName = "imase"
+        model.media.duration = 210.0
+        model.media.play()
+        XCTAssertTrue(model.media.isPlaying)
+        XCTAssertTrue(model.media.isEffectivelyPlaying)
+        XCTAssertTrue(shortcutManager.hasControllableMediaSession(for: model))
+        
+        let dummyProxy = unsafeBitCast(Unmanaged.passUnretained(self).toOpaque(), to: CGEventTapProxy.self)
+        let tapType = CGEventType(rawValue: 14)!
+        
+        // 1. User presses hardware F8 in background -> pauses & swallows both down & up
+        let f8Down1 = makeSystemDefinedCGEvent(key: 16, down: true)
+        let f8Up1 = makeSystemDefinedCGEvent(key: 16, down: false)
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: tapType, event: f8Down1))
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: tapType, event: f8Up1))
+        XCTAssertFalse(model.media.isPlaying)
+        XCTAssertTrue(model.media.userIntentionallyPaused)
+        XCTAssertFalse(model.isGlassMusicPlaying)
+        XCTAssertFalse(mockEngine.trackData.isPlaying)
+        XCTAssertEqual(shortcutManager.lastTriggeredShortcut, "F8 Paused")
+        
+        // Morph still owns the paused session so F8 #2 must still intercept & resume rather than passing to rcd
+        XCTAssertTrue(shortcutManager.hasControllableMediaSession(for: model))
+        
+        // 2. User presses hardware F8 again in background -> resumes & MUST swallow BOTH down & up
+        let f8Down2 = makeSystemDefinedCGEvent(key: 16, down: true)
+        let f8Up2 = makeSystemDefinedCGEvent(key: 16, down: false)
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: tapType, event: f8Down2), "F8 #2 keyDown must be swallowed when resuming paused Morph track")
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: tapType, event: f8Up2), "F8 #2 keyUp must also be swallowed so rcd/mediaremoted cannot bounce back to paused")
+        XCTAssertTrue(model.media.isPlaying, "F8 #2 must resume playback cleanly")
+        XCTAssertFalse(model.media.userIntentionallyPaused, "userIntentionallyPaused must clear on resume")
+        XCTAssertTrue(model.media.isEffectivelyPlaying)
+        XCTAssertTrue(model.isGlassMusicPlaying)
+        XCTAssertTrue(mockEngine.trackData.isPlaying)
+        XCTAssertEqual(shortcutManager.lastTriggeredShortcut, "F8 Playing")
+    }
+    
+    func testBackgroundTapF8FunctionKeyPauseThenResumeRoundTrip() {
+        model.isExpanded = false
+        model.media.trackTitle = "Idol"
+        model.media.duration = 213.0
+        model.media.play()
+        
+        let dummyProxy = unsafeBitCast(Unmanaged.passUnretained(self).toOpaque(), to: CGEventTapProxy.self)
+        let f8Down1 = makeKeyDownCGEvent(keyCode: 100)
+        let f8Up1 = CGEvent(keyboardEventSource: nil, virtualKey: 100, keyDown: false)!
+        
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: .keyDown, event: f8Down1))
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: .keyUp, event: f8Up1))
+        XCTAssertFalse(model.media.isPlaying)
+        XCTAssertTrue(model.media.userIntentionallyPaused)
+        
+        let f8Down2 = makeKeyDownCGEvent(keyCode: 100)
+        let f8Up2 = CGEvent(keyboardEventSource: nil, virtualKey: 100, keyDown: false)!
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: .keyDown, event: f8Down2), "Virtual F8 keyDown must be swallowed when resuming paused track")
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: .keyUp, event: f8Up2), "Virtual F8 keyUp must be swallowed when resuming paused track")
+        XCTAssertTrue(model.media.isPlaying)
+        XCTAssertFalse(model.media.userIntentionallyPaused)
+        XCTAssertTrue(mockEngine.trackData.isPlaying)
+    }
+    
+    func testSymmetricDirectionalLockoutAndRemoteEchoSuppressionOnF8Resume() async throws {
+        shortcutManager.forceDebounceInTests = true
+        defer { shortcutManager.forceDebounceInTests = false }
+        
+        model.isExpanded = false
+        model.media.trackTitle = "Original Track"
+        model.media.duration = 200.0
+        model.media.play()
+        
+        // Pause first, then wait past the 0.65s debounce window so user intentionally presses F8 #2
+        shortcutManager.pauseMusic()
+        XCTAssertFalse(model.media.isPlaying)
+        XCTAssertTrue(model.media.userIntentionallyPaused)
+        
+        try await Task.sleep(for: .milliseconds(720))
+        
+        // User presses hardware F8 in background to resume
+        let dummyProxy = unsafeBitCast(Unmanaged.passUnretained(self).toOpaque(), to: CGEventTapProxy.self)
+        let f8Down = makeSystemDefinedCGEvent(key: 16, down: true)
+        let f8Up = makeSystemDefinedCGEvent(key: 16, down: false)
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: CGEventType(rawValue: 14)!, event: f8Down))
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: CGEventType(rawValue: 14)!, event: f8Up))
+        XCTAssertTrue(model.media.isPlaying)
+        XCTAssertFalse(model.media.userIntentionallyPaused)
+        
+        // Simulated mediaremoted/rcd echo (from .listenOnly fallback or race) within 1.2s must be ignored
+        shortcutManager.performTogglePlayPause(fromRemoteCommand: true)
+        shortcutManager.performPauseMusic(fromRemoteCommand: true)
+        XCTAssertTrue(model.media.isPlaying, "mediaremoted remote command echo right after hardware F8 resume must not re-pause")
+        XCTAssertFalse(model.media.userIntentionallyPaused)
+        
+        // Immediate direct pause bounce within 0.65s must also be blocked by symmetric directional lockout
+        shortcutManager.pauseMusic()
+        shortcutManager.togglePlayPause()
+        XCTAssertTrue(model.media.isPlaying, "Symmetric lockout must block accidental pause bounce immediately after resume")
+        
+        // After the 1.2s remote-echo + 0.65s debounce window expires, pressing F8 pauses normally again
+        try await Task.sleep(for: .milliseconds(1250))
+        let f8PauseDown = makeSystemDefinedCGEvent(key: 16, down: true)
+        XCTAssertNil(shortcutManager.handleBackgroundTapEvent(proxy: dummyProxy, type: CGEventType(rawValue: 14)!, event: f8PauseDown))
+        XCTAssertFalse(model.media.isPlaying)
+        XCTAssertTrue(model.media.userIntentionallyPaused)
+    }
+    
+    func testTransientEnginePausedPayloadDuringResumeLockoutDoesNotCancelResume() {
+        model.media.trackTitle = "Original Track"
+        model.media.artistName = "Original Artist"
+        model.media.duration = 200.0
+        
+        // Pause then resume
+        model.media.pause()
+        XCTAssertTrue(model.media.userIntentionallyPaused)
+        
+        model.media.play()
+        XCTAssertTrue(model.media.isPlaying)
+        XCTAssertFalse(model.media.userIntentionallyPaused)
+        
+        // Simulated transient offscreen WebKit buffering update (readyState < 2 / paused before unpause settles)
+        mockEngine.simulateTrackDataUpdate(YTMTrackData(
+            title: "Original Track",
+            artist: "Original Artist",
+            albumArtURL: "https://example.com/original.jpg",
+            isPlaying: false,
+            currentTime: 10.0,
+            duration: 200.0
+        ))
+        
+        // Playback state must hold as playing while unpausing settles
+        XCTAssertTrue(model.media.isPlaying, "Transient engine isPlaying: false during resume lockout must not kill resumed playback")
+        XCTAssertFalse(model.media.userIntentionallyPaused)
+        
+        // Explicit user pause immediately clears lockout and pauses
+        model.media.pause()
+        XCTAssertFalse(model.media.isPlaying)
+        XCTAssertTrue(model.media.userIntentionallyPaused)
+    }
+    
+    func testYouTubeMusicEnginePlayAndPauseScriptGuards() {
+        mockEngine.play()
+        let playScript = mockEngine.lastEvaluatedScript ?? ""
+        XCTAssertTrue(playScript.contains("_morphUserPaused = false"), "play() must clear _morphUserPaused")
+        XCTAssertTrue(playScript.contains("_morphPauseLockoutUntil = 0"), "play() must clear pause lockout")
+        XCTAssertTrue(playScript.contains("_morphResumeLockoutUntil = Date.now() + 1400"), "play() must arm anti-bounce resume lockout")
+        XCTAssertTrue(playScript.contains("_morphResumeAudioContexts"), "play() must resume suspended Web Audio contexts")
+        XCTAssertTrue(playScript.contains("isActuallyPlaying") && playScript.contains("!saysPause"), "play() must only click play-pause-button when not playing and never click Pause")
+        XCTAssertTrue(playScript.contains("startTransitionWatchdog"), "play() must invoke startTransitionWatchdog")
+        
+        mockEngine.pause()
+        let pauseScript = mockEngine.lastEvaluatedScript ?? ""
+        XCTAssertTrue(pauseScript.contains("_morphUserPaused = true"), "pause() must set _morphUserPaused")
+        XCTAssertTrue(pauseScript.contains("_morphResumeLockoutUntil = 0"), "pause() must clear resume lockout")
+        XCTAssertTrue(pauseScript.contains("_morphPauseLockoutUntil = Date.now() + 1400"), "pause() must arm pause lockout")
     }
 }

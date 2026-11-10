@@ -2976,7 +2976,8 @@ public final class NotchModel: ObservableObject {
             _simulatedGlassMusicPlaying = false
         } else {
             var didTriggerPlayback = false
-            if media.trackTitle.isEmpty {
+            let cleanTitle = media.trackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanTitle.isEmpty || (cleanTitle == "YouTube Music" && media.duration <= 0) {
                 // If not currently loaded, start the active Glass track or first recommendation with exact cover/title sync
                 if let track = currentGlassTrack {
                     let item = YTMPlaylistItem(
@@ -3011,6 +3012,10 @@ public final class NotchModel: ObservableObject {
                 _simulatedGlassMusicPlaying = true
             }
         }
+        syncGlassMusicTimerIfNeeded()
+    }
+    
+    public func syncGlassMusicTimerIfNeeded() {
         glassMusicTimer?.invalidate()
         glassMusicTimer = nil
         if isGlassMusicPlaying {
