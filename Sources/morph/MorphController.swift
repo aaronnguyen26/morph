@@ -15,6 +15,11 @@ public final class MorphController: NSObject {
     public private(set) var dwellEntryLocation: NSPoint?
     public private(set) var dwellStartTime: TimeInterval = 0
     private var shrinkWorkItem: DispatchWorkItem?
+    private var pendingShrinkTargetWidth: CGFloat?
+    private var pendingShrinkTargetHeight: CGFloat?
+    private var lastAppliedPanelWidth: CGFloat = -1
+    private var lastAppliedPanelHeight: CGFloat = -1
+    private var lastAppliedPanelScreenID: CGDirectDisplayID?
     private var lastMousePoint: NSPoint?
     private var lastMouseTimestamp: TimeInterval = 0
     private var lastClickTimestamp: TimeInterval = 0
@@ -94,7 +99,7 @@ public final class MorphController: NSObject {
         }
         self.hostingView.isExpanded = { [weak self] in
             guard let self = self else { return false }
-            return self.model.isExpanded || self.model.isSpotlightBarActive || self.model.isCompactActive || self.model.isEditingTimerInPill || self.model.isTimerPopupActive || self.model.islandState != .resting || (self.model.isGlassIslandEnabled && self.model.glassIslandState != .idle)
+            return self.model.isExpanded || self.model.isSpotlightBarActive || self.model.isCompactActive || self.hasActiveGlassIdlePill || self.model.isEditingTimerInPill || self.model.isTimerPopupActive || self.model.islandState != .resting || (self.model.isGlassIslandEnabled && self.model.glassIslandState != .idle)
         }
         
         self.hostingView.isDraggingActive = { [weak self] in
@@ -254,11 +259,29 @@ public final class MorphController: NSObject {
             }
             .store(in: &cancellables)
             
+        // Observe Smart Finder result/loading/prompt changes to dynamically resize the prompt panel height
+        Publishers.Merge4(
+            model.$finderResults.map { _ in () },
+            model.$isFinderSearching.map { _ in () },
+            model.$finderHasCompletedSearch.map { _ in () },
+            model.$glassPromptText.map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            guard let self = self,
+                  self.model.isGlassIslandEnabled,
+                  self.model.glassIslandState == .prompt else { return }
+            self.updatePanelGeometry(animate: false)
+        }
+        .store(in: &cancellables)
+
         // Observe any submodel state changes to dynamically resize the compact notch window
         model.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                guard let self = self, !self.model.isExpanded else { return }
+                guard let self = self,
+                      !self.model.isExpanded,
+                      (!self.model.isGlassIslandEnabled || self.model.glassIslandState == .idle) else { return }
                 self.resizePanelToRestingState()
             }
             .store(in: &cancellables)
@@ -608,7 +631,8 @@ public final class MorphController: NSObject {
             if !isMorphOpen {
                 // If user interacted recently (< 450ms ago) in ANY background application
                 // (clicks, drags, typing, scrolling, app switches), they are actively working
-                // in their underlying workspace — suppress hover expansion!
+                // in their underlying workspace — suppress hover expansion, but keep compact
+                // active pills (such as Form Autofill) immediately clickable!
                 let timeSinceInteraction = max(now - lastUnderlyingInteractionTimestamp, now - lastClickTimestamp)
                 if timeSinceInteraction < 0.45 {
                     hoverIntentWorkItem?.cancel()
@@ -616,7 +640,9 @@ public final class MorphController: NSObject {
                     dwellEntryLocation = mouseLoc
                     dwellStartTime = now
                     if !MorphEnvironment.isTestingEnvironment {
-                        panel?.ignoresMouseEvents = true
+                        panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+                    } else if model.isCompactActive {
+                        panel?.ignoresMouseEvents = false
                     }
                     return
                 }
@@ -629,7 +655,9 @@ public final class MorphController: NSObject {
                     dwellEntryLocation = mouseLoc
                     dwellStartTime = now
                     if !MorphEnvironment.isTestingEnvironment {
-                        panel?.ignoresMouseEvents = true
+                        panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+                    } else if model.isCompactActive {
+                        panel?.ignoresMouseEvents = false
                     }
                     return
                 }
@@ -644,7 +672,9 @@ public final class MorphController: NSObject {
                         dwellEntryLocation = mouseLoc
                         dwellStartTime = now
                         if !MorphEnvironment.isTestingEnvironment {
-                            panel?.ignoresMouseEvents = true
+                            panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+                        } else if model.isCompactActive {
+                            panel?.ignoresMouseEvents = false
                         }
                         return
                     }
@@ -813,6 +843,15 @@ public final class MorphController: NSObject {
         return types.contains(.fileURL) || types.contains(NSPasteboard.PasteboardType("NSFilenamesPboardType")) || types.contains(.URL)
     }
     
+    private var hasActiveGlassIdlePill: Bool {
+        model.isGlassIslandEnabled && (
+            model.isBackgroundDropActive ||
+            model.isBackgroundFormActive ||
+            (model.isGlassTimerActive && model.isFeatureEnabled(.timer)) ||
+            (model.isGlassMusicPlaying && model.isFeatureEnabled(.music))
+        )
+    }
+    
     public var shouldIgnoreMouseEvents: Bool {
         if model.dropShelf.isDraggingOverNotch || isFileDragActive() {
             return false
@@ -820,27 +859,75 @@ public final class MorphController: NSObject {
         if model.isGlassIslandEnabled && model.glassIslandState != .idle {
             return false
         }
-        let isResting = (model.islandState == .resting && model.compactHUDMode == .none && !model.isHovered && !model.isSpotlightBarActive)
+        let isResting = (model.islandState == .resting && model.compactHUDMode == .none && !hasActiveGlassIdlePill && !model.isHovered && !model.isSpotlightBarActive)
         return isResting
+    }
+    
+    private func screenDisplayID(_ screen: NSScreen) -> CGDirectDisplayID? {
+        screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
     
     public func updatePanelGeometry(animate: Bool = true) {
         let screen = targetScreen()
+        let sid = screenDisplayID(screen)
         let w = model.currentWidth.rounded()
         let h = model.currentHeight.rounded()
+        let ignore = shouldIgnoreMouseEvents
+        if !animate,
+           abs(w - lastAppliedPanelWidth) < 0.5,
+           abs(h - lastAppliedPanelHeight) < 0.5,
+           abs(panel.frame.width - w) < 0.5,
+           abs(panel.frame.height - h) < 0.5,
+           sid == lastAppliedPanelScreenID {
+            if panel.ignoresMouseEvents != ignore {
+                panel.ignoresMouseEvents = ignore
+            }
+            return
+        }
+        pendingShrinkTargetWidth = nil
+        pendingShrinkTargetHeight = nil
+        lastAppliedPanelWidth = w
+        lastAppliedPanelHeight = h
+        lastAppliedPanelScreenID = sid
         panel.updatePosition(screen: screen, width: w, height: h, animate: animate)
-        panel.ignoresMouseEvents = shouldIgnoreMouseEvents
+        if panel.ignoresMouseEvents != ignore {
+            panel.ignoresMouseEvents = ignore
+        }
     }
     
     public func expandPanel() {
+        shrinkWorkItem?.cancel()
+        shrinkWorkItem = nil
+        pendingShrinkTargetWidth = nil
+        pendingShrinkTargetHeight = nil
         updatePanelGeometry(animate: false)
     }
     
     public func scheduleWindowShrink() {
+        let targetW = model.currentWidth.rounded()
+        let targetH = model.currentHeight.rounded()
+        if shrinkWorkItem != nil,
+           let pw = pendingShrinkTargetWidth,
+           let ph = pendingShrinkTargetHeight,
+           abs(pw - targetW) < 0.5,
+           abs(ph - targetH) < 0.5 {
+            let ignore = shouldIgnoreMouseEvents
+            if panel.ignoresMouseEvents != ignore {
+                panel.ignoresMouseEvents = ignore
+            }
+            return
+        }
         shrinkWorkItem?.cancel()
+        pendingShrinkTargetWidth = targetW
+        pendingShrinkTargetHeight = targetH
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            guard !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive && (!self.model.isGlassIslandEnabled || self.model.glassIslandState == .idle) else { return }
+            self.pendingShrinkTargetWidth = nil
+            self.pendingShrinkTargetHeight = nil
+            guard !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive && (!self.model.isGlassIslandEnabled || self.model.glassIslandState == .idle) else {
+                self.shrinkWorkItem = nil
+                return
+            }
             self.applyRestingPanelGeometry()
             self.shrinkWorkItem = nil
         }
@@ -850,33 +937,74 @@ public final class MorphController: NSObject {
     }
     
     private func resizePanelToRestingState() {
-        guard !model.isExpanded && !model.isSpotlightBarActive && !model.isTimerPopupActive else {
+        guard !model.isExpanded && !model.isSpotlightBarActive && !model.isTimerPopupActive && (!model.isGlassIslandEnabled || model.glassIslandState == .idle) else {
             updatePanelGeometry(animate: false)
             return
         }
+        let screen = targetScreen()
+        let sid = screenDisplayID(screen)
         let w = model.currentWidth.rounded()
+        let h = model.currentHeight.rounded()
+        let ignore = shouldIgnoreMouseEvents
         if w < panel.frame.width && !model.isExpanded {
+            if panel.ignoresMouseEvents != ignore {
+                panel.ignoresMouseEvents = ignore
+            }
             // Shrinking: give retraction spring buffer so shrinking wings don't get clipped
             scheduleWindowShrink()
         } else {
+            guard abs(w - lastAppliedPanelWidth) >= 0.5 ||
+                  abs(h - lastAppliedPanelHeight) >= 0.5 ||
+                  abs(panel.frame.width - w) >= 0.5 ||
+                  abs(panel.frame.height - h) >= 0.5 ||
+                  sid != lastAppliedPanelScreenID else {
+                if panel.ignoresMouseEvents != ignore {
+                    panel.ignoresMouseEvents = ignore
+                }
+                return
+            }
+            shrinkWorkItem?.cancel()
+            shrinkWorkItem = nil
+            pendingShrinkTargetWidth = nil
+            pendingShrinkTargetHeight = nil
             applyRestingPanelGeometry()
         }
     }
     
     public func applyRestingPanelGeometry() {
         let screen = targetScreen()
+        let sid = screenDisplayID(screen)
         let w = model.currentWidth.rounded()
         let h = model.currentHeight.rounded()
+        let ignore = shouldIgnoreMouseEvents
+        if abs(w - lastAppliedPanelWidth) < 0.5,
+           abs(h - lastAppliedPanelHeight) < 0.5,
+           abs(panel.frame.width - w) < 0.5,
+           abs(panel.frame.height - h) < 0.5,
+           sid == lastAppliedPanelScreenID {
+            if panel.ignoresMouseEvents != ignore {
+                panel.ignoresMouseEvents = ignore
+            }
+            return
+        }
+        pendingShrinkTargetWidth = nil
+        pendingShrinkTargetHeight = nil
+        lastAppliedPanelWidth = w
+        lastAppliedPanelHeight = h
+        lastAppliedPanelScreenID = sid
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
-        panel.ignoresMouseEvents = shouldIgnoreMouseEvents
+        panel.ignoresMouseEvents = ignore
     }
     
     private func handleScreenChange() {
         let screen = targetScreen()
         currentTargetScreen = screen
         model.detectScreenNotch(for: screen)
-        let w = model.currentWidth
-        let h = model.currentHeight
+        let w = model.currentWidth.rounded()
+        let h = model.currentHeight.rounded()
+        lastAppliedPanelWidth = w
+        lastAppliedPanelHeight = h
+        lastAppliedPanelScreenID = screenDisplayID(screen)
         panel.updatePosition(screen: screen, width: w, height: h, animate: false)
     }
     
@@ -916,6 +1044,7 @@ public final class MorphController: NSObject {
         mousePollTimer?.invalidate()
         mousePollTimer = nil
         DistributedNotificationCenter.default().removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
         panel?.orderOut(nil)
     }
 }

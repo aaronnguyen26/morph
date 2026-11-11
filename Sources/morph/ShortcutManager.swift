@@ -686,6 +686,21 @@ public final class ShortcutManager: NSObject, ObservableObject {
             }
         }
         
+        // Smart Finder Keyboard Navigation in Glass Island Prompt Bar (↑ / ↓)
+        if !isCmd && !isShift && !isCtrl && !isOpt,
+           model.isGlassIslandEnabled,
+           model.glassIslandState == .prompt,
+           !model.finderResults.isEmpty {
+            if event.keyCode == 125 { // Down Arrow
+                model.moveFinderSelection(delta: 1)
+                return true
+            }
+            if event.keyCode == 126 { // Up Arrow
+                model.moveFinderSelection(delta: -1)
+                return true
+            }
+        }
+
         // 2. Escape: Dismiss search, timer popup, reset spotlight bar, dismiss command bar, close contextual feature, return to home, or collapse island
         if event.keyCode == 53 { // Escape
             if model.selectedTab == .music {
@@ -731,6 +746,10 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 return true
             }
             if model.isGlassIslandEnabled && model.glassIslandState != .idle {
+                model.isGlassIslandPinned = false
+                if let ctrl = controller {
+                    ctrl.dismissToStealth()
+                }
                 withAnimation(MorphUniversalAnimation.stealthRetraction) {
                     model.setGlassIslandState(.idle)
                 }
@@ -899,8 +918,16 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 toggleMute()
                 return true
                 
-            // Enter / Return (keyCode 36): Contextual play/pause or timer
-            case "\r":
+            // Enter / Return (keyCode 36 / 76): Reveal selected Smart Finder file or contextual play/pause
+            case "\r", "\u{3}":
+                if model.isGlassIslandEnabled, model.glassIslandState == .prompt {
+                    if model.revealSelectedFinderResult() {
+                        return true
+                    }
+                    if isEditingText || !model.glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        return true
+                    }
+                }
                 if model.selectedTab == .timer {
                     toggleTimer()
                 } else if model.selectedTab == .music {
@@ -1220,6 +1247,10 @@ public final class ShortcutManager: NSObject, ObservableObject {
             return
         }
         if model.isGlassIslandEnabled && model.glassIslandState != .idle {
+            model.isGlassIslandPinned = false
+            if let ctrl = controller {
+                ctrl.dismissToStealth()
+            }
             withAnimation(MorphUniversalAnimation.stealthRetraction) {
                 model.setGlassIslandState(.idle)
             }

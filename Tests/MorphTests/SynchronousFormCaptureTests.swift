@@ -274,4 +274,185 @@ final class SynchronousFormCaptureTests: XCTestCase {
         XCTAssertEqual(pairs.first?.label, "Full Name")
         XCTAssertEqual(pairs.first?.value, "Minh Nguyen")
     }
+
+    // MARK: - Window Title Compatibility, Selection Editing & Short-Answer Blink Extraction
+
+    func testWindowTitleCompatibilityPreservesFocusOnNeutralShellTitles() {
+        let detected = "Laguna Schools BP 2026: IA/SA Application Form"
+        let url = "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform"
+
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: nil, detectedFormTitle: detected, sourceURL: url))
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "", detectedFormTitle: detected, sourceURL: url))
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "Polar", detectedFormTitle: detected, sourceURL: url))
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "Google Chrome", detectedFormTitle: detected, sourceURL: url))
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "Safari", detectedFormTitle: detected, sourceURL: url))
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "Google Forms", detectedFormTitle: detected, sourceURL: url))
+        XCTAssertTrue(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "Laguna Schools BP 2026: IA/SA Application Form - Google Forms", detectedFormTitle: detected, sourceURL: url))
+
+        XCTAssertFalse(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "YouTube - Music Mix", detectedFormTitle: detected, sourceURL: url))
+        XCTAssertFalse(FormInputAutoTracker.isWindowTitleCompatible(winTitle: "Inbox - Gmail", detectedFormTitle: detected, sourceURL: url))
+    }
+
+    func testHeadlessSelectAllReplaceCutPasteAndUndoSynchronously() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(title: "Fellowship Form", appName: "Polar")
+        model.isFormDetected = true
+        model.isAutoCaptureEnabled = true
+
+        let shortField = FormInputField(label: "Full Name", value: "Old Name", category: .personal, questionType: "shortAnswer", isRequired: true)
+        let paraField = FormInputField(label: "Bio", value: "", category: .question, questionType: "paragraph", isRequired: false)
+        model.activeSession?.fields = [shortField, paraField]
+
+        let tracker = FormInputAutoTracker(model: model)
+        tracker.isHeadlessWebLayerMode = true
+        var mockClipboard = "Elena\nRostova"
+        tracker.clipboardStringProvider = { mockClipboard }
+        model.autoTracker = tracker
+
+        // Confirm focus on Full Name ("Old Name")
+        tracker.confirmFocus(fieldID: shortField.id)
+
+        // 1. Cmd+A then Cmd+V replaces full value and flattens newline for shortAnswer
+        tracker.handleKeyStroke(keyCode: 0, flags: [.maskCommand], characters: "a")
+        XCTAssertTrue(tracker.isAllTextSelected)
+        tracker.handleKeyStroke(keyCode: 9, flags: [.maskCommand], characters: "v")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Elena Rostova")
+        XCTAssertFalse(tracker.isAllTextSelected)
+
+        // 2. Second consecutive Cmd+V is NOT suppressed
+        mockClipboard = " Jr."
+        tracker.handleKeyStroke(keyCode: 9, flags: [.maskCommand], characters: "v")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Elena Rostova Jr.")
+
+        // 3. Cmd+Z undoes back to pre-paste value
+        tracker.handleKeyStroke(keyCode: 6, flags: [.maskCommand], characters: "z")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Elena Rostova")
+
+        // 4. Cmd+A followed by typing character replaces cleanly
+        tracker.handleKeyStroke(keyCode: 0, flags: [.maskCommand], characters: "a")
+        tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "A")
+        tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "d")
+        tracker.handleKeyStroke(keyCode: 0, flags: [], characters: "a")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Ada")
+
+        // 5. Cmd+A followed by Cmd+X cuts cleanly and Cmd+Z restores
+        tracker.handleKeyStroke(keyCode: 0, flags: [.maskCommand], characters: "a")
+        tracker.handleKeyStroke(keyCode: 7, flags: [.maskCommand], characters: "x")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "")
+        tracker.handleKeyStroke(keyCode: 6, flags: [.maskCommand], characters: "z")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Ada")
+
+        // 6. Cmd+A followed by Forward Delete (117) clears cleanly; restore via Cmd+Z, then Cmd+A + Backspace (51) clears
+        tracker.handleKeyStroke(keyCode: 0, flags: [.maskCommand], characters: "a")
+        tracker.handleKeyStroke(keyCode: 117, flags: [], characters: nil)
+        XCTAssertEqual(model.activeSession?.fields[0].value, "")
+        tracker.handleKeyStroke(keyCode: 6, flags: [.maskCommand], characters: "z")
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Ada")
+        tracker.handleKeyStroke(keyCode: 0, flags: [.maskCommand], characters: "a")
+        tracker.handleKeyStroke(keyCode: 51, flags: [], characters: nil)
+        XCTAssertEqual(model.activeSession?.fields[0].value, "")
+
+        // 7. Paragraph field preserves newlines on Cmd+V
+        tracker.confirmFocus(fieldID: paraField.id)
+        mockClipboard = "Line 1\nLine 2"
+        tracker.handleKeyStroke(keyCode: 9, flags: [.maskCommand], characters: "v")
+        XCTAssertEqual(model.activeSession?.fields[1].value, "Line 1\nLine 2")
+    }
+
+    func testBlinkSerializedFormStateHandlesOutOfOrderEntryTokensAndShortAnswerInputs() {
+        func encodeMojoString16(_ str: String) -> Data {
+            var out = Data([0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+            let utf16 = Array(str.utf16)
+            var byteLen = UInt32(8 + utf16.count * 2)
+            var charLen = UInt32(utf16.count)
+            out.append(Data(bytes: &byteLen, count: 4))
+            out.append(Data(bytes: &charLen, count: 4))
+            for u in utf16 {
+                var le = u.littleEndian
+                out.append(Data(bytes: &le, count: 2))
+            }
+            let aligned = (8 + utf16.count * 2 + 7) & ~7
+            let pad = aligned - (8 + utf16.count * 2)
+            if pad > 0 {
+                out.append(Data(repeating: 0, count: pad))
+            }
+            return out
+        }
+
+        let sig = "https://docs.google.com/forms/u/0/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/formResponse [entry.576216565 entry.2066173020 ] #0"
+        let olderStrings = [
+            "\n\r?% Blink serialized form state version 10 \n\r=&",
+            sig,
+            "2",
+            "", "textarea", "1", "Old Draft",
+            "", "text", "1", "Old"
+        ]
+        let newerStrings = [
+            "\n\r?% Blink serialized form state version 10 \n\r=&",
+            sig,
+            "2",
+            "", "textarea", "1", "Minh Nguyen",
+            "", "text", "1", "Minh"
+        ]
+
+        var blob = Data(repeating: 0, count: 32)
+        for s in olderStrings { blob.append(encodeMojoString16(s)) }
+        blob.append(Data(repeating: 0, count: 32))
+        for s in newerStrings { blob.append(encodeMojoString16(s)) }
+        blob.append(Data(repeating: 0, count: 32))
+
+        let fields = [
+            FormInputField(label: "Basic Information", value: "", questionType: "section"),
+            FormInputField(label: "Full Name", value: "", questionType: "paragraph", isRequired: true, entryKey: "entry.2066173020"),
+            FormInputField(label: "Tab Name", value: "", questionType: "shortAnswer", isRequired: true, entryKey: "entry.576216565")
+        ]
+
+        let pairs = FormInputAutoTracker.extractBlinkFormStatePairs(
+            from: blob,
+            formURL: "https://docs.google.com/forms/d/e/1FAIpQLSeioKaz7uoZPcnPoEtauoGbdPXmnp69H1WRwx6OQ9x9AqE1uQ/viewform",
+            fields: fields
+        )
+
+        XCTAssertEqual(pairs.count, 2)
+        XCTAssertEqual(pairs.first(where: { $0.label == "Full Name" })?.value, "Minh Nguyen")
+        XCTAssertEqual(pairs.first(where: { $0.label == "Tab Name" })?.value, "Minh")
+    }
+
+    func testUpwardViewportClickReturnsToPreviousQuestionAndBackgroundSnapshotDoesNotRewindActiveTyping() {
+        let model = ApplicationFormModel(detector: MockApplicationFormDetector(), dispatcher: MockEmailDispatcher())
+        model.startTracking(
+            title: "Polar Form Test",
+            appName: "Polar",
+            url: "https://docs.google.com/forms/d/e/1FAIpQLSf-upward-test/viewform"
+        )
+        model.isFormDetected = true
+        let q1 = FormInputField(label: "Full Name", value: "", category: .personal, questionType: "shortAnswer")
+        let q2 = FormInputField(label: "Email Address", value: "", category: .contact, questionType: "shortAnswer")
+        model.activeSession?.fields = [q1, q2]
+
+        let tracker = FormInputAutoTracker(model: model)
+        // 1. Click Q1 (y = 220) and type answer
+        tracker.handleHeadlessViewportClick(at: CGPoint(x: 400, y: 220), in: model)
+        for ch in "Ada" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(ch))
+        }
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Ada")
+
+        // 2. Click downward onto Q2 (y = 380) and type answer
+        tracker.handleHeadlessViewportClick(at: CGPoint(x: 400, y: 380), in: model)
+        XCTAssertEqual(tracker.confirmedFieldID, q2.id)
+        for ch in "ada@lovelace.ai" {
+            tracker.handleKeyStroke(keyCode: 0, flags: [], characters: String(ch))
+        }
+        XCTAssertEqual(model.activeSession?.fields[1].value, "ada@lovelace.ai")
+
+        // 3. Stale lagging snapshot ("ada@love") from background scanner must NOT rewind active typing
+        XCTAssertFalse(model.applyExtractedInput(label: "Email Address", value: "ada@love"))
+        XCTAssertEqual(model.activeSession?.fields[1].value, "ada@lovelace.ai")
+
+        // 4. Click upward onto Q1 (y = 220) -> focus moves backward onto Q1 instead of getting stuck on Q2
+        tracker.handleHeadlessViewportClick(at: CGPoint(x: 400, y: 220), in: model)
+        XCTAssertEqual(tracker.confirmedFieldID, q1.id)
+    }
 }

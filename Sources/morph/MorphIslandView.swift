@@ -29,6 +29,10 @@ public struct MorphIslandView: View {
     @FocusState private var isSpotlightFocused: Bool
     @FocusState private var isPillEditFocused: Bool
     @FocusState private var isGlassMusicSearchFocused: Bool
+    @FocusState private var isGlassPromptFocused: Bool
+    @State private var isAddingAdaptiveProfileEntry: Bool = false
+    @State private var newAdaptiveQuestionText: String = ""
+    @State private var newAdaptiveAnswerText: String = ""
     @Namespace private var navTabNamespace
     
     public init(model: NotchModel, onMouseEnter: @escaping () -> Void = {}, onMouseExit: @escaping () -> Void = {}) {
@@ -392,6 +396,8 @@ public struct MorphIslandView: View {
                 }
             }
             .animation(MorphUniversalAnimation.stateExpansion, value: model.glassIslandState)
+            .animation(MorphUniversalAnimation.stateElongation, value: model.glassIslandWidth)
+            .animation(MorphUniversalAnimation.stateExpansion, value: model.glassIslandHeight)
             .animation(model.isExpanded ? MorphUniversalAnimation.stateExpansion : MorphUniversalAnimation.stateRetraction, value: model.isExpanded)
             .animation(model.isCompactActive ? MorphUniversalAnimation.stateElongation : MorphUniversalAnimation.stealthRetraction, value: model.isCompactActive)
             .animation(MorphUniversalAnimation.tabSwitch, value: model.selectedTab)
@@ -1457,6 +1463,18 @@ public struct MorphIslandView: View {
                             removal: .opacity
                         ))
                 }
+
+                // Smart Finder Live Results Drawer (directly below prompt bar / peek)
+                if model.glassIslandState == .prompt && model.isSmartFinderPanelVisible {
+                    GlassSmartFinderView(model: model)
+                        .padding(.top, 8)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 8)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .top)),
+                            removal: .opacity
+                        ))
+                }
                 
                 // Panel Content (for timer, calendar, music, notes, forms, reply)
                 if model.glassIslandState != .prompt {
@@ -1600,18 +1618,45 @@ public struct MorphIslandView: View {
     }
     
     private var miniFormView: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "list.bullet.clipboard.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Color(hex: "#8ff0b4"))
-            
-            Text(miniFormStatusText)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            
-            Spacer(minLength: 2)
+        let toastMsg = model.formTracker.deliveryToastMessage
+        let hasToast = toastMsg != nil && !(toastMsg ?? "").isEmpty
+        let isErrorToast = (toastMsg ?? "").localizedCaseInsensitiveContains("enable") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("could not") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("no matching") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("no active") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("grant") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("blocks") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("rejected") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("click \"") ||
+                           (toastMsg ?? "").localizedCaseInsensitiveContains("syncing")
+        let iconName = hasToast
+            ? (isErrorToast ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+            : "list.bullet.clipboard.fill"
+        let formsGreen = Color(hex: model.featureTintColorHex(.forms))
+        
+        return HStack(spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: iconName)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(isErrorToast ? Color.white.opacity(0.92) : formsGreen)
+                
+                Text(miniFormStatusText)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                
+                Spacer(minLength: 2)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard model.isFeatureEnabled(.forms) else { return }
+                MorphHaptics.levelChange()
+                withAnimation(MorphUniversalAnimation.stateExpansion) {
+                    model.setGlassIslandState(.forms)
+                }
+            }
             
             Button(action: {
                 MorphHaptics.levelChange()
@@ -1625,16 +1670,16 @@ public struct MorphIslandView: View {
             }) {
                 Text(miniActionLabel)
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundColor(miniActionIsAutofill ? .white : Color(hex: "#8ff0b4"))
-                    .padding(.horizontal, 7)
+                    .foregroundColor(miniActionIsAutofill ? Color(hex: "#08080a") : .white)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(
                         Capsule()
-                            .fill(miniActionIsAutofill ? Color(hex: "#8b6ceb").opacity(0.85) : Color(hex: "#8ff0b4").opacity(0.18))
+                            .fill(miniActionIsAutofill ? formsGreen : Color.white.opacity(0.14))
                     )
                     .overlay(
                         Capsule()
-                            .stroke(miniActionIsAutofill ? Color.white.opacity(0.3) : Color(hex: "#8ff0b4").opacity(0.45), lineWidth: 0.8)
+                            .stroke(miniActionIsAutofill ? formsGreen.opacity(0.65) : Color.white.opacity(0.28), lineWidth: 0.7)
                     )
             }
             .buttonStyle(.plain)
@@ -1649,16 +1694,12 @@ public struct MorphIslandView: View {
                 model.targetedHoverGlassState = nil
             }
         }
-        .onTapGesture {
-            guard model.isFeatureEnabled(.forms) else { return }
-            MorphHaptics.levelChange()
-            withAnimation(MorphUniversalAnimation.stateExpansion) {
-                model.setGlassIslandState(.forms)
-            }
-        }
     }
     
     private var miniFormStatusText: String {
+        if let toast = model.formTracker.deliveryToastMessage, !toast.isEmpty {
+            return toast
+        }
         if let session = model.formTracker.activeSession {
             let title = cleanPersonalizedTitle(session.formTitle)
             if !title.isEmpty {
@@ -1677,8 +1718,8 @@ public struct MorphIslandView: View {
             return "Autofill"
         }
         if let session = model.formTracker.activeSession {
-            let answered = session.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }.count
-            let total = session.fields.filter { $0.isActionableQuestion }.count
+            let answered = session.fields.filter { $0.isActionableQuestion && $0.isAnswered }.count
+            let total = session.totalQuestions
             if answered > 0 && total > 0 {
                 return "\(answered)/\(total)"
             }
@@ -1701,8 +1742,9 @@ public struct MorphIslandView: View {
     private var miniActionIsAutofill: Bool {
         guard let session = model.formTracker.activeSession else { return false }
         let ready = model.formTracker.readyToAutofillCount
-        let answered = session.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }.count
-        return ready > 0 && (answered < 3 || answered < session.fields.count)
+        let answered = session.fields.filter { $0.isActionableQuestion && $0.isAnswered }.count
+        let total = session.totalQuestions
+        return ready > 0 && (answered < 3 || answered < total)
     }
     
     private var glassPromptPeekView: some View {
@@ -1860,13 +1902,58 @@ public struct MorphIslandView: View {
                 .frame(width: 28, height: 28)
             
             // Text Input
-            TextField("Ask, or try “focus 25”", text: $model.glassPromptText)
+            TextField("Search files, or try “focus 25”", text: $model.glassPromptText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14.5, weight: .medium, design: .rounded))
                 .foregroundColor(.white)
+                .focused($isGlassPromptFocused)
+                .onAppear {
+                    if !MorphEnvironment.isTestingEnvironment && model.glassIslandState == .prompt {
+                        DispatchQueue.main.async {
+                            isGlassPromptFocused = true
+                        }
+                    }
+                }
+                .onChange(of: model.glassIslandState) { _, newState in
+                    if !MorphEnvironment.isTestingEnvironment {
+                        DispatchQueue.main.async {
+                            isGlassPromptFocused = (newState == .prompt)
+                        }
+                    }
+                }
+                .onChange(of: isGlassPromptFocused) { _, focused in
+                    if !MorphEnvironment.isTestingEnvironment,
+                       focused,
+                       model.isGlassIslandEnabled,
+                       model.glassIslandState != .prompt,
+                       model.glassIslandState != .idle {
+                        withAnimation(MorphUniversalAnimation.stateExpansion) {
+                            model.setGlassIslandState(.prompt)
+                        }
+                    }
+                }
                 .onSubmit {
                     model.submitGlassIslandPrompt(model.glassPromptText)
                 }
+
+            // Clear Query Button
+            if !model.glassPromptText.isEmpty {
+                Button(action: {
+                    MorphHaptics.generic()
+                    model.glassPromptText = ""
+                    model.clearSmartFinderState()
+                    if !MorphEnvironment.isTestingEnvironment {
+                        isGlassPromptFocused = true
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.45))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("Clear search")
+            }
             
             // Send Button
             if !model.glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1984,92 +2071,134 @@ public struct MorphIslandView: View {
         DropShelfView(model: model)
     }
     
-    // MARK: - Form Assistant Panel View (460 x 284 pt, Glass Island (2).html)
+    // MARK: - Form Assistant Panel View (460 x 284 pt, Liquid Glass Obsidian)
     private var glassFormsView: some View {
-        VStack(spacing: 8) {
-            // Top Mode Switcher & Action Buttons Row
-            HStack(spacing: 8) {
-                // Mode Selector: Live, Copies (N), Profile
-                HStack(spacing: 2) {
-                    formModeButton(mode: .live, label: "Live")
-                    formModeButton(mode: .copies, label: "Copies (\(model.formTracker.savedFormCopies.count))")
-                    formModeButton(mode: .profile, label: "Profile")
-                }
-                .padding(2)
-                .background(
-                    Capsule()
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                        )
-                )
-                
-                Spacer(minLength: 4)
-                
-                // Action Buttons: Autofill & Save Copy
-                HStack(spacing: 6) {
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        _ = model.formTracker.autofillActiveForm()
-                    }) {
-                        Text("Autofill")
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 8) {
+                // Top Mode Switcher & Action Buttons Row
+                HStack(spacing: 8) {
+                    // Mode Selector: Live, Copies (N), Profile
+                    HStack(spacing: 2) {
+                        formModeButton(mode: .live, label: "Live")
+                        formModeButton(mode: .copies, label: "Copies (\(model.formTracker.savedFormCopies.count))")
+                        formModeButton(mode: .profile, label: "Profile")
+                    }
+                    .padding(2)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.08))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                            )
+                    )
+                    
+                    Spacer(minLength: 4)
+                    
+                    // Action Buttons: Autofill & Save Copy
+                    let formsGreen = Color(hex: model.featureTintColorHex(.forms))
+                    HStack(spacing: 6) {
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            _ = model.formTracker.autofillActiveForm()
+                        }) {
+                            Text("Autofill")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(Color(hex: "#08080a"))
+                                .padding(.horizontal, 12)
+                                .frame(height: 28)
+                                .background(formsGreen)
+                                .clipShape(Capsule())
+                                .overlay(
+                                    Capsule()
+                                        .stroke(formsGreen.opacity(0.6), lineWidth: 0.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Autofill matching answers directly into the open browser form")
+                        
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            _ = model.formTracker.saveFormSnapshot(flashLabel: true)
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.arrow.down.fill")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("Save")
+                                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            }
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
                             .frame(height: 28)
-                            .background(
-                                LinearGradient(
-                                    colors: [Color(hex: "#b79cff").opacity(0.85), Color(hex: "#8b6ceb").opacity(0.75)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                            .background(Color.white.opacity(0.12))
                             .clipShape(Capsule())
-                            .shadow(color: Color(hex: "#8b6ceb").opacity(0.4), radius: 6)
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        _ = model.formTracker.saveFormSnapshot(flashLabel: true)
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "square.and.arrow.down.fill")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("Save")
-                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
+                            )
                         }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .frame(height: 28)
-                        .background(Color.white.opacity(0.12))
-                        .clipShape(Capsule())
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(0.22), lineWidth: 0.5)
-                        )
+                        .buttonStyle(.plain)
+                        .help("Save form answers straight into Supabase Memory")
                     }
-                    .buttonStyle(.plain)
-                    .help("Save form answers straight into Supabase Memory")
                 }
+                .frame(height: 30)
+                
+                // Content Pane
+                Group {
+                    switch model.glassFormMode {
+                    case .live:
+                        glassFormsLivePane
+                    case .copies:
+                        glassFormsCopiesPane
+                    case .profile:
+                        glassFormsProfilePane
+                    }
+                }
+                .frame(maxHeight: .infinity)
             }
-            .frame(height: 30)
             
-            // Content Pane
-            Group {
-                switch model.glassFormMode {
-                case .live:
-                    glassFormsLivePane
-                case .copies:
-                    glassFormsCopiesPane
-                case .profile:
-                    glassFormsProfilePane
+            if let toast = model.formTracker.deliveryToastMessage, !toast.isEmpty {
+                let isWarning = toast.localizedCaseInsensitiveContains("enable") ||
+                                toast.localizedCaseInsensitiveContains("could not") ||
+                                toast.localizedCaseInsensitiveContains("no matching") ||
+                                toast.localizedCaseInsensitiveContains("no active") ||
+                                toast.localizedCaseInsensitiveContains("grant") ||
+                                toast.localizedCaseInsensitiveContains("blocks") ||
+                                toast.localizedCaseInsensitiveContains("rejected") ||
+                                toast.localizedCaseInsensitiveContains("click \"") ||
+                                toast.localizedCaseInsensitiveContains("syncing")
+                Button(action: {
+                    model.formTracker.dismissToast()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color.white.opacity(0.9))
+                        Text(toast)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color(hex: "#16181d").opacity(0.96))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.22), lineWidth: 0.7)
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
                 }
+                .buttonStyle(.plain)
+                .padding(.bottom, 4)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, 4)
+        .animation(.easeInOut(duration: 0.2), value: model.formTracker.deliveryToastMessage)
     }
     
     // MARK: - Pane 1: Live Form Capture
@@ -2085,8 +2214,9 @@ public struct MorphIslandView: View {
                 
                 Spacer()
                 
-                let answered = model.formTracker.activeSession?.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }.count ?? 0
-                let total = model.formTracker.activeSession?.fields.filter { $0.isActionableQuestion }.count ?? 0
+                let actionableCount = model.formTracker.activeSession?.fields.filter { $0.isActionableQuestion }.count ?? 0
+                let answered = model.formTracker.activeSession?.fields.filter { $0.isActionableQuestion && $0.isAnswered }.count ?? 0
+                let total = actionableCount > 0 ? actionableCount : (model.formTracker.activeSession?.totalQuestions ?? 0)
                 Text("\(answered)/\(total) noted")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.65))
@@ -2094,65 +2224,115 @@ public struct MorphIslandView: View {
             .padding(.horizontal, 4)
             
             // Fields Grid
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 5) {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(spacing: 5) {
+                        let actionable = (model.formTracker.activeSession?.fields ?? []).filter { $0.isActionableQuestion }
+                        if actionable.isEmpty {
+                            VStack(spacing: 6) {
+                                Image(systemName: "list.bullet.clipboard")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(Color.white.opacity(0.3))
+                                    .padding(.top, 30)
+                                Text("Open a Google Form in your browser")
+                                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.6))
+                                Text("Morph automatically detects and harvests form answers in real-time.")
+                                    .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 24)
+                            }
+                        } else {
+                            let formsGreen = Color(hex: model.featureTintColorHex(.forms))
+                            let focusedFieldID = model.formTracker.autoTracker?.confirmedFieldID
+                            ForEach(Array(actionable.enumerated()), id: \.element.id) { idx, field in
+                                let rightDisplay = model.formTracker.rightSideDisplay(for: field)
+                                let isFocusedRow = (focusedFieldID == field.id)
+                                HStack(spacing: 8) {
+                                    Text("\(idx + 1). \(field.label)")
+                                        .font(.system(size: 11.5, weight: isFocusedRow ? .semibold : .medium, design: .rounded))
+                                        .foregroundColor(isFocusedRow ? .white : Color.white.opacity(0.72))
+                                        .lineLimit(1)
+                                        .frame(maxWidth: 160, alignment: .leading)
+                                    
+                                    Spacer(minLength: 4)
+                                    
+                                    switch rightDisplay {
+                                    case .userInput(let liveVal):
+                                        Text(liveVal)
+                                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                            .foregroundColor(.white)
+                                            .lineLimit(1)
+                                            .truncationMode(isFocusedRow && liveVal.count > 26 ? .head : .tail)
+                                            .multilineTextAlignment(.trailing)
+                                    case .autofillSuggestion(let savedVal):
+                                        HStack(spacing: 3.5) {
+                                            Image(systemName: "sparkles")
+                                                .font(.system(size: 8.5, weight: .bold))
+                                            Text("Fill: \(savedVal)")
+                                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                                .lineLimit(1)
+                                                .truncationMode(.tail)
+                                        }
+                                        .foregroundColor(formsGreen)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 3)
+                                        .background(
+                                            Capsule()
+                                                .fill(formsGreen.opacity(0.14))
+                                        )
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(formsGreen.opacity(0.32), lineWidth: 0.6)
+                                        )
+                                    case .empty:
+                                        Text("—")
+                                            .font(.system(size: 12, weight: .regular))
+                                            .foregroundColor(Color.white.opacity(0.35))
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(isFocusedRow ? 0.13 : 0.08))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(isFocusedRow ? formsGreen.opacity(0.42) : Color.white.opacity(0.06), lineWidth: isFocusedRow ? 0.8 : 0.5)
+                                )
+                                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .id(field.id)
+                                .onTapGesture {
+                                    if case .autofillSuggestion(let savedVal) = rightDisplay {
+                                        MorphHaptics.levelChange()
+                                        _ = model.formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: savedVal)
+                                    } else if let sessionIdx = model.formTracker.activeSession?.fields.firstIndex(where: { $0.id == field.id }) {
+                                        model.formTracker.selectActiveField(sessionIdx)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .onChange(of: model.formTracker.autoTracker?.confirmedFieldID) { _, newID in
+                    guard let newID else { return }
                     let actionable = (model.formTracker.activeSession?.fields ?? []).filter { $0.isActionableQuestion }
-                    if actionable.isEmpty {
-                        VStack(spacing: 6) {
-                            Image(systemName: "list.bullet.clipboard")
-                                .font(.system(size: 24))
-                                .foregroundColor(Color.white.opacity(0.3))
-                                .padding(.top, 30)
-                            Text("Open a Google Form in your browser")
-                                .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundColor(Color.white.opacity(0.6))
-                            Text("Morph automatically detects and harvests form answers in real-time.")
-                                .font(.system(size: 10.5, weight: .regular, design: .rounded))
-                                .foregroundColor(Color.white.opacity(0.4))
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 24)
+                    if actionable.contains(where: { $0.id == newID }) {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            proxy.scrollTo(newID, anchor: .center)
                         }
-                    } else {
-                        ForEach(Array(actionable.enumerated()), id: \.element.id) { idx, field in
-                            HStack(spacing: 8) {
-                                Text("\(idx + 1). \(field.label)")
-                                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                                    .foregroundColor(Color.white.opacity(0.70))
-                                    .lineLimit(1)
-                                    .frame(maxWidth: 160, alignment: .leading)
-                                
-                                Spacer(minLength: 4)
-                                
-                                if !field.value.isEmpty {
-                                    Text(field.value)
-                                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                        .foregroundColor(.white)
-                                        .lineLimit(1)
-                                } else if let savedVal = model.formTracker.resolveSavedInput(for: field), !savedVal.isEmpty {
-                                    Text("Fill: \(savedVal)")
-                                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                                        .foregroundColor(Color(hex: "#8ff0b4"))
-                                        .lineLimit(1)
-                                } else {
-                                    Text("—")
-                                        .font(.system(size: 12, weight: .regular))
-                                        .foregroundColor(Color.white.opacity(0.35))
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
-                            )
-                            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .onTapGesture {
-                                if let savedVal = model.formTracker.resolveSavedInput(for: field), !savedVal.isEmpty {
-                                    MorphHaptics.levelChange()
-                                    _ = model.formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: savedVal)
-                                }
-                            }
-                        }
+                    }
+                }
+                .onChange(of: model.formTracker.activeFieldIndex) { _, newIdx in
+                    guard model.formTracker.autoTracker?.confirmedFieldID == nil,
+                          let fields = model.formTracker.activeSession?.fields,
+                          fields.indices.contains(newIdx),
+                          fields[newIdx].isActionableQuestion else { return }
+                    let targetID = fields[newIdx].id
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo(targetID, anchor: .center)
                     }
                 }
             }
@@ -2203,6 +2383,27 @@ public struct MorphIslandView: View {
                             .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            let targetID = copy.id
+                            model.isFormCopyDetailOpen = false
+                            model.selectedFormCopyId = nil
+                            model.formTracker.deleteSavedFormCopy(id: targetID)
+                        }) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(Color.white.opacity(0.80))
+                                .frame(width: 24, height: 24)
+                                .background(Color.white.opacity(0.10))
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.16), lineWidth: 0.5)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .help("Delete this saved copy")
                     }
                     
                     ScrollView(.vertical, showsIndicators: false) {
@@ -2245,7 +2446,7 @@ public struct MorphIslandView: View {
                                 Text("No saved copies yet")
                                     .font(.system(size: 12, weight: .medium, design: .rounded))
                                     .foregroundColor(Color.white.opacity(0.6))
-                                Text("Submitting forms or clicking “Save Copy” archives your answers here and syncs with Supabase.")
+                                Text("Saving a form archives your answers here and teaches your Adaptive Profile.")
                                     .font(.system(size: 10.5, weight: .regular, design: .rounded))
                                     .foregroundColor(Color.white.opacity(0.4))
                                     .multilineTextAlignment(.center)
@@ -2253,38 +2454,63 @@ public struct MorphIslandView: View {
                             }
                         } else {
                             ForEach(model.formTracker.savedFormCopies) { copy in
-                                Button(action: {
-                                    model.selectedFormCopyId = copy.id
-                                    model.isFormCopyDetailOpen = true
-                                }) {
-                                    HStack(spacing: 8) {
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(copy.formTitle)
-                                                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                                                .foregroundColor(.white)
-                                                .lineLimit(1)
+                                HStack(spacing: 8) {
+                                    Button(action: {
+                                        MorphHaptics.levelChange()
+                                        model.selectedFormCopyId = copy.id
+                                        model.isFormCopyDetailOpen = true
+                                    }) {
+                                        HStack(spacing: 8) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(copy.formTitle)
+                                                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                                                    .foregroundColor(.white)
+                                                    .lineLimit(1)
+                                                
+                                                Text(copy.previewSummary)
+                                                    .font(.system(size: 11, weight: .regular, design: .rounded))
+                                                    .foregroundColor(Color.white.opacity(0.60))
+                                                    .lineLimit(1)
+                                            }
                                             
-                                            Text(copy.previewSummary)
-                                                .font(.system(size: 11, weight: .regular, design: .rounded))
-                                                .foregroundColor(Color.white.opacity(0.60))
-                                                .lineLimit(1)
+                                            Spacer(minLength: 4)
+                                            
+                                            Text(relativeTimeString(for: copy.savedAt))
+                                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                                .foregroundColor(Color.white.opacity(0.45))
                                         }
-                                        
-                                        Spacer()
-                                        
-                                        Text(relativeTimeString(for: copy.savedAt))
-                                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                            .foregroundColor(Color.white.opacity(0.45))
+                                        .contentShape(Rectangle())
                                     }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                            .fill(Color.white.opacity(0.08))
-                                    )
-                                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .buttonStyle(.plain)
+                                    
+                                    Button(action: {
+                                        MorphHaptics.levelChange()
+                                        if model.selectedFormCopyId == copy.id {
+                                            model.isFormCopyDetailOpen = false
+                                            model.selectedFormCopyId = nil
+                                        }
+                                        model.formTracker.deleteSavedFormCopy(id: copy.id)
+                                    }) {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 10.5, weight: .semibold))
+                                            .foregroundColor(Color.white.opacity(0.55))
+                                            .frame(width: 24, height: 24)
+                                            .background(Color.white.opacity(0.08))
+                                            .clipShape(Circle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Delete saved copy")
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(0.08))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+                                        )
+                                )
                             }
                         }
                     }
@@ -2293,57 +2519,166 @@ public struct MorphIslandView: View {
         }
     }
     
-    // MARK: - Pane 3: Saved Profile Answers (Autofill Template)
+    // MARK: - Pane 3: Adaptive Profile (Learned from Saved Form Copies)
     private var glassFormsProfilePane: some View {
         VStack(spacing: 6) {
-            HStack {
-                Text("Saved Judge Answers (used to autofill new forms)")
-                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.70))
+            HStack(spacing: 6) {
+                Text("Adaptive Profile")
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text("· Learned from \(model.formTracker.adaptiveSourceCount) \(model.formTracker.adaptiveSourceCount == 1 ? "copy" : "copies")")
+                    .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .lineLimit(1)
                 
                 Spacer()
                 
-                Text("Editable")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(Color.white.opacity(0.50))
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isAddingAdaptiveProfileEntry.toggle()
+                        if !isAddingAdaptiveProfileEntry {
+                            newAdaptiveQuestionText = ""
+                            newAdaptiveAnswerText = ""
+                        }
+                    }
+                }) {
+                    Text(isAddingAdaptiveProfileEntry ? "Cancel" : "+ Add")
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3.5)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.18), lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 4)
             
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 5) {
-                    let keys = [
-                        "Full Name",
-                        "Email Address",
-                        "Institutional Conflicts",
-                        "Division Preference",
-                        "Availability",
-                        "Judging Paradigm"
-                    ]
-                    ForEach(Array(keys.enumerated()), id: \.element) { idx, key in
-                        HStack(spacing: 8) {
-                            Text("\(idx + 1). \(key)")
-                                .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                                .foregroundColor(Color.white.opacity(0.65))
-                                .lineLimit(1)
-                                .frame(maxWidth: 150, alignment: .leading)
-                            
-                            Spacer(minLength: 4)
-                            
-                            TextField("Empty", text: Binding(
-                                get: { model.formTracker.profileAnswers[key] ?? "" },
-                                set: { model.formTracker.saveProfileAnswer(key: key, value: $0) }
-                            ))
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.trailing)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+            if isAddingAdaptiveProfileEntry {
+                HStack(spacing: 6) {
+                    TextField("Question (e.g. Portfolio URL)", text: $newAdaptiveQuestionText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
                                 .fill(Color.white.opacity(0.08))
                         )
+                    
+                    TextField("Default answer", text: $newAdaptiveAnswerText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                    
+                    let canSaveCustom = !newAdaptiveQuestionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                                        !newAdaptiveAnswerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        model.formTracker.addCustomProfileEntry(question: newAdaptiveQuestionText, answer: newAdaptiveAnswerText)
+                        newAdaptiveQuestionText = ""
+                        newAdaptiveAnswerText = ""
+                        isAddingAdaptiveProfileEntry = false
+                    }) {
+                        Text("Save")
+                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(canSaveCustom ? Color(hex: "#08080a") : Color.white.opacity(0.45))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(canSaveCustom ? Color.white.opacity(0.92) : Color.white.opacity(0.08))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSaveCustom)
+                }
+                .padding(.horizontal, 4)
+            }
+            
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 5) {
+                    if model.formTracker.adaptiveProfileEntries.isEmpty {
+                        VStack(spacing: 6) {
+                            Image(systemName: "sparkles.rectangle.stack")
+                                .font(.system(size: 22))
+                                .foregroundColor(Color.white.opacity(0.3))
+                                .padding(.top, 26)
+                            Text("No patterns learned yet")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.6))
+                            Text("Save form copies or add custom answers so Morph learns recurring questions across your forms.")
+                                .font(.system(size: 10.5, weight: .regular, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.4))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+                    } else {
+                        ForEach(Array(model.formTracker.adaptiveProfileEntries.enumerated()), id: \.element.id) { idx, entry in
+                            HStack(spacing: 7) {
+                                Text("\(idx + 1). \(entry.question)")
+                                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color.white.opacity(0.70))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 148, alignment: .leading)
+                                
+                                Text(entry.isCustom && entry.frequency <= 1 ? "Custom" : "\(entry.frequency)×")
+                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(Color.white.opacity(0.62))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                                
+                                Spacer(minLength: 4)
+                                
+                                TextField("Empty", text: Binding(
+                                    get: { entry.answer },
+                                    set: {
+                                        model.formTracker.saveProfileAnswer(
+                                            key: entry.question,
+                                            value: $0,
+                                            canonicalKey: entry.canonicalKey
+                                        )
+                                    }
+                                ))
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .multilineTextAlignment(.trailing)
+                                .frame(minWidth: 80)
+                                
+                                Button(action: {
+                                    MorphHaptics.levelChange()
+                                    model.formTracker.deleteAdaptiveProfileEntry(id: entry.id)
+                                }) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundColor(Color.white.opacity(0.48))
+                                        .frame(width: 22, height: 22)
+                                        .background(Color.white.opacity(0.06))
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove from Adaptive Profile")
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                        }
                     }
                 }
             }
@@ -2386,7 +2721,7 @@ public struct MorphIslandView: View {
                 )
             }
         }
-        return model.formTracker.savedFormCopies.first
+        return nil
     }
     
     private func formModeButton(mode: GlassFormMode, label: String) -> some View {

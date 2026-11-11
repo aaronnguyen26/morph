@@ -251,6 +251,10 @@ public final class SupabaseService: ObservableObject {
     private let formReceiptsCacheKey = "com.morph.supabase.cached_form_receipts"
     private let memoryItemsCacheKey = "com.morph.supabase.cached_memory_items"
     private let offlineQueueKey = "com.morph.supabase.offline_queue"
+    public static let deletedFormReceiptIDsKey = "com.morph.supabase.deleted_form_receipt_ids"
+    public static let deletedMemoryItemIDsKey = "com.morph.supabase.deleted_memory_item_ids"
+    private var deletedFormReceiptIDs: Set<String> = []
+    private var deletedMemoryItemIDs: Set<String> = []
     private var urlSession: URLSession
     
     private var isTesting: Bool {
@@ -301,6 +305,13 @@ public final class SupabaseService: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: memoryItemsCacheKey),
            let cachedMemories = try? JSONDecoder().decode([GlassMemoryItem].self, from: data) {
             self.memoryItems = cachedMemories
+        }
+        
+        if let deletedReceipts = UserDefaults.standard.stringArray(forKey: Self.deletedFormReceiptIDsKey) {
+            self.deletedFormReceiptIDs = Set(deletedReceipts)
+        }
+        if let deletedMemories = UserDefaults.standard.stringArray(forKey: Self.deletedMemoryItemIDsKey) {
+            self.deletedMemoryItemIDs = Set(deletedMemories)
         }
         
         // Initial sync
@@ -541,6 +552,9 @@ public final class SupabaseService: ObservableObject {
     
     public func recordFormReceipt(_ record: FormReceiptRecord) async {
         // Upsert locally
+        if deletedFormReceiptIDs.remove(record.id) != nil {
+            UserDefaults.standard.set(Array(deletedFormReceiptIDs), forKey: Self.deletedFormReceiptIDsKey)
+        }
         if let idx = formReceipts.firstIndex(where: { $0.id == record.id }) {
             formReceipts[idx] = record
         } else {
@@ -658,10 +672,11 @@ public final class SupabaseService: ObservableObject {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let remoteReceipts = try decoder.decode([FormReceiptRecord].self, from: data)
+                    .filter { !deletedFormReceiptIDs.contains($0.id) }
                 
                 var existingIds = Set(remoteReceipts.map { $0.id })
                 var merged = remoteReceipts
-                for local in formReceipts where !existingIds.contains(local.id) {
+                for local in formReceipts where !deletedFormReceiptIDs.contains(local.id) && !existingIds.contains(local.id) {
                     merged.append(local)
                     existingIds.insert(local.id)
                 }
@@ -684,9 +699,51 @@ public final class SupabaseService: ObservableObject {
         }
     }
     
+    public func removeFormReceiptLocally(id: String) {
+        deletedFormReceiptIDs.insert(id)
+        if deletedFormReceiptIDs.count > 500, let first = deletedFormReceiptIDs.first {
+            deletedFormReceiptIDs.remove(first)
+        }
+        UserDefaults.standard.set(Array(deletedFormReceiptIDs), forKey: Self.deletedFormReceiptIDsKey)
+        formReceipts.removeAll { $0.id == id }
+        saveFormReceiptsCache()
+    }
+    
+    public func deleteFormReceipt(id: String) async {
+        removeFormReceiptLocally(id: id)
+        
+        guard !isTesting else {
+            connectionState = .connected
+            lastSyncTime = Date()
+            return
+        }
+        
+        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
+        guard let url = URL(string: "\(baseURL.absoluteString)/rest/v1/form_receipts?id=eq.\(encodedId)") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 3.0
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (_, response) = try await urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                connectionState = .connected
+                lastSyncTime = Date()
+            }
+        } catch {
+            // Local deletion already persisted to cache
+        }
+    }
+    
     // MARK: - Glass Island Memory Store (Supabase REST)
     public func saveMemoryItem(_ item: GlassMemoryItem) async {
         // Upsert locally
+        if deletedMemoryItemIDs.remove(item.id) != nil {
+            UserDefaults.standard.set(Array(deletedMemoryItemIDs), forKey: Self.deletedMemoryItemIDsKey)
+        }
         let updated = item
         if let idx = memoryItems.firstIndex(where: { $0.id == item.id }) {
             memoryItems[idx] = updated
@@ -797,9 +854,10 @@ public final class SupabaseService: ObservableObject {
                         ))
                     }
                     
-                    var existingIds = Set(remoteItems.map { $0.id })
-                    var merged = remoteItems
-                    for local in memoryItems where !existingIds.contains(local.id) {
+                    let filteredRemote = remoteItems.filter { !deletedMemoryItemIDs.contains($0.id) }
+                    var existingIds = Set(filteredRemote.map { $0.id })
+                    var merged = filteredRemote
+                    for local in memoryItems where !deletedMemoryItemIDs.contains(local.id) && !existingIds.contains(local.id) {
                         merged.append(local)
                         existingIds.insert(local.id)
                     }
@@ -859,6 +917,52 @@ public final class SupabaseService: ObservableObject {
     public func saveMemoryItemsCache() {
         if let data = try? JSONEncoder().encode(memoryItems) {
             UserDefaults.standard.set(data, forKey: memoryItemsCacheKey)
+        }
+    }
+    
+    public func clearDeletionTombstones() {
+        deletedFormReceiptIDs.removeAll()
+        deletedMemoryItemIDs.removeAll()
+        UserDefaults.standard.removeObject(forKey: Self.deletedFormReceiptIDsKey)
+        UserDefaults.standard.removeObject(forKey: Self.deletedMemoryItemIDsKey)
+    }
+    
+    public func removeMemoryItemLocally(id: String) {
+        deletedMemoryItemIDs.insert(id)
+        if deletedMemoryItemIDs.count > 500, let first = deletedMemoryItemIDs.first {
+            deletedMemoryItemIDs.remove(first)
+        }
+        UserDefaults.standard.set(Array(deletedMemoryItemIDs), forKey: Self.deletedMemoryItemIDsKey)
+        memoryItems.removeAll { $0.id == id }
+        saveMemoryItemsCache()
+    }
+    
+    public func deleteMemoryItem(id: String) async {
+        removeMemoryItemLocally(id: id)
+        
+        guard !isTesting else {
+            connectionState = .connected
+            lastSyncTime = Date()
+            return
+        }
+        
+        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
+        guard let url = URL(string: "\(baseURL.absoluteString)/rest/v1/memories?id=eq.\(encodedId)") else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 3.0
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (_, response) = try await urlSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                connectionState = .connected
+                lastSyncTime = Date()
+            }
+        } catch {
+            // Local deletion already persisted to cache
         }
     }
     

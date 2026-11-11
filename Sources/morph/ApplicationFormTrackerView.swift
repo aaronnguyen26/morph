@@ -32,7 +32,7 @@ public struct ApplicationFormTrackerView: View {
     
     private var answeredFields: [FormInputField] {
         guard let session = session else { return [] }
-        return session.fields.filter { $0.isActionableQuestion && !$0.value.isEmpty }
+        return session.fields.filter { $0.isActionableQuestion && $0.isAnswered }
     }
     
     private var isFormClosed: Bool {
@@ -55,17 +55,26 @@ public struct ApplicationFormTrackerView: View {
             
             // Action Toast Pill
             if let toast = formTracker.deliveryToastMessage, !toast.isEmpty {
+                let isWarning = toast.localizedCaseInsensitiveContains("enable") ||
+                                toast.localizedCaseInsensitiveContains("could not") ||
+                                toast.localizedCaseInsensitiveContains("no matching") ||
+                                toast.localizedCaseInsensitiveContains("no active") ||
+                                toast.localizedCaseInsensitiveContains("grant") ||
+                                toast.localizedCaseInsensitiveContains("blocks") ||
+                                toast.localizedCaseInsensitiveContains("rejected") ||
+                                toast.localizedCaseInsensitiveContains("click \"") ||
+                                toast.localizedCaseInsensitiveContains("syncing")
                 HStack(spacing: 3) {
-                    Image(systemName: "checkmark.circle.fill")
+                    Image(systemName: isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                         .font(.system(size: 7.5, weight: .bold))
                     Text(toast)
                         .font(.system(size: 7.5, weight: .bold, design: .monospaced))
                         .lineLimit(1)
                 }
-                .foregroundColor(.black)
+                .foregroundColor(isWarning ? Color(red: 0.95, green: 0.30, blue: 0.25) : .black)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.white)
+                .background(isWarning ? Color.white.opacity(0.96) : Color.white)
                 .clipShape(Capsule())
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
@@ -250,7 +259,7 @@ public struct ApplicationFormTrackerView: View {
     // Sequence Timeline Row Component
     private func sequenceTimelineRow(field: FormInputField, displayIndex: Int, sessionIndex: Int) -> some View {
         let isActive = (sessionIndex == formTracker.activeFieldIndex)
-        let isAnswered = !field.value.isEmpty
+        let isAnswered = field.isAnswered
         
         return Button(action: {
             formTracker.selectActiveField(sessionIndex)
@@ -365,7 +374,7 @@ public struct ApplicationFormTrackerView: View {
                     
                     Spacer()
                     
-                    if !field.value.isEmpty {
+                    if field.isAnswered {
                         HStack(spacing: 2.5) {
                             Image(systemName: "checkmark")
                                 .font(.system(size: 6, weight: .bold))
@@ -389,6 +398,8 @@ public struct ApplicationFormTrackerView: View {
                     Spacer(minLength: 4)
                     
                     if let saved = formTracker.resolveSavedInput(for: field), !saved.isEmpty, !isFormClosed {
+                        let hasUserInput = !field.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        let accentGreen = Color(hex: model.featureTintColorHex(.forms))
                         Button(action: {
                             MorphHaptics.levelChange()
                             formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: saved)
@@ -396,18 +407,18 @@ public struct ApplicationFormTrackerView: View {
                             HStack(spacing: 3) {
                                 Image(systemName: "sparkles")
                                     .font(.system(size: 7, weight: .bold))
-                                Text(field.value == saved ? "Re-input" : "Input: \"\(saved.prefix(14))\(saved.count > 14 ? "…" : "")\"")
+                                Text(hasUserInput ? (field.value == saved ? "Re-input" : "Fill: \"\(saved.prefix(12))\(saved.count > 12 ? "…" : "")\"") : "Fill: \"\(saved.prefix(14))\(saved.count > 14 ? "…" : "")\"")
                                     .font(.system(size: 7.5, weight: .semibold, design: .rounded))
                                     .lineLimit(1)
                             }
-                            .foregroundColor(Color(hex: "#8ff0b4"))
+                            .foregroundColor(hasUserInput ? Color.white.opacity(0.75) : accentGreen)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2.5)
-                            .background(Color(hex: "#8ff0b4").opacity(0.12))
+                            .background(hasUserInput ? Color.white.opacity(0.10) : accentGreen.opacity(0.14))
                             .clipShape(Capsule())
                             .overlay(
                                 Capsule()
-                                    .stroke(Color(hex: "#8ff0b4").opacity(0.35), lineWidth: 0.6)
+                                    .stroke(hasUserInput ? Color.white.opacity(0.24) : accentGreen.opacity(0.38), lineWidth: 0.6)
                             )
                         }
                         .buttonStyle(.plain)
@@ -669,6 +680,8 @@ public struct ApplicationFormTrackerView: View {
                 .foregroundColor(Color.white.opacity(0.35))
             
             if let saved = formTracker.resolveSavedInput(for: field), !saved.isEmpty, !isFormClosed {
+                let hasUserInput = !field.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let accentGreen = Color(hex: model.featureTintColorHex(.forms))
                 Button(action: {
                     MorphHaptics.levelChange()
                     formTracker.inputAnswerIntoActiveQuestion(fieldID: field.id, value: saved)
@@ -679,11 +692,15 @@ public struct ApplicationFormTrackerView: View {
                         Text("Input Answer")
                             .font(.system(size: 7.2, weight: .bold, design: .rounded))
                     }
-                    .foregroundColor(Color(hex: "#b79cff"))
+                    .foregroundColor(hasUserInput ? .white : accentGreen)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Color(hex: "#b79cff").opacity(0.15))
+                    .background(hasUserInput ? Color.white.opacity(0.12) : accentGreen.opacity(0.16))
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(hasUserInput ? Color.white.opacity(0.22) : accentGreen.opacity(0.36), lineWidth: 0.6)
+                    )
                 }
                 .buttonStyle(.plain)
             }
@@ -1053,6 +1070,20 @@ public struct ApplicationFormTrackerView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Archive form record to Supabase memory")
+                
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    formTracker.deleteFormReceipt(id: record.id)
+                }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 7.5))
+                        .foregroundColor(Color.white.opacity(0.65))
+                        .padding(4)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Delete this saved copy")
             }
         }
         .padding(.horizontal, 8)

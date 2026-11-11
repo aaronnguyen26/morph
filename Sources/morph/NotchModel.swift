@@ -727,6 +727,21 @@ public final class NotchModel: ObservableObject {
     // Prompt Input
     @Published public var glassPromptText: String = ""
     @Published public var isGlassIslandPinned: Bool = false
+
+    // Smart Finder State (Live Computer-Wide File Search below Prompt Bar)
+    @Published public var finderResults: [MorphFoundFile] = []
+    @Published public var isFinderSearching: Bool = false
+    @Published public var finderHasCompletedSearch: Bool = false
+    @Published public var finderSelectedIndex: Int = 0
+    @Published public var hasExplicitFinderSelection: Bool = false
+    @Published public var finderLastCompletedQuery: String = ""
+    @Published public var lastOpenedFoundFile: MorphFoundFile? = nil
+    @Published public var lastRevealedFoundFile: MorphFoundFile? = nil
+    public var fileSearchProvider: any MorphFileSearchProviding = SpotlightSmartFinderProvider.shared
+    public var finderDebounceNanoseconds: UInt64 = 140_000_000
+    private var finderResultsQuery: String = ""
+    private var finderSearchTask: Task<Void, Never>? = nil
+    private var finderSearchGeneration: UInt64 = 0
     
     // Form Assistant State
     @Published public var glassFormMode: GlassFormMode = .live
@@ -1011,7 +1026,8 @@ public final class NotchModel: ObservableObject {
         supabase: SupabaseService? = nil,
         dropShelf: DropShelfModel? = nil,
         meetingController: MeetingFlightControllerModel? = nil,
-        formTracker: ApplicationFormModel? = nil
+        formTracker: ApplicationFormModel? = nil,
+        fileSearchProvider: (any MorphFileSearchProviding)? = nil
     ) {
         self.pomodoro = pomodoro ?? PomodoroModel()
         self.media = media ?? MediaControllerModel()
@@ -1021,6 +1037,9 @@ public final class NotchModel: ObservableObject {
         self.dropShelf = dropShelf ?? DropShelfModel()
         self.meetingController = meetingController ?? MeetingFlightControllerModel()
         self.formTracker = formTracker ?? ApplicationFormModel()
+        if let fileSearchProvider {
+            self.fileSearchProvider = fileSearchProvider
+        }
         
         detectScreenNotch()
         observeSubmodels()
@@ -1158,8 +1177,8 @@ public final class NotchModel: ObservableObject {
         }
         
         // Priority 3: Form Tracker (Strictly context-aware: active when an application form is
-        // detected on screen AND the forms feature is enabled in the user's profile)
-        if formTracker.isFormDetected && isFeatureEnabled(.forms) {
+        // detected on screen AND the forms feature + context-aware trigger are enabled)
+        if isBackgroundFormActive {
             return .formTrackerActive
         }
         
@@ -1292,6 +1311,10 @@ public final class NotchModel: ObservableObject {
         case .idle:
             return 38
         case .prompt:
+            if isSmartFinderPanelVisible {
+                let topArea: CGFloat = isPromptPeekActive ? 94 : 48
+                return topArea + smartFinderPanelHeight
+            }
             return isPromptPeekActive ? 108 : 56
         case .timer:
             return 258
@@ -1350,6 +1373,35 @@ public final class NotchModel: ObservableObject {
         guard glassIslandState == .prompt else { return false }
         guard let peek = promptPeekInfo else { return false }
         return peek.actionType != "ask" && !peek.title.lowercased().hasPrefix("ask ")
+    }
+
+    public var isFinderExplicitQuery: Bool {
+        SmartFinderQueryParser.parse(glassPromptText).isExplicitFileSearch
+    }
+
+    public var isSmartFinderPanelVisible: Bool {
+        guard glassIslandState == .prompt else { return false }
+        if !finderResults.isEmpty { return true }
+        if isFinderExplicitQuery && (isFinderSearching || finderHasCompletedSearch) {
+            return true
+        }
+        return false
+    }
+
+    public var smartFinderMaxVisibleRows: Int {
+        isPromptPeekActive ? 3 : 4
+    }
+
+    public var smartFinderPanelHeight: CGFloat {
+        let rowsHeight: CGFloat
+        if !finderResults.isEmpty {
+            let visibleCount = min(finderResults.count, smartFinderMaxVisibleRows)
+            rowsHeight = CGFloat(visibleCount) * 44.0 + CGFloat(max(0, visibleCount - 1)) * 4.0
+        } else {
+            rowsHeight = 46.0
+        }
+        // 8 top + 8 bottom outer padding + 73 inner chrome (16 box padding + 20 header + 1 divider + 18 footer + 18 gaps)
+        return 89.0 + rowsHeight
     }
     
     public struct PromptPeekInfo: Equatable {
@@ -2122,6 +2174,7 @@ public final class NotchModel: ObservableObject {
             self.glassIslandState = .idle
             self.targetedHoverGlassState = nil
             self.glassPromptText = ""
+            self.clearSmartFinderState()
             if self.glassNotesMode == .edit {
                 self.closeGlassNote()
             }
@@ -2471,6 +2524,15 @@ public final class NotchModel: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        // Drive live computer-wide Smart Finder search when typing in the Glass Island prompt bar
+        $glassPromptText
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] rawQuery in
+                self?.scheduleSmartFinderSearch(for: rawQuery)
+            }
+            .store(in: &cancellables)
             
         // When a file is taken out of Drop Shelf, context-awarely close the tool and restore context
         dropShelf.onItemExported = { [weak self] item in
@@ -2811,11 +2873,23 @@ public final class NotchModel: ObservableObject {
         if state != .reply {
             self.glassReplyDomainColorHex = nil
         }
+        if state != .prompt {
+            self.clearSmartFinderState()
+        } else if !self.glassPromptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && self.finderResults.isEmpty && !self.isFinderSearching {
+            self.scheduleSmartFinderSearch(for: self.glassPromptText)
+        }
         if state == .idle {
             self.isGlassIslandPinned = false
             self.glassPromptText = ""
+            if isGlassIslandEnabled {
+                self.isExpanded = false
+                self.isHovered = false
+            }
             if self.glassNotesMode == .edit {
                 self.closeGlassNote()
+            }
+            if isGlassIslandEnabled, let ctrl = MorphController.shared {
+                ctrl.scheduleWindowShrink()
             }
         }
         if state != .idle {
@@ -3221,12 +3295,236 @@ public final class NotchModel: ObservableObject {
         openGlassNote(id: note.id)
     }
     
+    // MARK: - Smart Finder Actions & Live Search Pipeline
+
+    public func clearSmartFinderState() {
+        finderSearchGeneration &+= 1
+        finderSearchTask?.cancel()
+        finderSearchTask = nil
+        finderResults = []
+        finderResultsQuery = ""
+        isFinderSearching = false
+        finderHasCompletedSearch = false
+        finderSelectedIndex = 0
+        hasExplicitFinderSelection = false
+        finderLastCompletedQuery = ""
+        if isGlassIslandEnabled, glassIslandState == .prompt,
+           let ctrl = MorphController.shared, ctrl.model === self {
+            ctrl.updatePanelGeometry(animate: false)
+        }
+    }
+
+    public func scheduleSmartFinderSearch(for rawQuery: String) {
+        guard glassIslandState == .prompt else {
+            clearSmartFinderState()
+            return
+        }
+        let parsed = SmartFinderQueryParser.parse(rawQuery)
+        guard parsed.shouldTriggerLiveSearch else {
+            clearSmartFinderState()
+            return
+        }
+
+        // Changing query text clears any previous ↑/↓ row selection so commands/new queries are never hijacked
+        hasExplicitFinderSelection = false
+        finderSelectedIndex = 0
+        finderHasCompletedSearch = false
+
+        finderSearchGeneration &+= 1
+        let generation = finderSearchGeneration
+        finderSearchTask?.cancel()
+
+        // If user explicitly wrote "find ..." / "search ..." / path, show searching drawer right away
+        if parsed.isExplicitFileSearch {
+            isFinderSearching = true
+        }
+
+        let debounceDelay = finderDebounceNanoseconds
+        finderSearchTask = Task { @MainActor [weak self] in
+            if debounceDelay > 0 {
+                try? await Task.sleep(nanoseconds: debounceDelay)
+            }
+            guard !Task.isCancelled, let self = self, generation == self.finderSearchGeneration else {
+                return
+            }
+            await self.performSmartFinderSearch(query: parsed.rawQuery, generation: generation, limit: 25)
+        }
+    }
+
+    /// Executes a Smart Finder search immediately (useful for programmatic triggers & deterministic tests).
+    public func triggerSmartFinderSearchNow(for rawQuery: String, limit: Int = 25) async {
+        guard glassIslandState == .prompt else {
+            clearSmartFinderState()
+            return
+        }
+        let parsed = SmartFinderQueryParser.parse(rawQuery)
+        guard parsed.shouldTriggerLiveSearch else {
+            clearSmartFinderState()
+            return
+        }
+        hasExplicitFinderSelection = false
+        finderSelectedIndex = 0
+        finderSearchGeneration &+= 1
+        let generation = finderSearchGeneration
+        finderSearchTask?.cancel()
+        finderSearchTask = nil
+        await performSmartFinderSearch(query: parsed.rawQuery, generation: generation, limit: limit)
+    }
+
+    private func performSmartFinderSearch(query: String, generation: UInt64, limit: Int) async {
+        guard !Task.isCancelled, generation == finderSearchGeneration, glassIslandState == .prompt else {
+            return
+        }
+        isFinderSearching = true
+        finderHasCompletedSearch = false
+
+        let provider = fileSearchProvider
+        do {
+            let finalResults = try await provider.search(
+                query: query,
+                limit: limit,
+                onPartialResults: { [weak self] partialBatch in
+                    Task { @MainActor [weak self] in
+                        guard let self = self,
+                              generation == self.finderSearchGeneration,
+                              !self.finderHasCompletedSearch,
+                              self.glassIslandState == .prompt else {
+                            return
+                        }
+                        self.applySmartFinderResults(
+                            partialBatch,
+                            forQuery: query,
+                            resetSelection: !self.hasExplicitFinderSelection
+                        )
+                    }
+                }
+            )
+
+            guard !Task.isCancelled, generation == finderSearchGeneration, glassIslandState == .prompt else {
+                return
+            }
+            applySmartFinderResults(finalResults, forQuery: query, resetSelection: !hasExplicitFinderSelection)
+            isFinderSearching = false
+            finderHasCompletedSearch = true
+            finderLastCompletedQuery = query
+        } catch {
+            guard !Task.isCancelled, generation == finderSearchGeneration else { return }
+            isFinderSearching = false
+            finderHasCompletedSearch = true
+        }
+    }
+
+    private func applySmartFinderResults(_ results: [MorphFoundFile], forQuery query: String, resetSelection: Bool) {
+        self.finderResults = results
+        self.finderResultsQuery = query
+        if results.isEmpty {
+            self.finderSelectedIndex = 0
+            self.hasExplicitFinderSelection = false
+        } else if resetSelection || self.finderSelectedIndex >= results.count || self.finderSelectedIndex < 0 {
+            self.finderSelectedIndex = 0
+        }
+        if isGlassIslandEnabled, glassIslandState == .prompt,
+           let ctrl = MorphController.shared, ctrl.model === self {
+            ctrl.updatePanelGeometry(animate: false)
+        }
+    }
+
+    private func hasCurrentFinderResults(for query: String) -> Bool {
+        guard !finderResults.isEmpty else { return false }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return finderResultsQuery.isEmpty || finderResultsQuery.caseInsensitiveCompare(trimmed) == .orderedSame
+    }
+
+    public func moveFinderSelection(delta: Int) {
+        guard !finderResults.isEmpty else { return }
+        let next = max(0, min(finderResults.count - 1, finderSelectedIndex + delta))
+        finderSelectedIndex = next
+        hasExplicitFinderSelection = true
+    }
+
+    public func openFoundFile(_ file: MorphFoundFile) {
+        lastOpenedFoundFile = file
+        if !MorphEnvironment.isTestingEnvironment {
+            NSWorkspace.shared.open(file.url)
+            self.isGlassIslandPinned = false
+            if let ctrl = MorphController.shared {
+                ctrl.dismissToStealth()
+            }
+            dismissGlassIslandToIdle()
+        }
+    }
+
+    public func revealFoundFileInFinder(_ file: MorphFoundFile) {
+        lastRevealedFoundFile = file
+        if !MorphEnvironment.isTestingEnvironment {
+            NSWorkspace.shared.activateFileViewerSelecting([file.url])
+            self.isGlassIslandPinned = false
+            if let ctrl = MorphController.shared {
+                ctrl.dismissToStealth()
+            }
+            dismissGlassIslandToIdle()
+        }
+    }
+
+    public func stageFoundFileToDropShelf(_ file: MorphFoundFile) {
+        dropShelf.stageFile(url: file.url)
+        MorphHaptics.levelChange()
+    }
+
+    @discardableResult
+    public func openSelectedFinderResult() -> Bool {
+        guard glassIslandState == .prompt, !finderResults.isEmpty else { return false }
+        let idx = max(0, min(finderResults.count - 1, finderSelectedIndex))
+        openFoundFile(finderResults[idx])
+        return true
+    }
+
+    @discardableResult
+    public func revealSelectedFinderResult() -> Bool {
+        guard glassIslandState == .prompt, !finderResults.isEmpty else { return false }
+        let idx = max(0, min(finderResults.count - 1, finderSelectedIndex))
+        revealFoundFileInFinder(finderResults[idx])
+        return true
+    }
+
     // MARK: - Glass Island Prompt Submission & Routing
     public func submitGlassIslandPrompt(_ rawQuery: String) {
         let q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
-        
+
+        // If the user explicitly selected a Smart Finder file result via ↑/↓ navigation, Return opens that file directly.
+        if glassIslandState == .prompt && hasExplicitFinderSelection && hasCurrentFinderResults(for: q) {
+            if openSelectedFinderResult() {
+                return
+            }
+        }
+
+        let parsedFinder = SmartFinderQueryParser.parse(q)
         let lower = q.lowercased()
+
+        // If the query is an explicit file lookup ("find ...", "~/...") or directly includes a matching filename extension
+        // while Smart Finder results exist, prioritize opening the matched file over accidental keyword routing
+        // (e.g. "cs229 notes.pdf" or "find budget notes"). Preserve Morph internal Notes search ("find note ...", "search notes ...")
+        // and bare commands ("open notes", "calendar") unless explicitly targeted.
+        let isNotesInternalCommand = lower == "find note" ||
+            lower == "find notes" ||
+            lower == "search note" ||
+            lower == "search notes" ||
+            lower.hasPrefix("find note ") ||
+            lower.hasPrefix("find notes ") ||
+            lower.hasPrefix("search note ") ||
+            lower.hasPrefix("search notes ")
+        if glassIslandState == .prompt && hasCurrentFinderResults(for: q) {
+            let topResult = finderResults[max(0, min(finderResults.count - 1, finderSelectedIndex))]
+            let hasMatchingExtension = !topResult.pathExtension.isEmpty &&
+                lower.hasSuffix("." + topResult.pathExtension.lowercased())
+            let matchesFileIntent = (!isNotesInternalCommand && parsedFinder.isExplicitFileSearch) ||
+                parsedFinder.isPathQuery ||
+                hasMatchingExtension
+            if matchesFileIntent && openSelectedFinderResult() {
+                return
+            }
+        }
         
         // 1. Evaluate with MorphLocalIntelligenceEngine (Action conduction, specific question answers, general navigation)
         // CRUCIAL: Prompts are NEVER added to memory.
@@ -3304,6 +3602,19 @@ public final class NotchModel: ObservableObject {
                     setGlassIslandState(.forms)
                     return
                 }
+
+                // If Smart Finder matched files on the computer for this query, pressing Return opens the highlighted file
+                if glassIslandState == .prompt && hasCurrentFinderResults(for: q) {
+                    if openSelectedFinderResult() {
+                        return
+                    }
+                }
+            }
+
+            // If user explicitly typed "find <query>" / "search <query>" and search is still running, keep prompt open for results
+            let parsed = SmartFinderQueryParser.parse(q)
+            if glassIslandState == .prompt && parsed.isExplicitFileSearch && isFinderSearching {
+                return
             }
             
             glassReplyQuery = q

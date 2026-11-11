@@ -2525,7 +2525,7 @@ final class ApplicationFormTrackerTests: XCTestCase {
         XCTAssertEqual(model.detectedFormTitle, "World Scholars Cup Coaching Application")
         XCTAssertEqual(model.activeSession?.fields.count, 0, "New form should start fresh")
         
-        // 3. User navigates back to Form 1 (Laguna Schools Debate)
+        // 3. User reopens Form 1 (Laguna Schools Debate) cleanly (e.g., blank or reloaded form)
         model.detector = MockApplicationFormDetector(
             detected: true,
             title: "Laguna Schools Debate 2026: IA/SA Application Form",
@@ -2534,16 +2534,25 @@ final class ApplicationFormTrackerTests: XCTestCase {
         )
         model.checkActiveApplication()
         
-        // Verify Form 1 is restored with all its previous inputs!
+        // Verify Form 1 schema is restored cleanly with ZERO stale answers leaked from the archived session
         XCTAssertTrue(model.isFormDetected)
         XCTAssertEqual(model.activeSession?.formTitle, "Laguna Schools Debate 2026: IA/SA Application Form")
         XCTAssertEqual(model.activeSession?.fields.count, 3)
-        XCTAssertEqual(model.activeSession?.fields[0].value, "Minh Nguyen", "Previous input must be restored from memory")
-        XCTAssertEqual(model.activeSession?.fields[1].value, "minh@example.com", "Previous input must be restored from memory")
-        XCTAssertEqual(model.activeSession?.answeredCount, 2)
+        XCTAssertEqual(model.activeSession?.fields[0].value, "", "Reopened form must start blank until live browser inputs are read")
+        XCTAssertEqual(model.activeSession?.fields[1].value, "", "Reopened form must start blank until live browser inputs are read")
+        XCTAssertEqual(model.activeSession?.answeredCount, 0)
+        XCTAssertEqual(model.activeFieldIndex, 0, "Blank reopened form must start at first unanswered question")
         
-        // Verify activeFieldIndex points to the first unanswered field (index 2: Debate Experience), not Question 1
-        XCTAssertEqual(model.activeFieldIndex, 2, "Active field must advance to first unanswered question")
+        // And if the browser tab DOES currently hold live inputs, live sync populates them and advances activeFieldIndex
+        model.applyLiveSnapshot([
+            (label: "Full Name", value: "Minh Nguyen"),
+            (label: "Email Address", value: "minh@example.com"),
+            (label: "Debate Experience", value: "")
+        ])
+        XCTAssertEqual(model.activeSession?.fields[0].value, "Minh Nguyen")
+        XCTAssertEqual(model.activeSession?.fields[1].value, "minh@example.com")
+        XCTAssertEqual(model.activeSession?.answeredCount, 2)
+        XCTAssertEqual(model.activeFieldIndex, 2, "Active field must advance to first unanswered question after live sync")
     }
     
     @MainActor
