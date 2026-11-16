@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 public struct MorphIslandView: View {
     @ObservedObject var model: NotchModel
     @ObservedObject private var shortcutManager = ShortcutManager.shared
+    @ObservedObject private var profileManager = YTMProfileManager.shared
+    @ObservedObject private var supabase = SupabaseService.shared
     var onMouseEnter: () -> Void
     var onMouseExit: () -> Void
     @State private var isNotchDragTargeted: Bool = false
@@ -2011,13 +2013,30 @@ public struct MorphIslandView: View {
                 model.toggleGlassIslandTab(state)
             }
         }) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: isActive ? .bold : .medium))
-                .foregroundColor(isActive ? .white : Color.white.opacity(0.80))
-                .frame(width: 34, height: 32)
-                .background(
-                    Group {
-                        if isActive {
+            Group {
+                if state == .profile {
+                    MorphAvatarView(
+                        image: supabase.currentUser.avatarImage,
+                        imageURL: supabase.currentUser.avatarURL,
+                        initials: supabase.currentUser.displayInitials,
+                        size: 20
+                    )
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: isActive ? .bold : .medium))
+                        .foregroundColor(isActive ? .white : Color.white.opacity(0.80))
+                }
+            }
+            .frame(width: 34, height: 32)
+            .background(
+                Group {
+                    if isActive {
+                        if state == .profile {
+                            // Borderless subtle glow for avatar tab, zero harsh white stroke rings
+                            Circle()
+                                .fill(Color.white.opacity(0.18))
+                                .shadow(color: Color(hex: model.glassIslandTintHex).opacity(0.5), radius: 6)
+                        } else {
                             RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .fill(Color.white.opacity(0.28))
                                 .overlay(
@@ -2025,12 +2044,13 @@ public struct MorphIslandView: View {
                                         .stroke(Color.white.opacity(0.65), lineWidth: 1)
                                 )
                                 .shadow(color: Color(hex: model.glassIslandTintHex).opacity(0.7), radius: 8)
-                        } else {
-                            Color.clear
                         }
+                    } else {
+                        Color.clear
                     }
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(label)
@@ -4208,29 +4228,55 @@ public struct MorphIslandView: View {
     
     // MARK: - Music Panel View (460 x 384 pt)
     private var glassMusicView: some View {
-        VStack(spacing: 8) {
-            glassMusicHeaderView
-            
-            ZStack {
-                switch model.glassMusicSubtab {
-                case .playing:
-                    glassMusicNowPlayingView
-                case .library:
-                    glassMusicLibraryView
-                case .queue:
-                    glassMusicQueueView
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 8) {
+                glassMusicHeaderView
+                
+                ZStack {
+                    switch model.glassMusicSubtab {
+                    case .playing:
+                        glassMusicNowPlayingView
+                    case .library:
+                        glassMusicLibraryView
+                    case .queue:
+                        glassMusicQueueView
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                if model.glassMusicSubtab != .playing {
+                    glassMusicMiniPlayerView
                 }
             }
+            .padding(.horizontal, 10)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             
-            if model.glassMusicSubtab != .playing {
-                glassMusicMiniPlayerView
+            if model.media.isProfileSwitcherOpen {
+                // Background dismissal surface
+                Color.black.opacity(0.01)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                            model.media.isProfileSwitcherOpen = false
+                        }
+                    }
+                
+                YTMProfileSwitcherView(media: model.media) {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                        model.media.isProfileSwitcherOpen = false
+                    }
+                }
+                .padding(.top, 38)
+                .padding(.trailing, 10)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.94, anchor: .topTrailing).combined(with: .opacity),
+                    removal: .scale(scale: 0.94, anchor: .topTrailing).combined(with: .opacity)
+                ))
+                .zIndex(999)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 4)
-        .padding(.bottom, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     private var glassMusicHeaderView: some View {
@@ -4247,9 +4293,34 @@ public struct MorphIslandView: View {
                     .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 0.8))
             )
             
-            Spacer()
+            Spacer(minLength: 4)
+            
+            glassMusicProfileButton
         }
         .frame(height: 32)
+    }
+    
+    private var glassMusicProfileButton: some View {
+        Button(action: {
+            MorphHaptics.levelChange()
+            withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                model.media.isProfileSwitcherOpen.toggle()
+            }
+        }) {
+            // Natural circular avatar without any harsh white border, matching the top bar profile picture
+            MorphAvatarView(
+                image: model.media.activeProfile?.avatarImage,
+                imageURL: model.media.activeProfile?.avatarURL,
+                initials: model.media.activeProfile?.displayName.isEmpty == false ? model.media.activeProfile!.displayName : (model.media.userEmail ?? "U"),
+                size: 22
+            )
+            .clipShape(Circle())
+            .shadow(color: Color.black.opacity(0.35), radius: 2.5, y: 1)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 30, height: 30)
+        .contentShape(Circle())
+        .help(model.media.activeProfile?.email.isEmpty == false ? "YouTube Music: \(model.media.activeProfile!.displayName) (\(model.media.activeProfile!.email))" : "YouTube Music Profile")
     }
     
     private func glassMusicSegmentButton(tab: GlassMusicSubtab) -> some View {
@@ -6116,15 +6187,13 @@ public struct MorphIslandView: View {
                         }
                     }) {
                         HStack(spacing: 5) {
-                            ZStack {
-                                Circle()
-                                    .fill(model.theme.cardBackgroundElevated)
-                                    .frame(width: 18, height: 18)
-                                Text(model.supabase.currentUser.displayInitials)
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundColor(model.theme.textPrimary)
-                            }
-                            Text(model.supabase.currentUser.firstName)
+                            MorphAvatarView(
+                                image: supabase.currentUser.avatarImage,
+                                imageURL: supabase.currentUser.avatarURL,
+                                initials: supabase.currentUser.displayInitials,
+                                size: 18
+                            )
+                            Text(model.supabase.currentUser.firstName.isEmpty ? model.supabase.currentUser.displayName : model.supabase.currentUser.firstName)
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(model.theme.textPrimary)
                                 .lineLimit(1)

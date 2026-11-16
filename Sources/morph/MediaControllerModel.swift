@@ -47,6 +47,10 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isLoadingQuickPicks: Bool = false
     @Published public var quickPicksError: String? = nil
     @Published public var isSignedIn: Bool = false
+    @Published public var userEmail: String? = nil
+    @Published public var profiles: [YTMProfile] = []
+    @Published public var activeProfile: YTMProfile? = nil
+    @Published public var isProfileSwitcherOpen: Bool = false
     @Published public var selectedPlaylist: YTMPlaylist? = nil
     @Published public var rightDeckSection: YTMRightDeckSection = .home
     @Published public var previousRightDeckSection: YTMRightDeckSection = .home
@@ -377,13 +381,24 @@ public final class MediaControllerModel: ObservableObject {
                     let trackTitleChanged = (!self.lastProcessedTrackTitle.isEmpty && data.title != self.lastProcessedTrackTitle)
                     self.lastProcessedTrackTitle = data.title
                     
+                    // Reset stall counter when the track title changes so the new song gets a fresh window
+                    if trackTitleChanged {
+                        self.stalledPlaybackCount = 0
+                        self.lastObservedPlaybackTime = nil
+                    }
+                    
                     let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
                     let trackChanged = (currentSignature != self.lastProcessedTrackSignature)
                     if queueChanged || trackChanged {
-                        // Watchdog: If previous state was playing and new track loaded in paused state at 0s, resume immediately!
+                        // Watchdog: If previous state was playing and new track loaded in paused state at 0s, nudge playback.
                         // Guarded: Must be an actual track change (not a play/pause toggle), currentTime <= 1.0, and user did NOT intentionally pause!
+                        // We defer by 0.8s to give YTM's own player a chance to auto-advance before Morph intervenes.
                         if wasPlaying && !data.isPlaying && data.currentTime <= 1.0 && data.duration > 0 && trackTitleChanged && !self.userIntentionallyPaused && !self.isTestingEnvironment {
-                            self.engine.ensurePlayback()
+                            let eng = self.engine
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                                guard let self = self, !self.userIntentionallyPaused, !eng.trackData.isPlaying else { return }
+                                eng.ensurePlayback()
+                            }
                         }
                         self.lastProcessedTrackSignature = currentSignature
                         self.syncPlayingTrackWithPlaylists()
@@ -436,6 +451,38 @@ public final class MediaControllerModel: ObservableObject {
                     self.libraryError = nil
                     self.refreshPlaylists()
                     self.refreshQuickPicks()
+                } else if !signedIn {
+                    self.userEmail = nil
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$userEmail
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] email in
+                self?.userEmail = email
+            }
+            .store(in: &cancellables)
+            
+        self.profiles = YTMProfileManager.shared.profiles
+        self.activeProfile = YTMProfileManager.shared.activeProfile
+        
+        YTMProfileManager.shared.$profiles
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] profs in
+                guard let self = self else { return }
+                self.profiles = profs
+                self.activeProfile = YTMProfileManager.shared.activeProfile
+            }
+            .store(in: &cancellables)
+            
+        YTMProfileManager.shared.$activeProfileId
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.activeProfile = YTMProfileManager.shared.activeProfile
+                if let email = self.activeProfile?.email, !email.isEmpty {
+                    self.userEmail = email
                 }
             }
             .store(in: &cancellables)
@@ -451,7 +498,13 @@ public final class MediaControllerModel: ObservableObject {
             .sink { [weak self] picks in
                 guard let self = self else { return }
                 if !picks.isEmpty {
-                    self.quickPicks = picks
+                    // Only replace quickPicks if the content actually changed (by videoId fingerprint),
+                    // preventing SwiftUI from re-rendering the entire list on every 1-second DOM poll.
+                    let newIds = picks.map { $0.videoId ?? $0.id }
+                    let oldIds = self.quickPicks.map { $0.videoId ?? $0.id }
+                    if newIds != oldIds {
+                        self.quickPicks = picks
+                    }
                 } else if self.quickPicks.isEmpty {
                     self.quickPicks = YTMParser.defaultQuickPicks
                 }
@@ -1781,6 +1834,45 @@ public final class MediaControllerModel: ObservableObject {
         isWaitingForBrowserSignIn = true
         browserAuthStatusMessage = "Sign in via the Morph YouTube Music window. Once signed in, your playlists and music sync directly into Morph."
         engine.loadGoogleSignIn()
+    }
+    
+    public func signOut() {
+        isSignedIn = false
+        userEmail = nil
+        playlists = []
+        selectedPlaylist = nil
+        isWaitingForBrowserSignIn = false
+        browserAuthStatusMessage = nil
+        engine.signOut()
+        refreshQuickPicks()
+    }
+    
+    public func switchProfile(to profile: YTMProfile) {
+        YTMProfileManager.shared.switchProfile(to: profile.id)
+        self.activeProfile = profile
+        self.userEmail = profile.email
+        self.playlists = []
+        self.quickPicks = []
+        self.isLoadingQuickPicks = true
+        engine.switchProfile(to: profile)
+    }
+    
+    public func addNewProfile() {
+        let newP = YTMProfileManager.shared.addProfile(email: "", displayName: "New Profile")
+        switchProfile(to: newP)
+        openSignIn()
+    }
+    
+    public func importBrowserProfile(email: String, displayName: String) {
+        let p = YTMProfileManager.shared.addProfile(email: email, displayName: displayName, isChromeImported: true)
+        switchProfile(to: p)
+    }
+    
+    public func removeProfile(id: UUID) {
+        YTMProfileManager.shared.removeProfile(id: id)
+        if let active = YTMProfileManager.shared.activeProfile {
+            switchProfile(to: active)
+        }
     }
     
     public func openSignInInBrowser() {

@@ -259,6 +259,7 @@ public struct YTMTrackData: Codable, Equatable {
     public var queue: [YTMPlaylistItem]
     public var playlists: [YTMPlaylist]
     public var isSignedIn: Bool
+    public var userEmail: String?
     
     public init(
         title: String = "",
@@ -275,7 +276,8 @@ public struct YTMTrackData: Codable, Equatable {
         repeatMode: YTMRepeatMode = .off,
         queue: [YTMPlaylistItem] = [],
         playlists: [YTMPlaylist] = [],
-        isSignedIn: Bool = false
+        isSignedIn: Bool = false,
+        userEmail: String? = nil
     ) {
         self.title = title
         self.artist = artist
@@ -292,6 +294,7 @@ public struct YTMTrackData: Codable, Equatable {
         self.queue = queue
         self.playlists = playlists
         self.isSignedIn = isSignedIn
+        self.userEmail = userEmail
     }
 }
 
@@ -302,6 +305,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var trackData: YTMTrackData = YTMTrackData()
     @Published public var userPlaylists: [YTMPlaylist] = []
     @Published public var isSignedIn: Bool = false
+    @Published public var userEmail: String? = nil
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
     @Published public var isWaitingForSignInCompletion: Bool = false
@@ -333,6 +337,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     private var windowDelegate: PlayerWindowDelegate?
     private var resumeRetryWorkItems: [DispatchWorkItem] = []
     private var isResumeRequested: Bool = false
+    @Published public var activeProfile: YTMProfile? = nil
     
     private let kHandlerName = "morphYTM"
     private let kYTMURL = "https://music.youtube.com"
@@ -342,10 +347,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public override init() {
         super.init()
         self.quickPicks = YTMParser.defaultQuickPicks
-        setupWebView()
+        self.activeProfile = YTMProfileManager.shared.activeProfile
+        if let initialEmail = self.activeProfile?.email, !initialEmail.isEmpty {
+            self.userEmail = initialEmail
+        }
+        setupWebView(for: self.activeProfile)
     }
     
-    private func setupWebView() {
+    public func setupWebView(for profile: YTMProfile? = nil) {
         let contentController = WKUserContentController()
         contentController.add(self, name: kHandlerName)
         
@@ -368,6 +377,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
+        
+        let target = profile ?? YTMProfileManager.shared.activeProfile
+        self.activeProfile = target
         config.websiteDataStore = WKWebsiteDataStore.default() // Persistent cookies across restarts
         config.mediaTypesRequiringUserActionForPlayback = [] // Allow background auto-playback
         config.allowsAirPlayForMediaPlayback = true
@@ -387,24 +399,60 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         // In modern Morph architecture, webView is hosted directly within Morph's active notch panel (attachToHostingView),
         // completely eliminating any ghost/invisible NSWindow on the user's desktop screen.
         if !MorphEnvironment.isTestingEnvironment {
-            loadHome()
+            loadHome(for: self.activeProfile)
         }
     }
-
     
-    public func loadHome() {
+    public func switchProfile(to profile: YTMProfile) {
+        self.activeProfile = profile
+        self.userEmail = profile.email
+        YTMProfileManager.shared.switchProfile(to: profile.id)
+        
+        // Clear cached library and quick picks so we don't display another profile's data
+        self.userPlaylists = []
+        self.quickPicks = []
+        self.isLoadingLibrary = true
+        self.isLoadingQuickPicks = true
+        
         guard !MorphEnvironment.isTestingEnvironment else { return }
-        if let url = URL(string: kYTMURL) {
+        
+        // Sync any cookies from active browser tabs
+        syncSessionFromBrowser()
+        
+        // Load YouTube Music with Google's multi-account authuser parameter
+        loadHome(for: profile)
+        checkAuthCookies()
+        
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard let self = self else { return }
+            self.fetchRealUserPlaylists()
+            self.fetchQuickPicks()
+        }
+    }
+    
+    public func loadHome(for profile: YTMProfile? = nil) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        let target = profile ?? self.activeProfile
+        var urlStr = kYTMURL
+        if let email = target?.email, !email.isEmpty {
+            let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
+            urlStr = "\(kYTMURL)/?authuser=\(encoded)"
+        }
+        if let url = URL(string: urlStr) {
             let request = URLRequest(url: url)
             self.webView.load(request)
         }
     }
     
-    public func loadGoogleSignIn() {
+    public func loadGoogleSignIn(for email: String? = nil) {
         self.isWaitingForSignInCompletion = true
         guard !MorphEnvironment.isTestingEnvironment else { return }
-        // Direct Google Sign-In endpoint that redirects back to YouTube Music once completed
-        let signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
+        var signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
+        if let targetEmail = email ?? self.activeProfile?.email, !targetEmail.isEmpty {
+            let encoded = targetEmail.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? targetEmail
+            signInURLString += "&Email=\(encoded)"
+        }
         if let url = URL(string: signInURLString) {
             let request = URLRequest(url: url)
             self.webView.load(request)
@@ -429,13 +477,57 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func clearCookiesAndCache() {
+        signOut()
+    }
+    
+    public func signOut() {
+        self.isSignedIn = false
+        self.userEmail = nil
+        self.userPlaylists = []
+        self.trackData.isSignedIn = false
+        self.trackData.userEmail = nil
+        self.lastLibrarySync = nil
+        self.lastQuickPicksSync = nil
+        
+        guard !MorphEnvironment.isTestingEnvironment else {
+            return
+        }
+        
         let dataStore = WKWebsiteDataStore.default()
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let dateFrom = Date(timeIntervalSince1970: 0)
         dataStore.removeData(ofTypes: types, modifiedSince: dateFrom) { [weak self] in
-            DispatchQueue.main.async {
-                self?.loadHome()
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.loadHome()
             }
+        }
+        
+        dataStore.httpCookieStore.getAllCookies { cookies in
+            for cookie in cookies {
+                if cookie.domain.contains("youtube.com") || cookie.domain.contains("google.com") {
+                    dataStore.httpCookieStore.delete(cookie)
+                }
+            }
+        }
+        
+        // Clear local storage and cookies via script
+        let script = """
+        (function() {
+            try {
+                document.cookie.split(";").forEach(function(c) {
+                    document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/;domain=.youtube.com");
+                    document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+                });
+                localStorage.clear();
+                sessionStorage.clear();
+            } catch(e) {}
+        })();
+        """
+        evaluate(script)
+        
+        if let logoutURL = URL(string: "https://accounts.google.com/Logout") {
+            self.webView.load(URLRequest(url: logoutURL))
         }
     }
     
@@ -575,8 +667,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 ))
             }
             if !parsedPicks.isEmpty {
-                self.quickPicks = YTMPlaylistItem.deduplicate(parsedPicks)
-                self.lastQuickPicksSync = Date()
+                let deduped = YTMPlaylistItem.deduplicate(parsedPicks)
+                // Only publish a new quickPicks array when the content actually changed.
+                // The JS payload fires every ~1s; without this guard every poll replaces the
+                // entire array, causing SwiftUI to re-render every Quick Picks row (flickering).
+                let newIds = deduped.map { $0.videoId ?? $0.id }
+                let oldIds = self.quickPicks.map { $0.videoId ?? $0.id }
+                if newIds != oldIds {
+                    self.quickPicks = deduped
+                    self.lastQuickPicksSync = Date()
+                }
             }
         }
         
@@ -585,6 +685,25 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             self.isSignedIn = true
         } else if !self.currentURLString.contains("accounts.google.com") {
             self.isSignedIn = false
+        }
+        
+        let extractedEmail = (body["userEmail"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extractedAvatarURL = (body["userAvatarURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let extractedDisplayName = (body["userDisplayName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if let email = extractedEmail, !email.isEmpty {
+            self.userEmail = email
+            YTMProfileManager.shared.handleDetectedEmail(
+                email,
+                avatarURL: (extractedAvatarURL?.isEmpty == false ? extractedAvatarURL : nil),
+                displayName: (extractedDisplayName?.isEmpty == false ? extractedDisplayName : nil)
+            )
+            self.activeProfile = YTMProfileManager.shared.activeProfile
+        } else if let avUrl = extractedAvatarURL, !avUrl.isEmpty, self.isSignedIn {
+            YTMProfileManager.shared.updateActiveProfileAvatar(url: avUrl)
+            self.activeProfile = YTMProfileManager.shared.activeProfile
+        } else if !self.isSignedIn {
+            self.userEmail = nil
         }
         
         self.trackData = YTMTrackData(
@@ -602,7 +721,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             repeatMode: repeatMode,
             queue: parsedQueue,
             playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists,
-            isSignedIn: self.isSignedIn
+            isSignedIn: self.isSignedIn,
+            userEmail: self.userEmail
         )
         if playing {
             self.isResumeRequested = false
@@ -1586,6 +1706,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             return try await override(endpoint, body)
         }
         try await waitUntilReady()
+        let authUser = (self.activeProfile?.email.isEmpty == false) ? self.activeProfile!.email : "0"
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         let bodyJSON = String(decoding: bodyData, as: UTF8.self)
         let js = """
@@ -1595,7 +1716,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         const apiKey = cfg ? cfg.get('INNERTUBE_API_KEY') : null;
         const payload = JSON.parse(bodyJSON);
         payload.context = context;
-        const headers = { 'Content-Type': 'application/json', 'X-Goog-AuthUser': '0', 'X-Origin': 'https://music.youtube.com' };
+        let targetAuth = (context && context.user && context.user.authuser) || '\(authUser)';
+        const headers = { 'Content-Type': 'application/json', 'X-Goog-AuthUser': String(targetAuth), 'X-Origin': 'https://music.youtube.com' };
         headers['X-Youtube-Client-Name'] = String((cfg && cfg.get('INNERTUBE_CONTEXT_CLIENT_NAME')) || 67);
         headers['X-Youtube-Client-Version'] = String((cfg && cfg.get('INNERTUBE_CONTEXT_CLIENT_VERSION')) || context.client.clientVersion);
         const visitor = cfg ? cfg.get('VISITOR_DATA') : null;
@@ -1640,6 +1762,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         guard let url = URL(string: "https://music.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false") else {
             throw InnerTubeError.invalidResponse
         }
+        let authUser = (self.activeProfile?.email.isEmpty == false) ? self.activeProfile!.email : "0"
         var payload = body
         payload["context"] = [
             "client": [
@@ -1656,7 +1779,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         request.setValue("https://music.youtube.com/", forHTTPHeaderField: "Referer")
         request.setValue("67", forHTTPHeaderField: "X-Youtube-Client-Name")
         request.setValue("1.20250310.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
-        request.setValue("0", forHTTPHeaderField: "X-Goog-AuthUser")
+        request.setValue(authUser, forHTTPHeaderField: "X-Goog-AuthUser")
         request.setValue(kCustomUserAgent, forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -2528,6 +2651,18 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     window.webkitAudioContext = _morphWrapAudioCtx(window.webkitAudioContext);
                 }
             } catch(e) {}
+            
+            // 7. Ensure document is never considered hidden by YouTube background tab throttling
+            try {
+                Object.defineProperty(document, 'hidden', {
+                    get: function() { return false; },
+                    configurable: true
+                });
+                Object.defineProperty(document, 'visibilityState', {
+                    get: function() { return 'visible'; },
+                    configurable: true
+                });
+            } catch(e) {}
         })();
         """
     }
@@ -2777,41 +2912,58 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     var quickPicks = [];
                     try {
                         var shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
+                        var targetShelf = null;
+                        // Pass 1: Prioritize explicit Quick Picks / Lựa chọn nhanh shelf
                         for (var s = 0; s < shelves.length; s++) {
                             var sh = shelves[s];
                             var shTitleEl = sh.querySelector('yt-formatted-string.title') || sh.querySelector('.title') || sh.querySelector('h2');
                             var shTitle = shTitleEl ? (shTitleEl.innerText || shTitleEl.textContent || '').toLowerCase() : '';
-                            if (shTitle.indexOf('quick pick') !== -1 || shTitle.indexOf('listen again') !== -1 || shTitle.indexOf('start radio') !== -1 || (s === 0 && window.location.pathname === '/')) {
-                                var items = sh.querySelectorAll('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
-                                for (var itIdx = 0; itIdx < Math.min(items.length, 25); itIdx++) {
-                                    var itEl = items[itIdx];
-                                    var tEl = itEl.querySelector('.title a') || itEl.querySelector('.title') || itEl.querySelector('yt-formatted-string.title');
-                                    var aEl = itEl.querySelector('.subtitle a') || itEl.querySelector('.byline a') || itEl.querySelector('.subtitle') || itEl.querySelector('.byline');
-                                    var dEl = itEl.querySelector('.fixed-column') || itEl.querySelector('.duration');
-                                    var itTitle = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
-                                    var itArtist = aEl ? (aEl.innerText || aEl.textContent || '').trim() : '';
-                                    var itDur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
-                                    var linkEl = itEl.querySelector('a[href*="watch?v="]');
-                                    var vId = '';
-                                    if (linkEl) {
-                                        var href = linkEl.getAttribute('href') || '';
-                                        var vMatch = href.match(/[?&]v=([^&]+)/);
-                                        if (vMatch) vId = vMatch[1];
-                                    }
-                                    var imgEl = itEl.querySelector('img');
-                                    var thumb = imgEl ? imgEl.src : null;
-                                    if (itTitle) {
-                                        quickPicks.push({
-                                            id: vId ? vId : ('qp_' + itIdx),
-                                            title: itTitle,
-                                            artist: itArtist,
-                                            duration: itDur,
-                                            videoId: vId ? vId : null,
-                                            thumbnailURL: thumb
-                                        });
-                                    }
+                            if (shTitle.indexOf('quick pick') !== -1 || shTitle.indexOf('lựa chọn nhanh') !== -1) {
+                                targetShelf = sh;
+                                break;
+                            }
+                        }
+                        // Pass 2: If no explicit Quick Picks shelf, fallback only on home page root ('/')
+                        if (!targetShelf && window.location.pathname === '/' && shelves.length > 0) {
+                            for (var s2 = 0; s2 < shelves.length; s2++) {
+                                var sh2 = shelves[s2];
+                                var shTitleEl2 = sh2.querySelector('yt-formatted-string.title') || sh2.querySelector('.title') || sh2.querySelector('h2');
+                                var shTitle2 = shTitleEl2 ? (shTitleEl2.innerText || shTitleEl2.textContent || '').toLowerCase() : '';
+                                if (shTitle2.indexOf('listen again') !== -1 || shTitle2.indexOf('start radio') !== -1 || s2 === 0) {
+                                    targetShelf = sh2;
+                                    break;
                                 }
-                                if (quickPicks.length > 0) break;
+                            }
+                        }
+                        if (targetShelf) {
+                            var items = targetShelf.querySelectorAll('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
+                            for (var itIdx = 0; itIdx < Math.min(items.length, 25); itIdx++) {
+                                var itEl = items[itIdx];
+                                var tEl = itEl.querySelector('.title a') || itEl.querySelector('.title') || itEl.querySelector('yt-formatted-string.title');
+                                var aEl = itEl.querySelector('.subtitle a') || itEl.querySelector('.byline a') || itEl.querySelector('.subtitle') || itEl.querySelector('.byline');
+                                var dEl = itEl.querySelector('.fixed-column') || itEl.querySelector('.duration');
+                                var itTitle = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
+                                var itArtist = aEl ? (aEl.innerText || aEl.textContent || '').trim() : '';
+                                var itDur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
+                                var linkEl = itEl.querySelector('a[href*="watch?v="]');
+                                var vId = '';
+                                if (linkEl) {
+                                    var href = linkEl.getAttribute('href') || '';
+                                    var vMatch = href.match(/[?&]v=([^&]+)/);
+                                    if (vMatch) vId = vMatch[1];
+                                }
+                                var imgEl = itEl.querySelector('img');
+                                var thumb = imgEl ? imgEl.src : null;
+                                if (itTitle) {
+                                    quickPicks.push({
+                                        id: vId ? vId : ('qp_' + itIdx),
+                                        title: itTitle,
+                                        artist: itArtist,
+                                        duration: itDur,
+                                        videoId: vId ? vId : null,
+                                        thumbnailURL: thumb
+                                    });
+                                }
                             }
                         }
                     } catch(qpe) {}
@@ -2831,13 +2983,24 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                     }
                     
-                    // 5. User Signed-In State Detection
+                    // 5. User Signed-In State & Email Detection
                     var isSignedIn = false;
+                    var userEmail = '';
+                    var userAvatarURL = '';
+                    var userDisplayName = '';
                     try {
                         if (window.ytcfg && typeof window.ytcfg.get === 'function') {
                             var yLoggedIn = window.ytcfg.get('LOGGED_IN');
                             if (typeof yLoggedIn === 'boolean') {
                                 isSignedIn = yLoggedIn;
+                            }
+                            var email = window.ytcfg.get('USER_EMAIL');
+                            if (email && typeof email === 'string' && email.indexOf('@') !== -1) {
+                                userEmail = email.trim();
+                            }
+                            var uName = window.ytcfg.get('USER_NAME');
+                            if (uName && typeof uName === 'string') {
+                                userDisplayName = uName.trim();
                             }
                         }
                         if (!isSignedIn) {
@@ -2846,6 +3009,26 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             var hasAuthCookie = /(?:^|;\\s*)(?:SAPISID|__Secure-3PAPISID|__Secure-1PAPISID)=([^;]+)/.test(document.cookie || '');
                             if ((hasAvatar || hasAuthCookie) && !signInBtn) {
                                 isSignedIn = true;
+                            }
+                        }
+                        var avatarImg = document.querySelector('button#avatar-btn img, #avatar-btn img, img#avatar-btn, yt-img-shadow#avatar img, ytmusic-settings-button img, yt-icon-button#avatar-btn img');
+                        if (avatarImg && avatarImg.src && avatarImg.src.indexOf('http') === 0) {
+                            userAvatarURL = avatarImg.src;
+                        }
+                        var avatarBtn = document.querySelector('button#avatar-btn, img#avatar-btn, tp-yt-paper-icon-button#avatar-btn, ytmusic-settings-button');
+                        if (avatarBtn) {
+                            var aria = avatarBtn.getAttribute('aria-label') || avatarBtn.getAttribute('alt') || avatarBtn.getAttribute('title') || '';
+                            if (!userEmail) {
+                                var emailMatch = aria.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})/);
+                                if (emailMatch) {
+                                    userEmail = emailMatch[1];
+                                }
+                            }
+                            if (!userDisplayName) {
+                                var nameMatch = aria.match(/(?:Account:\\s*|Profile:\\s*)([^(\\n]+)/i);
+                                if (nameMatch) {
+                                    userDisplayName = nameMatch[1].trim();
+                                }
                             }
                         }
                     } catch(ie) {}
@@ -2867,7 +3050,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     queue: queue,
                     playlists: playlists,
                     quickPicks: quickPicks,
-                    isSignedIn: isSignedIn
+                    isSignedIn: isSignedIn,
+                    userEmail: userEmail,
+                    userAvatarURL: userAvatarURL,
+                    userDisplayName: userDisplayName
                 };
             }
             
@@ -2909,12 +3095,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         '.ytmusic-you-there-renderer button, ' +
                         'ytmusic-dialog-renderer button'
                     );
+                    var dismissed = false;
                     for (var i = 0; i < confirmButtons.length; i++) {
                         var cb = confirmButtons[i];
                         if (cb && (cb.offsetParent !== null || cb.offsetWidth > 0)) {
                             var inner = cb.querySelector('button, #button, yt-button-shape');
                             (inner || cb).click();
+                            dismissed = true;
                         }
+                    }
+                    if (dismissed && !window._morphUserPaused) {
+                        ensureActivePlayback();
                     }
 
                     // 2. Ensure YouTube Music Autoplay / Automix toggle is enabled
@@ -3204,13 +3395,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         _morphWasPlayingBeforeTransition = true;
                         startTransitionWatchdog();
                         
-                        // If YouTube Music native player has not begun advancing after 280ms, gently nudge forward
+                        // If YouTube Music native player has not begun advancing after 2.5s, gently nudge forward
                         setTimeout(function() {
                             var vNow = document.querySelector('video');
-                            if (vNow && vNow.ended) {
+                            if (vNow && vNow.ended && !window._morphUserPaused) {
                                 triggerNextVideo();
                             }
-                        }, 280);
+                        }, 2500);
                     }, true);
                     
                     // Continuous playback: dismiss any "Still watching?" modals and keep autoplay active
@@ -3261,6 +3452,85 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
 }
 
 // MARK: - Player Window Toolbar (Back, Forward, Reload, Direct Sign-in, Home)
+public struct PlayerWindowProfileMenuView: View {
+    @ObservedObject var engine: YouTubeMusicEngine
+    
+    public init(engine: YouTubeMusicEngine) {
+        self.engine = engine
+    }
+    
+    public var body: some View {
+        Menu {
+            Section("Profiles") {
+                ForEach(YTMProfileManager.shared.profiles) { p in
+                    Button(action: {
+                        engine.switchProfile(to: p)
+                    }) {
+                        HStack {
+                            Text(p.displayName.isEmpty ? p.email : "\(p.displayName) (\(p.email))")
+                            if p.id == YTMProfileManager.shared.activeProfileId {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+            
+            let detected = YTMProfileManager.shared.detectAvailableBrowserProfiles()
+            if !detected.isEmpty {
+                Section("Import from Chrome") {
+                    ForEach(detected, id: \.email) { item in
+                        Button(action: {
+                            let newP = YTMProfileManager.shared.addProfile(email: item.email, displayName: item.name, isChromeImported: true)
+                            engine.switchProfile(to: newP)
+                        }) {
+                            Label("Import \(item.name) (\(item.email))", systemImage: "arrow.down.circle")
+                        }
+                    }
+                }
+            }
+            
+            Section {
+                Button(action: {
+                    let newP = YTMProfileManager.shared.addProfile(email: "", displayName: "New Profile")
+                    engine.switchProfile(to: newP)
+                    engine.loadGoogleSignIn()
+                }) {
+                    Label("Add New Profile...", systemImage: "person.crop.circle.badge.plus")
+                }
+                
+                if engine.isSignedIn {
+                    Button(action: {
+                        engine.signOut()
+                    }) {
+                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                MorphAvatarView(
+                    image: engine.activeProfile?.avatarImage,
+                    imageURL: engine.activeProfile?.avatarURL,
+                    initials: engine.activeProfile?.displayName.isEmpty == false ? engine.activeProfile!.displayName : (engine.userEmail ?? "U"),
+                    size: 14
+                )
+                Text(engine.activeProfile?.displayName.isEmpty == false ? engine.activeProfile!.displayName : (engine.userEmail ?? "Profile"))
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(0.12))
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+    }
+}
+
 public struct PlayerWindowToolbarView: View {
     @ObservedObject var engine: YouTubeMusicEngine
     
@@ -3336,9 +3606,12 @@ public struct PlayerWindowToolbarView: View {
                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                 .foregroundColor(Color.white.opacity(0.45))
                 .lineLimit(1)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 240)
             
             Spacer()
+            
+            // Profile Switcher Menu
+            PlayerWindowProfileMenuView(engine: engine)
             
             // Direct Google Sign-In Action Button / Signed In Indicator
             if engine.isSignedIn {
@@ -3347,14 +3620,33 @@ public struct PlayerWindowToolbarView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 10.5, weight: .bold))
                             .foregroundColor(Color.green)
-                        Text("Connected • Signed In")
+                        Text(engine.userEmail ?? "Connected • Signed In")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.white)
+                            .lineLimit(1)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Color.white.opacity(0.12))
                     .clipShape(Capsule())
+                    
+                    Button(action: {
+                        engine.signOut()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("Sign Out")
+                                .font(.system(size: 10.5, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.red.opacity(0.75))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sign out of current YouTube Music account")
                     
                     Button(action: {
                         engine.fetchRealUserPlaylists()

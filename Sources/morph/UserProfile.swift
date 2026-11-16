@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 public struct UserProfile: Codable, Equatable, Sendable {
     public var id: String
@@ -12,6 +13,19 @@ public struct UserProfile: Codable, Equatable, Sendable {
     public var avatarInitials: String
     public var avatarImageBase64: String?
     public var avatarURL: String?
+    
+    public var avatarImage: NSImage? {
+        if let base64 = avatarImageBase64, let data = Data(base64Encoded: base64) {
+            return NSImage(data: data)
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let chromeBase = home + "/Library/Application Support/Google/Chrome"
+        let defaultPic = "\(chromeBase)/Default/Google Profile Picture.png"
+        if FileManager.default.fileExists(atPath: defaultPic) {
+            return NSImage(contentsOfFile: defaultPic)
+        }
+        return nil
+    }
     
     public var displayName: String {
         let fullName = "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)

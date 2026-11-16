@@ -488,23 +488,45 @@ public struct MediaView: View {
                 .buttonStyle(.plain)
                 .help("Sign in to your YouTube Music account")
             } else {
-                Button(action: {
-                    media.openPlayerWindow()
-                }) {
-                    HStack(spacing: 2) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 6.5))
-                        Text("Synced")
-                            .font(.system(size: 7, weight: .semibold))
+                HStack(spacing: 3) {
+                    Button(action: {
+                        media.openPlayerWindow()
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 6.5))
+                            Text("Synced")
+                                .font(.system(size: 7, weight: .semibold))
+                        }
+                        .foregroundColor(theme.textPrimary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(theme.cardBackgroundElevated)
+                        .clipShape(Capsule())
                     }
-                    .foregroundColor(theme.textPrimary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1.5)
-                    .background(theme.cardBackgroundElevated)
-                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
+                    .help("Open YouTube Music Engine Window")
+                    
+                    Button(action: {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            media.signOut()
+                        }
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.system(size: 6.5))
+                            Text("Sign Out")
+                                .font(.system(size: 7, weight: .semibold))
+                        }
+                        .foregroundColor(theme.textSecondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(theme.cardBackgroundSubtle)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sign out of YouTube Music account")
                 }
-                .buttonStyle(.plain)
-                .help("Open YouTube Music Engine Window")
             }
         }
     }
@@ -913,6 +935,11 @@ public struct MediaView: View {
                     .buttonStyle(.plain)
                 }
             }
+            
+            Spacer(minLength: 4)
+            
+            // Profile Switcher: Always pinned on the top right of the Music Player
+            MediaProfileSwitcherMenu(media: media, theme: theme)
         }
         .padding(.bottom, 1)
     }
@@ -957,6 +984,47 @@ public struct MediaView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Sync existing YouTube Music session from browser")
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(theme.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(theme.hairlineBorder, lineWidth: 0.5)
+                )
+            } else {
+                HStack(spacing: 5) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 4.5, height: 4.5)
+                        Text("Active: \(media.activeProfile?.displayName.isEmpty == false ? media.activeProfile!.displayName : (media.userEmail ?? "Connected"))")
+                            .font(.system(size: 7.5, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    
+                    Spacer(minLength: 2)
+                    Button(action: {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            media.signOut()
+                        }
+                    }) {
+                        HStack(spacing: 2) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.system(size: 6.5))
+                            Text("Sign Out")
+                                .font(.system(size: 7, weight: .bold))
+                        }
+                        .foregroundColor(theme.textPrimary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(theme.cardBackgroundElevated)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Sign out of YouTube Music account")
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -1406,23 +1474,45 @@ public struct MediaView: View {
                             .buttonStyle(.plain)
                             .help("Detects signed-in YouTube Music tab in Chrome/Safari and syncs session")
                         } else {
-                            Button(action: {
-                                media.refreshPlaylists()
-                                media.refreshQuickPicks()
-                            }) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "arrow.clockwise")
-                                        .font(.system(size: 8))
-                                    Text("Sync Library")
-                                        .font(.system(size: 8.5, weight: .bold))
+                            HStack(spacing: 5) {
+                                MediaPlaylistsProfileMenu(media: media, theme: theme)
+                                
+                                Button(action: {
+                                    media.refreshPlaylists()
+                                    media.refreshQuickPicks()
+                                }) {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "arrow.clockwise")
+                                            .font(.system(size: 8))
+                                        Text("Sync")
+                                            .font(.system(size: 8.5, weight: .bold))
+                                    }
+                                    .foregroundColor(theme.activePillText)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3.5)
+                                    .background(theme.activePillBackground)
+                                    .clipShape(Capsule())
                                 }
-                                .foregroundColor(theme.activePillText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3.5)
-                                .background(theme.activePillBackground)
-                                .clipShape(Capsule())
+                                .buttonStyle(.plain)
+
+                                Button(action: {
+                                    media.signOut()
+                                }) {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                                            .font(.system(size: 8))
+                                        Text("Sign Out")
+                                            .font(.system(size: 8.5, weight: .medium))
+                                    }
+                                    .foregroundColor(theme.textSecondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3.5)
+                                    .background(theme.cardBackgroundElevated)
+                                    .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Sign out of YouTube Music")
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.top, 2)
@@ -2285,5 +2375,113 @@ public struct MediaView: View {
                 .font(.system(size: 20))
                 .foregroundColor(theme.textSecondary)
         }
+    }
+}
+
+// MARK: - Profile Switcher Menus
+public struct MediaProfileSwitcherMenu: View {
+    @ObservedObject var media: MediaControllerModel
+    @ObservedObject var theme: MorphTheme
+    @State private var isShowingSwitcher: Bool = false
+    
+    public init(media: MediaControllerModel, theme: MorphTheme) {
+        self.media = media
+        self.theme = theme
+    }
+    
+    public var body: some View {
+        Button(action: {
+            MorphHaptics.levelChange()
+            isShowingSwitcher.toggle()
+        }) {
+            // Natural circular avatar without any harsh border
+            MorphAvatarView(
+                image: media.activeProfile?.avatarImage,
+                imageURL: media.activeProfile?.avatarURL,
+                initials: media.activeProfile?.displayName.isEmpty == false ? media.activeProfile!.displayName : (media.userEmail ?? "U"),
+                size: 22
+            )
+            .clipShape(Circle())
+            .shadow(color: Color.black.opacity(0.35), radius: 2.5, y: 1)
+        }
+        .buttonStyle(.plain)
+        .frame(width: 30, height: 30)
+        .contentShape(Circle())
+        .help(media.activeProfile?.email.isEmpty == false ? "YouTube Music: \(media.activeProfile!.displayName) (\(media.activeProfile!.email))" : "YouTube Music Profile")
+        .popover(isPresented: $isShowingSwitcher, arrowEdge: .bottom) {
+            YTMProfileSwitcherView(media: media) {
+                isShowingSwitcher = false
+            }
+        }
+    }
+}
+
+public struct MediaPlaylistsProfileMenu: View {
+    @ObservedObject var media: MediaControllerModel
+    @ObservedObject var theme: MorphTheme
+    
+    public init(media: MediaControllerModel, theme: MorphTheme) {
+        self.media = media
+        self.theme = theme
+    }
+    
+    public var body: some View {
+        Menu {
+            Section("Switch Profile Library") {
+                ForEach(media.profiles) { p in
+                    Button(action: {
+                        media.switchProfile(to: p)
+                    }) {
+                        HStack {
+                            Text(p.displayName.isEmpty ? p.email : "\(p.displayName) (\(p.email))")
+                            if p.id == media.activeProfile?.id {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+            
+            let detected = YTMProfileManager.shared.detectAvailableBrowserProfiles()
+            if !detected.isEmpty {
+                Section("Import from Chrome") {
+                    ForEach(detected, id: \.email) { item in
+                        Button(action: {
+                            media.importBrowserProfile(email: item.email, displayName: item.name)
+                        }) {
+                            Label("Import \(item.name) (\(item.email))", systemImage: "arrow.down.circle")
+                        }
+                    }
+                }
+            }
+            
+            Section {
+                Button(action: {
+                    media.addNewProfile()
+                }) {
+                    Label("Add New Profile...", systemImage: "person.crop.circle.badge.plus")
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                MorphAvatarView(
+                    image: media.activeProfile?.avatarImage,
+                    imageURL: media.activeProfile?.avatarURL,
+                    initials: media.activeProfile?.displayName.isEmpty == false ? media.activeProfile!.displayName : "U",
+                    size: 12
+                )
+                Text(media.activeProfile?.displayName.isEmpty == false ? media.activeProfile!.displayName : "Profile")
+                    .font(.system(size: 8, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 6))
+            }
+            .foregroundColor(theme.textPrimary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3.5)
+            .background(theme.cardBackgroundElevated)
+            .clipShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .help("Switch YouTube Music profile")
     }
 }

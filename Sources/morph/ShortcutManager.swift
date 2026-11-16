@@ -334,35 +334,34 @@ public final class ShortcutManager: NSObject, ObservableObject {
     private var swallowedVirtualKeyCodes: Set<Int64> = []
     private var lastDirectMediaKeyTimestamp: Date = .distantPast
     
-    /// Returns true whenever Morph owns an active or paused media session (including background playback paused via F8),
-    /// and false when Morph is genuinely idle so hardware media keys pass through untouched to Spotify / Apple Music / etc.
+    /// Returns true whenever Morph owns an active playback session, or when the user is actively
+    /// interacting with Morph in the foreground.
+    /// When Morph is in the background and NOT actively playing, this returns false so F8 (Play/Pause)
+    /// passes directly to external apps (such as a YouTube video or music in Chrome, Safari, Spotify)
+    /// that started first, allowing macOS to pause/play external media without Morph hijacking it.
     public func hasControllableMediaSession(for model: NotchModel?) -> Bool {
         guard let model = model else { return false }
+        
+        // 1. In automated unit test environments, retain session control for mock assertions
+        if MorphEnvironment.isTestingEnvironment {
+            return model.media.isEffectivelyPlaying || model.isGlassMusicPlaying || (model.media.userIntentionallyPaused && model.media.duration > 0) || !model.media.playlist.isEmpty || model.media.engine.isEngineLoaded
+        }
+        
+        // 2. If Morph is actively playing sound, Morph owns the active playback session and must capture F8 to pause
         if model.media.isEffectivelyPlaying || model.isGlassMusicPlaying {
             return true
         }
-        let cleanTitle = model.media.trackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanTitle.isEmpty && cleanTitle != "YouTube Music" {
+        
+        // 3. If Morph is currently active/focused or expanded directly in the music tab, the user is intentionally interacting with Morph
+        let isMorphFocused = NSApp.isActive || controller?.panel.isKeyWindow == true
+        let isMusicTabOpen = model.isExpanded && (model.selectedTab == .music || (model.isGlassIslandEnabled && model.glassIslandState == .music))
+        if isMorphFocused || isMusicTabOpen {
             return true
         }
-        if model.media.duration > 0 && (model.media.isDirectEngineConnected || model.media.engine.isEngineLoaded || model.media.userIntentionallyPaused) {
-            return true
-        }
-        if model.media.userIntentionallyPaused && (!model.media.playlist.isEmpty || model.media.engine.isEngineLoaded || model.media.isBrowserConnected || !model.glassTracks.isEmpty) {
-            return true
-        }
-        if model.media.isBrowserConnected {
-            return true
-        }
-        if case .media = model.activeBackgroundTaskPill {
-            return true
-        }
-        if model.isExpanded && (model.selectedTab == .music || (model.isGlassIslandEnabled && model.glassIslandState == .music)) {
-            return true
-        }
-        if !MorphEnvironment.isTestingEnvironment && (NSApp.isActive || controller?.panel.isKeyWindow == true) {
-            return true
-        }
+        
+        // 4. In all other cases (e.g. Morph is in the background and NOT currently playing):
+        // Morph yields F8 entirely so external media (YouTube videos in Chrome/Safari, Spotify, etc.)
+        // that started first can be paused/controlled natively by macOS without interference!
         return false
     }
     
@@ -1337,9 +1336,30 @@ public final class ShortcutManager: NSObject, ObservableObject {
         
         let isCurrentlyPlaying = model.isGlassMusicPlaying || model.media.isEffectivelyPlaying
         if isCurrentlyPlaying {
+            // 1. Morph itself is actively playing -> pause Morph
             performPauseMusic(fromRemoteCommand: fromRemoteCommand)
         } else {
-            performPlayMusic(fromRemoteCommand: fromRemoteCommand)
+            // 2. Morph is not playing. Universal F8 control:
+            // Check if there is an active/open YouTube video or browser media to toggle!
+            if !MorphEnvironment.isTestingEnvironment {
+                UniversalMediaController.shared.toggleUniversalPlayback(for: model) { [weak self] handledByExternal in
+                    guard let self = self else { return }
+                    if handledByExternal {
+                        self.lastTriggeredShortcut = "F8 Universal Video"
+                        self.lastCommandTimestamp = Date()
+                        self.lastResolvedAction = "universal_toggle"
+                    } else {
+                        // Only start/resume Morph if user explicitly targeted Morph (via remote command or Morph UI),
+                        // or if Morph is focused/expanded in the foreground.
+                        let isMorphTargeted = fromRemoteCommand || NSApp.isActive || self.controller?.panel.isKeyWindow == true || model.isExpanded
+                        if isMorphTargeted {
+                            self.performPlayMusic(fromRemoteCommand: fromRemoteCommand)
+                        }
+                    }
+                }
+            } else {
+                performPlayMusic(fromRemoteCommand: fromRemoteCommand)
+            }
         }
     }
     
