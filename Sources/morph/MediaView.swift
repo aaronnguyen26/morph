@@ -1370,6 +1370,7 @@ public struct MediaView: View {
     private var playlistsSelectionDeck: some View {
         VStack(alignment: .leading, spacing: 6) {
             playlistsHeaderRow
+            playlistsSortFilterBar
             
             if media.isSearchingPlaylists {
                 playlistsSearchBar
@@ -1541,6 +1542,34 @@ public struct MediaView: View {
                 .frame(maxHeight: .infinity)
             }
         }
+    }
+    
+    private var playlistsSortFilterBar: some View {
+        HStack(spacing: 4) {
+            ForEach(LibrarySortMode.allCases) { mode in
+                let isSelected = (media.librarySortMode == mode)
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        media.librarySortMode = mode
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: mode.iconName)
+                            .font(.system(size: 7.5, weight: isSelected ? .bold : .medium))
+                        Text(mode.rawValue)
+                            .font(.system(size: 8, weight: isSelected ? .semibold : .medium))
+                    }
+                    .foregroundColor(isSelected ? theme.textPrimary : theme.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(isSelected ? theme.cardBackgroundElevated : theme.cardBackground)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 2)
     }
     
     private var playlistsHeaderRow: some View {
@@ -1983,8 +2012,55 @@ public struct MediaView: View {
                 songsSearchBar
             }
             
+            let songs = media.filteredSongs(for: playlist)
+            if !songs.isEmpty {
+                Menu {
+                    ForEach(Array(songs.enumerated()), id: \.element.id) { index, song in
+                        Button(action: {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                                media.playSongInSelectedPlaylist(song)
+                            }
+                        }) {
+                            HStack {
+                                Text("\(index + 1). \(song.title)")
+                                if !song.artist.isEmpty {
+                                    Text("• \(song.artist)")
+                                }
+                                if media.isSongCurrent(song, in: songs) {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "list.bullet.indent")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundColor(theme.activePillBackground)
+                        let activeSong = songs.first(where: { media.isSongCurrent($0, in: songs) })
+                        Text(activeSong != nil ? "Now Playing: \(activeSong!.title)" : "Dropdown: All \(songs.count) songs")
+                            .font(.system(size: 8, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.textPrimary)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(theme.textSecondary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(theme.cardBackgroundElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(theme.hairlineBorder, lineWidth: 0.5)
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .padding(.horizontal, 2)
+            }
+            
             ScrollView(.vertical, showsIndicators: true) {
-                let songs = media.filteredSongs(for: playlist)
                 if songs.isEmpty {
                     songsEmptyState(playlist: playlist)
                 } else {
@@ -2001,11 +2077,6 @@ public struct MediaView: View {
                                     .foregroundColor(theme.textTertiary)
                             }
                             .padding(.vertical, 4)
-                        }
-                        
-                        // Algorithmic Quick Picks recommendation shelf inside playlist (Native YouTube Music style)
-                        if playlist.id != "pl_quickpicks" && !media.quickPicks.isEmpty {
-                            playlistQuickPicksShelf(for: playlist)
                         }
                     }
                     .padding(.trailing, 2)

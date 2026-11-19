@@ -24,6 +24,22 @@ public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     }
 }
 
+public enum LibrarySortMode: String, CaseIterable, Identifiable, Codable {
+    case recentActivity = "Recent Activity"
+    case mostPlayed = "Most Played"
+    case alphabetical = "A - Z"
+    
+    public var id: String { rawValue }
+    
+    public var iconName: String {
+        switch self {
+        case .recentActivity: return "clock.arrow.circlepath"
+        case .mostPlayed: return "flame.fill"
+        case .alphabetical: return "textformat.abc"
+        }
+    }
+}
+
 @MainActor
 public final class MediaControllerModel: ObservableObject {
     @Published public var trackTitle: String = ""
@@ -43,6 +59,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isBrowserConnected: Bool = false
     @Published public var playlist: [YTMPlaylistItem] = []
     @Published public var playlists: [YTMPlaylist] = []
+    @Published public var librarySortMode: LibrarySortMode = .recentActivity
     @Published public var quickPicks: [YTMPlaylistItem] = []
     @Published public var isLoadingQuickPicks: Bool = false
     @Published public var quickPicksError: String? = nil
@@ -180,7 +197,22 @@ public final class MediaControllerModel: ObservableObject {
             }
         }
         
-        self.playlists = []
+        let initialProfile = YTMProfileManager.shared.activeProfile
+        self.activeProfile = initialProfile
+        if let mail = initialProfile?.email, !mail.isEmpty {
+            self.userEmail = mail
+        } else if let mail = engine.userEmail, !mail.isEmpty {
+            self.userEmail = mail
+        }
+        
+        let storedPlaylists = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.userEmail)
+        if !storedPlaylists.isEmpty {
+            self.playlists = storedPlaylists
+        } else if !engine.userPlaylists.isEmpty {
+            self.playlists = engine.userPlaylists
+        } else {
+            self.playlists = []
+        }
         self.quickPicks = engine.quickPicks.isEmpty ? YTMParser.defaultQuickPicks : engine.quickPicks
         self.rightDeckSection = self.isOffline ? .downloads : .home
         
@@ -460,7 +492,18 @@ public final class MediaControllerModel: ObservableObject {
         engine.$userEmail
             .receive(on: DispatchQueue.main)
             .sink { [weak self] email in
-                self?.userEmail = email
+                guard let self = self else { return }
+                let oldEmail = self.userEmail
+                self.userEmail = email
+                if let email = email, !email.isEmpty, email != oldEmail {
+                    let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: email)
+                    if !cached.isEmpty {
+                        self.playlists = cached
+                    }
+                    if self.isSignedIn {
+                        self.refreshPlaylists()
+                    }
+                }
             }
             .store(in: &cancellables)
             
@@ -482,7 +525,17 @@ public final class MediaControllerModel: ObservableObject {
                 guard let self = self else { return }
                 self.activeProfile = YTMProfileManager.shared.activeProfile
                 if let email = self.activeProfile?.email, !email.isEmpty {
+                    let oldEmail = self.userEmail
                     self.userEmail = email
+                    if email != oldEmail {
+                        let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: email)
+                        if !cached.isEmpty {
+                            self.playlists = cached
+                        }
+                        if self.isSignedIn {
+                            self.refreshPlaylists()
+                        }
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -539,20 +592,61 @@ public final class MediaControllerModel: ObservableObject {
             .store(in: &cancellables)
     }
     
+    /// Returns strictly user-owned or saved playlists (excluding individual songs, radios, or albums)
+    public var userLibraryPlaylists: [YTMPlaylist] {
+        return playlists.filter { YTMUserOfflineStore.isActualUserPlaylist($0) }
+    }
+    
+    /// Returns user library playlists sorted according to `librarySortMode`.
+    public var sortedUserLibraryPlaylists: [YTMPlaylist] {
+        return YTMUserOfflineStore.sortPlaylists(userLibraryPlaylists, mode: librarySortMode)
+    }
+    
+    /// Records an interaction or play of a playlist to keep recent activity and play counts accurate.
+    public func recordPlaylistUsage(for playlistId: String) {
+        if let idx = playlists.firstIndex(where: { $0.id == playlistId }) {
+            playlists[idx].playCount += 1
+            playlists[idx].lastPlayedDate = Date()
+        }
+        if selectedPlaylist?.id == playlistId {
+            selectedPlaylist?.playCount = (selectedPlaylist?.playCount ?? 0) + 1
+            selectedPlaylist?.lastPlayedDate = Date()
+        }
+        YTMUserOfflineStore.shared.recordPlaylistUsage(id: playlistId, email: userEmail ?? activeProfile?.email)
+    }
+    
     /// Merges incoming playlists by id, keeping any tracks that were already loaded.
     func mergePlaylists(_ incoming: [YTMPlaylist]) {
-        var merged = playlists
-        for ep in incoming {
-            if let idx = merged.firstIndex(where: { $0.id == ep.id }) {
+        let cleanIncoming = incoming.filter { YTMUserOfflineStore.isActualUserPlaylist($0) }
+        var merged = playlists.filter { YTMUserOfflineStore.isActualUserPlaylist($0) }
+        for ep in cleanIncoming {
+            let epClean = ep.id.hasPrefix("VL") ? String(ep.id.dropFirst(2)) : ep.id
+            if let idx = merged.firstIndex(where: {
+                let mClean = $0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id
+                return mClean == epClean || $0.id == ep.id
+            }) {
                 var updated = ep
                 if updated.tracks.isEmpty { updated.tracks = merged[idx].tracks }
                 if updated.playbackListId == nil { updated.playbackListId = merged[idx].playbackListId }
+                if updated.thumbnailURL == nil && merged[idx].thumbnailURL != nil {
+                    updated.thumbnailURL = merged[idx].thumbnailURL
+                }
+                if updated.playCount == 0 && merged[idx].playCount > 0 {
+                    updated.playCount = merged[idx].playCount
+                }
+                if updated.lastPlayedDate == nil && merged[idx].lastPlayedDate != nil {
+                    updated.lastPlayedDate = merged[idx].lastPlayedDate
+                }
+                if updated.trackCount == nil && merged[idx].trackCount != nil {
+                    updated.trackCount = merged[idx].trackCount
+                }
                 merged[idx] = updated
             } else {
                 merged.append(ep)
             }
         }
         playlists = merged
+        YTMUserOfflineStore.shared.savePlaylists(merged, for: userEmail)
     }
     
     public var formattedCurrentTime: String {
@@ -675,36 +769,36 @@ public final class MediaControllerModel: ObservableObject {
         if let sel = selectedPlaylist, !sel.tracks.isEmpty, sel.id != "pl_queue" {
             let activeId = activeTrackId(in: sel.tracks)
             let count = sel.tracks.count
-            let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) ?? 0
-            
-            // Record current track into playback history for previousTrack navigation
-            if currentIdx < count {
-                playbackHistory.append(sel.tracks[currentIdx])
-            }
-            
-            // Random Next (Shuffle Mode)
-            if isShuffle && count > 1 {
-                var randomIdx = Int.random(in: 0..<count)
-                if randomIdx == currentIdx {
-                    randomIdx = (randomIdx + 1) % count
+            if let currentIdx = sel.tracks.firstIndex(where: { $0.isPlaying || ($0.id == activeId && activeId != nil) }) {
+                // Record current track into playback history for previousTrack navigation
+                if currentIdx < count {
+                    playbackHistory.append(sel.tracks[currentIdx])
                 }
-                let nextItem = sel.tracks[randomIdx]
-                playSongInSelectedPlaylist(nextItem)
-                return
-            }
-            
-            let nextIdx = currentIdx + 1
-            if nextIdx < count {
-                let nextItem = sel.tracks[nextIdx]
-                playSongInSelectedPlaylist(nextItem)
-                return
-            } else if repeatMode == .all {
-                let firstItem = sel.tracks[0]
-                playSongInSelectedPlaylist(firstItem)
-                return
-            } else {
-                stop()
-                return
+                
+                // Random Next (Shuffle Mode)
+                if isShuffle && count > 1 {
+                    var randomIdx = Int.random(in: 0..<count)
+                    if randomIdx == currentIdx {
+                        randomIdx = (randomIdx + 1) % count
+                    }
+                    let nextItem = sel.tracks[randomIdx]
+                    playSongInSelectedPlaylist(nextItem)
+                    return
+                }
+                
+                let nextIdx = currentIdx + 1
+                if nextIdx < count {
+                    let nextItem = sel.tracks[nextIdx]
+                    playSongInSelectedPlaylist(nextItem)
+                    return
+                } else if repeatMode == .all {
+                    let firstItem = sel.tracks[0]
+                    playSongInSelectedPlaylist(firstItem)
+                    return
+                } else {
+                    stop()
+                    return
+                }
             }
         }
         
@@ -936,6 +1030,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func setVolume(_ newVol: Double) {
+        guard !newVol.isNaN, !newVol.isInfinite else { return }
         volume = max(0, min(1, newVol))
         if volume > 0 && isMuted {
             isMuted = false
@@ -1026,11 +1121,12 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public var filteredPlaylists: [YTMPlaylist] {
+        let base = sortedUserLibraryPlaylists
         let query = playlistSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if query.isEmpty {
-            return playlists
+            return base
         }
-        return playlists.filter {
+        return base.filter {
             $0.title.lowercased().contains(query) || $0.subtitle.lowercased().contains(query)
         }
     }
@@ -1066,6 +1162,13 @@ public final class MediaControllerModel: ObservableObject {
             isPlaying = true
         }
         
+        if p.tracks.isEmpty {
+            let cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: p.id, email: userEmail)
+            if !cached.isEmpty {
+                p.tracks = cached
+            }
+        }
+        
         selectedPlaylist = p
         rightDeckSection = .playlists
         isSearchingSongs = false
@@ -1073,17 +1176,20 @@ public final class MediaControllerModel: ObservableObject {
         tracksError = nil
         trackLoadTask?.cancel()
         syncPlayingTrackWithPlaylists()
+        recordPlaylistUsage(for: p.id)
         
         // The live queue is mirrored from the player; everything else is fetched natively.
         guard p.id != "pl_queue", p.kind != .queue else {
             isLoadingTracks = false
             return
         }
-        // Already loaded (cached) → show immediately.
-        guard p.tracks.isEmpty else {
+        
+        // If offline and we have cached tracks, don't attempt network load
+        if isOffline {
             isLoadingTracks = false
             return
         }
+        
         loadTracksForSelectedPlaylist()
     }
     
@@ -1103,7 +1209,9 @@ public final class MediaControllerModel: ObservableObject {
                 self.isLoadingTracks = false
             } catch {
                 guard let self = self, !Task.isCancelled, self.selectedPlaylist?.id == pl.id else { return }
-                self.tracksError = error.localizedDescription
+                if (self.selectedPlaylist?.tracks.isEmpty ?? true) {
+                    self.tracksError = error.localizedDescription
+                }
                 self.isLoadingTracks = false
             }
         }
@@ -1118,9 +1226,10 @@ public final class MediaControllerModel: ObservableObject {
         selectedPlaylist = updated
         syncPlayingTrackWithPlaylists()
         YTMUserOfflineStore.shared.recordTracks(deduplicated)
-        if updated.kind == .playlist, playlists.contains(where: { $0.id == updated.id }) {
+        if updated.kind == .playlist {
             mergePlaylists([updated])
         }
+        YTMUserOfflineStore.shared.savePlaylist(updated, for: userEmail)
     }
     
     public func backToPlaylists() {
@@ -1374,6 +1483,10 @@ public final class MediaControllerModel: ObservableObject {
     
     private func markPlaying(_ item: YTMPlaylistItem) {
         userIntentionallyPaused = false
+        if !trackTitle.isEmpty && trackTitle != "YouTube Music" && Self.normalizeTitle(trackTitle) != Self.normalizeTitle(item.title) {
+            stalePreviousTitle = Self.normalizeTitle(trackTitle)
+            trackTransitionLockoutUntil = Date().addingTimeInterval(2.5)
+        }
         trackTitle = item.title
         if !item.artist.isEmpty {
             artistName = item.artist
@@ -1562,6 +1675,9 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
+        if let sel = selectedPlaylist {
+            recordPlaylistUsage(for: sel.id)
+        }
         if selectedPlaylist?.id == "pl_quickpicks" {
             playQuickPick(item, startRadio: true)
             return
@@ -1608,6 +1724,7 @@ public final class MediaControllerModel: ObservableObject {
     
     public func playEntireSelectedPlaylist() {
         guard let sel = selectedPlaylist, let first = sel.tracks.first else { return }
+        recordPlaylistUsage(for: sel.id)
         if sel.id == "pl_quickpicks" {
             playQuickPick(first, startRadio: true)
             return
@@ -1655,15 +1772,240 @@ public final class MediaControllerModel: ObservableObject {
             selectedPlaylist = updated
         }
     }
-    
+    // MARK: - Browser playlist scraping (ground truth from user's actual signed-in browser)
+
+    /// JS that scrapes all playlists from the YouTube Music library page.
+    /// Covers library grid cards, responsive list items, and sidebar nav entries.
+    nonisolated private static func buildLibraryPlaylistJS() -> String {
+        return """
+        (function() {
+            var out = [];
+            var seen = {};
+            function cleanId(raw) {
+                if (!raw) return '';
+                var m = raw.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+                if (m) return m[1];
+                if (raw.indexOf('browse/VL') !== -1) {
+                    return raw.split('browse/VL')[1].split('?')[0].split('/')[0];
+                }
+                if (raw.indexOf('/playlist/') !== -1) {
+                    return raw.split('/playlist/')[1].split('?')[0];
+                }
+                return '';
+            }
+            function isUserPlaylist(id) {
+                if (!id) return false;
+                if (id === 'LM' || id === 'LL' || id === 'WL') return true;
+                return id.indexOf('PL') === 0 || id.indexOf('VL') === 0 || id.indexOf('FL') === 0;
+            }
+            function isExcluded(id) {
+                if (!id) return true;
+                return id.indexOf('RD') === 0 || id.indexOf('MPRE') === 0 || id.indexOf('OLAK') === 0 || id.indexOf('RDEM') === 0;
+            }
+            function push(id, title, subtitle, thumb, browseId, playId) {
+                var clean = id;
+                if (clean.indexOf('VL') === 0) clean = clean.substring(2);
+                if (!clean || !title || isExcluded(clean) || !isUserPlaylist(clean)) return;
+                if (seen[clean]) return;
+                seen[clean] = true;
+                var bId = browseId || (clean === 'LM' || clean === 'LL' || clean === 'WL' ? 'VL' + clean : 'VL' + clean);
+                out.push({ id: clean, title: title.trim(), subtitle: (subtitle || 'Playlist').trim(), thumbnailURL: thumb || null, browseId: bId, playbackListId: playId || clean });
+            }
+
+            // --- Strategy 1: Library grid (ytmusic-two-row-item-renderer on /library/playlists page) ---
+            var gridCards = document.querySelectorAll('ytmusic-two-row-item-renderer');
+            for (var i = 0; i < gridCards.length; i++) {
+                var c = gridCards[i];
+                var allLinks = c.querySelectorAll('a[href]');
+                var id = '';
+                for (var li = 0; li < allLinks.length; li++) {
+                    var href = allLinks[li].getAttribute('href') || '';
+                    id = cleanId(href);
+                    if (id) break;
+                }
+                if (!id) continue;
+                var titleEl = c.querySelector('yt-formatted-string.title') || c.querySelector('.title');
+                var title = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '';
+                if (!title) {
+                    var anyFmt = c.querySelectorAll('yt-formatted-string');
+                    if (anyFmt.length > 0) title = (anyFmt[0].innerText || anyFmt[0].textContent || '').trim();
+                }
+                var subEl = c.querySelector('yt-formatted-string.subtitle') || c.querySelector('.subtitle');
+                var sub = subEl ? (subEl.innerText || subEl.textContent || '').trim() : 'Playlist';
+                var imgEl = c.querySelector('img[src]');
+                var thumb = imgEl ? imgEl.getAttribute('src') : null;
+                if (thumb && thumb.indexOf('data:') === 0) thumb = null;
+                push(id, title, sub, thumb, null, null);
+            }
+
+            // --- Strategy 2: Responsive list items ---
+            var listItems = document.querySelectorAll('ytmusic-responsive-list-item-renderer');
+            for (var j = 0; j < listItems.length; j++) {
+                var item = listItems[j];
+                var itemLinks = item.querySelectorAll('a[href]');
+                var iid = '';
+                for (var ll = 0; ll < itemLinks.length; ll++) {
+                    var ihref = itemLinks[ll].getAttribute('href') || '';
+                    iid = cleanId(ihref);
+                    if (iid) break;
+                }
+                if (!iid) continue;
+                var iTitle = '';
+                var cols = item.querySelectorAll('.flex-columns yt-formatted-string');
+                if (cols.length > 0) iTitle = (cols[0].innerText || cols[0].textContent || '').trim();
+                var iSub = cols.length > 1 ? (cols[1].innerText || cols[1].textContent || '').trim() : 'Playlist';
+                push(iid, iTitle, iSub, null, null, null);
+            }
+
+            // --- Strategy 3: Sidebar nav guide entries (recently used playlists) ---
+            var guideItems = document.querySelectorAll('ytmusic-guide-entry-renderer');
+            for (var g = 0; g < guideItems.length; g++) {
+                var ge = guideItems[g];
+                var ga = ge.querySelector('a[href]');
+                if (!ga) continue;
+                var ghref = ga.getAttribute('href') || '';
+                var gid = cleanId(ghref);
+                if (!gid) continue;
+                var gtitleEl = ge.querySelector('yt-formatted-string') || ge.querySelector('.title');
+                var gtitle = gtitleEl ? (gtitleEl.innerText || gtitleEl.textContent || '').trim() : '';
+                push(gid, gtitle, 'Playlist', null, null, null);
+            }
+
+            console.log('[Morph] library scrape found ' + out.length + ' playlists');
+            return JSON.stringify(out);
+        })()
+        """
+    }
+
+    /// Navigates an external browser to YTM's library/playlists page (if not already there),
+    /// waits for render, then scrapes all playlist cards. This is the GROUND TRUTH source
+    /// because it uses whatever Google account the user is actually signed into in their browser.
+    public func scrapePlaylistsFromBrowsers() async -> [YTMPlaylist] {
+        guard !isTestingEnvironment else { return [] }
+
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let jsExtract = Self.buildLibraryPlaylistJS()
+
+                // Escape the JS for safe embedding in an AppleScript string literal
+                let escapedJS = jsExtract
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                    .replacingOccurrences(of: "\n", with: " ")
+                    .replacingOccurrences(of: "\r", with: " ")
+
+                let chromiumApps: [(bundleId: String, appName: String)] = [
+                    ("com.google.Chrome", "Google Chrome"),
+                    ("com.brave.Browser", "Brave Browser"),
+                    ("com.microsoft.edgemac", "Microsoft Edge"),
+                    ("company.thebrowser.Browser", "Arc")
+                ]
+
+                func parseResult(_ res: String?) -> [YTMPlaylist]? {
+                    guard let r = res, !r.isEmpty,
+                          let data = r.data(using: .utf8),
+                          let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                          !arr.isEmpty else { return nil }
+                    var parsed: [YTMPlaylist] = []
+                    for d in arr {
+                        guard let id = d["id"] as? String, !id.isEmpty,
+                              let title = d["title"] as? String, !title.isEmpty else { continue }
+                        let sub = (d["subtitle"] as? String) ?? "Playlist"
+                        let thumb = d["thumbnailURL"] as? String
+                        let bId = d["browseId"] as? String
+                        let playId = d["playbackListId"] as? String
+                        parsed.append(YTMPlaylist(id: id, title: title, subtitle: sub,
+                                                  thumbnailURL: thumb, browseId: bId,
+                                                  kind: .playlist, playbackListId: playId))
+                    }
+                    return parsed.isEmpty ? nil : parsed
+                }
+
+                for entry in chromiumApps where !NSRunningApplication.runningApplications(withBundleIdentifier: entry.bundleId).isEmpty {
+                    let appName = entry.appName
+
+                    // Step 1: Check if YTM is already on the library page — scrape immediately
+                    let quickScript = """
+                    tell application "\(appName)"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    try
+                                        return (execute t javascript "\(escapedJS)")
+                                    end try
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return ""
+                    """
+                    if let res = MorphAppleScriptRunner.run(quickScript, timeout: 3.0),
+                       let playlists = parseResult(res) {
+                        print("[Morph BrowserScrape] ✅ \(appName): \(playlists.count) playlists from existing tab")
+                        continuation.resume(returning: playlists)
+                        return
+                    }
+                }
+
+                // Safari fallback
+                if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty {
+                    let quickScript = """
+                    tell application "Safari"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if (URL of t) contains "music.youtube.com" then
+                                    try
+                                        return (do JavaScript "\(escapedJS)" in t)
+                                    end try
+                                end if
+                            end repeat
+                        end repeat
+                    end tell
+                    return ""
+                    """
+                    if let res = MorphAppleScriptRunner.run(quickScript, timeout: 3.0),
+                       let playlists = parseResult(res) {
+                        print("[Morph BrowserScrape] ✅ Safari: \(playlists.count) playlists from existing tab")
+                        continuation.resume(returning: playlists)
+                        return
+                    }
+                }
+
+                print("[Morph BrowserScrape] ⚠️ No browser with YTM tab found, or scraping returned empty")
+                continuation.resume(returning: [])
+            }
+        }
+    }
+
+    /// Refreshes playlists: browser scraping is PRIMARY source of truth (user's actual signed-in browser).
+    /// InnerTube is secondary for when no browser is open.
     public func refreshPlaylists() {
         isLoadingPlaylists = true
         let eng = engine
         Task { @MainActor [weak self] in
+            guard let self = self else { return }
+
+            // 1. Browser scraping FIRST — this is ground truth (uses user's actual signed-in account)
+            let browserPlaylists = await self.scrapePlaylistsFromBrowsers()
+            if !browserPlaylists.isEmpty {
+                print("[Morph Playlists] ✅ Browser source: \(browserPlaylists.count) playlists — merging with cache")
+                self.mergePlaylists(browserPlaylists)
+                self.isLoadingPlaylists = false
+                // Also fire InnerTube in background to populate track metadata
+                Task { await eng.refreshLibraryPlaylists() }
+                return
+            }
+
+            // 2. Fall back to InnerTube (Morph's embedded WebView account)
+            print("[Morph Playlists] No browser data, falling back to InnerTube")
             await eng.refreshLibraryPlaylists()
-            self?.isLoadingPlaylists = false
+            if !eng.userPlaylists.isEmpty {
+                self.mergePlaylists(eng.userPlaylists)
+            }
+            self.isLoadingPlaylists = false
         }
     }
+
     
     // MARK: - YouTube Music catalog search (songs / artists / albums / playlists)
     public func runCatalogSearch(_ rawQuery: String, allowSingleCharacter: Bool = false) {
@@ -1851,10 +2193,14 @@ public final class MediaControllerModel: ObservableObject {
         YTMProfileManager.shared.switchProfile(to: profile.id)
         self.activeProfile = profile
         self.userEmail = profile.email
-        self.playlists = []
+        let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: profile.email)
+        self.playlists = cached
+        self.selectedPlaylist = nil
         self.quickPicks = []
         self.isLoadingQuickPicks = true
         engine.switchProfile(to: profile)
+        refreshPlaylists()
+        refreshQuickPicks()
     }
     
     public func addNewProfile() {
@@ -2070,6 +2416,16 @@ public final class MediaControllerModel: ObservableObject {
                 self.isSignedIn = true
                 self.sourceName = "YouTube Music • \(scriptResult.browser)"
                 self.parseTabTitle(scriptResult.tabTitle, source: "YouTube Music • \(scriptResult.browser)")
+                if self.playlists.isEmpty {
+                    Task { [weak self] in
+                        guard let self = self else { return }
+                        let scraped = await self.scrapePlaylistsFromBrowsers()
+                        if !scraped.isEmpty {
+                            self.mergePlaylists(scraped)
+                            YTMUserOfflineStore.shared.savePlaylists(scraped, for: self.userEmail)
+                        }
+                    }
+                }
             }
         }
     }

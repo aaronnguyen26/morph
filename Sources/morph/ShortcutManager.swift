@@ -344,7 +344,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
         
         // 1. In automated unit test environments, retain session control for mock assertions
         if MorphEnvironment.isTestingEnvironment {
-            return model.media.isEffectivelyPlaying || model.isGlassMusicPlaying || (model.media.userIntentionallyPaused && model.media.duration > 0) || !model.media.playlist.isEmpty || model.media.engine.isEngineLoaded
+            return model.media.isEffectivelyPlaying || model.isGlassMusicPlaying || (model.media.userIntentionallyPaused && model.media.duration > 0) || (!model.media.trackTitle.isEmpty && model.media.trackTitle != "YouTube Music" && model.media.duration > 0)
         }
         
         // 2. If Morph is actively playing sound, Morph owns the active playback session and must capture F8 to pause
@@ -406,6 +406,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                         if swallowedSystemMediaKeyCodes.remove(keyCode) != nil {
                             return nil // Swallow matching keyUp
                         }
+                        return Unmanaged.passUnretained(event)
                     }
                 case 17, 19: // NX_KEYTYPE_NEXT / NX_KEYTYPE_FAST (F9 Next)
                     if isKeyDown {
@@ -425,6 +426,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                         if swallowedSystemMediaKeyCodes.remove(keyCode) != nil {
                             return nil
                         }
+                        return Unmanaged.passUnretained(event)
                     }
                 case 18, 20: // NX_KEYTYPE_PREVIOUS / NX_KEYTYPE_REWIND (F7 Previous)
                     if isKeyDown {
@@ -444,6 +446,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                         if swallowedSystemMediaKeyCodes.remove(keyCode) != nil {
                             return nil
                         }
+                        return Unmanaged.passUnretained(event)
                     }
                 default:
                     break

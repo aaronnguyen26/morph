@@ -40,6 +40,7 @@ final class MusicPlayerAccessibilityAndPlaybackTests: XCTestCase {
     }
     
     override func tearDown() async throws {
+        shortcutManager?.removeMonitors()
         shortcutManager?.forceDebounceInTests = false
         mockEngine?.trackData = YTMTrackData()
         mockEngine?.isSignedIn = false
