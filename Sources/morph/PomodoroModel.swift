@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import AppKit
 
 public enum PomodoroMode: String, CaseIterable, Identifiable {
     case work = "Work"
@@ -221,6 +222,13 @@ public final class PomodoroModel: ObservableObject {
                 completedSessionsCount += 1
             }
             MorphHaptics.generic()
+            if !MorphEnvironment.isTestingEnvironment {
+                if let sound = NSSound(named: "Glass") {
+                    sound.play()
+                } else {
+                    NSSound.beep()
+                }
+            }
             saveState()
         }
     }

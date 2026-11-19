@@ -89,9 +89,6 @@ public struct CalendarView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            calendar.goToToday()
-        }
     }
     
     // MARK: - Top Header Bar (View Mode Selector & Period Navigation)

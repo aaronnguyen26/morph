@@ -2499,7 +2499,9 @@ final class MorphTests: XCTestCase {
             shared.quickPicks = YTMParser.defaultQuickPicks
             shared.libraryError = nil
         }
+        YTMUserOfflineStore.shared.clear()
         let model = NotchModel()
+        model.media.playlists = []
         model.isExpanded = true
         model.selectedTab = .music
         

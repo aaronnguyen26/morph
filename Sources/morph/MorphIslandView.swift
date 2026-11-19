@@ -33,6 +33,9 @@ public struct MorphIslandView: View {
     @FocusState private var isGlassMusicSearchFocused: Bool
     @FocusState private var isGlassPromptFocused: Bool
     @State private var isAddingAdaptiveProfileEntry: Bool = false
+    @State private var expandedPlaylistId: String? = nil
+    @State private var showAllPlaylists: Bool = false
+    @State private var playlistFilterText: String = ""
     @State private var newAdaptiveQuestionText: String = ""
     @State private var newAdaptiveAnswerText: String = ""
     @Namespace private var navTabNamespace
@@ -1038,13 +1041,18 @@ public struct MorphIslandView: View {
                     HStack(spacing: 5) {
                         Image(systemName: model.pomodoro.isRunning ? "pause.fill" : "play.fill")
                             .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color(hex: "#00f0ff"))
                         Text(model.pomodoro.isRunning ? "Pause" : "Start")
                             .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundColor(.white)
                     }
-                    .foregroundColor(.black)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white))
+                    .background(
+                        Capsule()
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color(hex: "#00f0ff").opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                    )
                 }
                 .buttonStyle(.plain)
                 
@@ -4191,10 +4199,14 @@ public struct MorphIslandView: View {
                             Text("Sign in with Google")
                                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                         }
-                        .foregroundColor(.black)
+                        .foregroundColor(.white)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white))
+                        .background(
+                            Capsule()
+                                .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color.white.opacity(0.15)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                        )
                     }
                     .buttonStyle(.plain)
                     
@@ -4596,14 +4608,18 @@ public struct MorphIslandView: View {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(Color(hex: "#00f0ff"))
                             Text("Sync Browser")
                                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
                         }
-                        .foregroundColor(.black)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color.white)
-                        .clipShape(Capsule())
+                        .background(
+                            Capsule()
+                                .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color(hex: "#00f0ff").opacity(0.30)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -4616,14 +4632,18 @@ public struct MorphIslandView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "play.fill")
                             .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(hex: "#00f0ff"))
                         Text(model.media.isBrowserConnected ? "Play YouTube Music" : "Play Your Library")
                             .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
                     }
-                    .foregroundColor(.black)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
-                    .background(Color.white)
-                    .clipShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.45), Color(hex: "#00f0ff").opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                    )
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 4)
@@ -4749,13 +4769,27 @@ public struct MorphIslandView: View {
             }
             
             // Content: opened container (e.g. Artist / Album / Playlist) takes priority so Back returns to search results
-            if let selectedPlaylist = model.glassSelectedPlaylist {
+            let activePlaylist: YTMPlaylist? = {
+                guard let glass = model.glassSelectedPlaylist else { return nil }
+                if let sel = model.media.selectedPlaylist {
+                    let sClean = sel.id.hasPrefix("VL") ? String(sel.id.dropFirst(2)) : sel.id
+                    let gClean = glass.id.hasPrefix("VL") ? String(glass.id.dropFirst(2)) : glass.id
+                    if sClean == gClean || sel.id == glass.id {
+                        return sel
+                    }
+                }
+                return glass
+            }()
+            if let selectedPlaylist = activePlaylist {
                 glassPlaylistDetailView(playlist: selectedPlaylist)
             } else if !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 glassLibrarySearchResultsView
             } else {
                 glassPlaylistGridView
             }
+        }
+        .onAppear {
+            model.media.refreshPlaylists()
         }
     }
     
@@ -4857,11 +4891,14 @@ public struct MorphIslandView: View {
                         }) {
                             Text("Search Again")
                                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundColor(.black)
+                                .foregroundColor(.white)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 5)
-                                .background(Color.white)
-                                .clipShape(Capsule())
+                                .background(
+                                    Capsule()
+                                        .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color.white.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                                )
                         }
                         .buttonStyle(.plain)
                     }
@@ -4959,7 +4996,31 @@ public struct MorphIslandView: View {
     }
     
     private func glassPlaylistDetailView(playlist: YTMPlaylist) -> some View {
-        VStack(spacing: 6) {
+        let activePlaylist = (model.media.selectedPlaylist?.id == playlist.id ? model.media.selectedPlaylist : nil) ?? model.glassSelectedPlaylist ?? playlist
+        let cleanId = activePlaylist.id.hasPrefix("VL") ? String(activePlaylist.id.dropFirst(2)) : activePlaylist.id
+        let displayTracks: [YTMPlaylistItem] = {
+            if let sel = model.media.selectedPlaylist {
+                let sClean = sel.id.hasPrefix("VL") ? String(sel.id.dropFirst(2)) : sel.id
+                if (sClean == cleanId || sel.id == activePlaylist.id) && !sel.tracks.isEmpty {
+                    return sel.tracks
+                }
+            }
+            if !activePlaylist.tracks.isEmpty {
+                return activePlaylist.tracks
+            }
+            if let fromList = model.media.playlists.first(where: {
+                let fClean = $0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id
+                return fClean == cleanId || $0.id == activePlaylist.id
+            }), !fromList.tracks.isEmpty {
+                return fromList.tracks
+            }
+            let email = model.media.userEmail ?? model.media.activeProfile?.email
+            let stored = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: activePlaylist.id, email: email)
+            if !stored.isEmpty { return stored }
+            return YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: cleanId, email: email)
+        }()
+        
+        return VStack(spacing: 6) {
             HStack(spacing: 8) {
                 Button(action: {
                     MorphHaptics.levelChange()
@@ -4977,20 +5038,22 @@ public struct MorphIslandView: View {
                 .help("Back")
                 
                 glassCoverThumbnail(
-                    url: playlist.thumbnailURL,
+                    url: activePlaylist.thumbnailURL,
                     size: 36,
-                    cornerRadius: playlist.kind == .artist ? 18 : 10,
-                    fallbackIcon: playlist.kind == .artist ? "person.fill" : "music.note"
+                    cornerRadius: activePlaylist.kind == .artist ? 18 : 10,
+                    fallbackIcon: activePlaylist.kind == .artist ? "person.fill" : "music.note"
                 )
                 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(playlist.title)
+                    Text(activePlaylist.title)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .lineLimit(1)
-                    Text(model.media.isLoadingTracks && playlist.tracks.isEmpty
-                         ? "Loading songs..."
-                         : (playlist.tracks.isEmpty && !playlist.subtitle.isEmpty ? playlist.subtitle : "\(playlist.tracks.count) songs"))
+                    Text(displayTracks.count > 0
+                         ? "\(displayTracks.count) songs"
+                         : (model.media.isLoadingTracks
+                            ? "Loading songs..."
+                            : (activePlaylist.subtitle.isEmpty ? "Playlist" : activePlaylist.subtitle)))
                         .font(.system(size: 11.5, weight: .regular, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.62))
                         .lineLimit(1)
@@ -5005,14 +5068,18 @@ public struct MorphIslandView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "play.fill")
                             .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(hex: "#00f0ff"))
                         Text("Play")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
                     }
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 14)
                     .frame(height: 30)
-                    .background(Color.white)
-                    .clipShape(Capsule())
+                    .background(
+                        Capsule()
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.45), Color(hex: "#00f0ff").opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                    )
                 }
                 .buttonStyle(.plain)
                 
@@ -5031,21 +5098,67 @@ public struct MorphIslandView: View {
             }
             .frame(height: 36)
             
-            if model.media.isLoadingTracks && playlist.tracks.isEmpty {
+            // Dropdown menu of every song in this playlist
+            if !displayTracks.isEmpty {
+                Menu {
+                    ForEach(Array(displayTracks.enumerated()), id: \.element.id) { index, track in
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            model.playGlassLibraryTrack(track)
+                        }) {
+                            HStack {
+                                Text("\(index + 1). \(track.title)")
+                                if !track.artist.isEmpty {
+                                    Text("• \(track.artist)")
+                                }
+                                if isTrackActive(track) {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "list.bullet.indent")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color(hex: "#ff7ab8"))
+                        let activeTrack = displayTracks.first(where: { isTrackActive($0) })
+                        Text(activeTrack != nil ? "Now Playing: \(activeTrack!.title)" : "Dropdown: All \(displayTracks.count) songs")
+                            .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color.white.opacity(0.60))
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.10))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.20), lineWidth: 0.8))
+                    )
+                }
+                .menuStyle(.borderlessButton)
+                .padding(.horizontal, 2)
+            }
+            
+            if model.media.isLoadingTracks && displayTracks.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     ProgressView()
                         .scaleEffect(0.85)
-                    Text("Loading songs...")
+                    Text("Loading songs from YouTube Music...")
                         .font(.system(size: 12.5, weight: .medium, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.65))
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
-            } else if playlist.tracks.isEmpty {
+            } else if displayTracks.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
-                    Text(model.media.tracksError ?? "No songs available in this \(playlist.kind == .artist ? "artist" : "playlist").")
+                    Text(model.media.tracksError ?? "No songs available in this \(activePlaylist.kind == .artist ? "artist" : "playlist").")
                         .font(.system(size: 12.5, weight: .medium, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.65))
                         .multilineTextAlignment(.center)
@@ -5056,11 +5169,14 @@ public struct MorphIslandView: View {
                     }) {
                         Text("Retry")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(.black)
+                            .foregroundColor(.white)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 5)
-                            .background(Color.white)
-                            .clipShape(Capsule())
+                            .background(
+                                Capsule()
+                                    .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                    .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color.white.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                            )
                     }
                     .buttonStyle(.plain)
                     Spacer()
@@ -5069,7 +5185,7 @@ public struct MorphIslandView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        ForEach(playlist.tracks) { track in
+                        ForEach(displayTracks) { track in
                             glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
                                 MorphHaptics.levelChange()
                                 model.playGlassLibraryTrack(track)
@@ -5080,38 +5196,62 @@ public struct MorphIslandView: View {
                 }
             }
         }
+        .onAppear {
+            if displayTracks.isEmpty {
+                model.media.loadTracksForSelectedPlaylist()
+            }
+        }
     }
     
     private var glassPlaylistGridView: some View {
-        let playlists = model.media.playlists
+        let allPlaylists = model.media.sortedUserLibraryPlaylists
         let quickPicks = model.media.quickPicks
+        let isLoading = model.media.isLoadingPlaylists || model.media.engine.isLoadingLibrary
+        
+        let filtered: [YTMPlaylist] = {
+            let q = playlistFilterText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if q.isEmpty { return allPlaylists }
+            return allPlaylists.filter { $0.title.lowercased().contains(q) || $0.subtitle.lowercased().contains(q) }
+        }()
+        
         return Group {
-            if playlists.isEmpty && quickPicks.isEmpty {
+            if allPlaylists.isEmpty && quickPicks.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.40))
-                    Text(model.media.isSignedIn || model.media.isBrowserConnected ? "No playlists found in your YouTube Music library" : "Connect YouTube Music to browse your playlists")
-                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.65))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                    
-                    if !model.media.isSignedIn && !model.media.isBrowserConnected {
-                        Button(action: {
-                            MorphHaptics.levelChange()
-                            model.media.openSignIn()
-                        }) {
-                            Text("Sign In")
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .foregroundColor(.black)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 6)
-                                .background(Color.white)
-                                .clipShape(Capsule())
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.85)
+                        Text("Loading your library playlists...")
+                            .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.65))
+                    } else {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundColor(Color.white.opacity(0.40))
+                        Text(model.media.isSignedIn || model.media.isBrowserConnected ? "No playlists found in your YouTube Music library" : "Connect YouTube Music to browse your playlists")
+                            .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.65))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        
+                        if !model.media.isSignedIn && !model.media.isBrowserConnected {
+                            Button(action: {
+                                MorphHaptics.levelChange()
+                                model.media.openSignIn()
+                            }) {
+                                Text("Sign In")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule()
+                                            .fill(LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                            .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.45), Color(hex: "#00f0ff").opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                                    )
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                     Spacer()
                 }
@@ -5123,49 +5263,112 @@ public struct MorphIslandView: View {
                             glassQuickPicksShelf(picks: quickPicks)
                         }
                         
-                        // ── Playlists grid ───────────────────────────────────────────
-                        if !playlists.isEmpty {
-                            HStack {
-                                Text("YOUR LIBRARY")
-                                    .font(.system(size: 10, weight: .heavy, design: .rounded))
-                                    .foregroundColor(Color.white.opacity(0.45))
-                                    .tracking(1.2)
-                                Spacer()
-                            }
-                            
-                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-                                ForEach(playlists) { pl in
-                                    Button(action: {
-                                        MorphHaptics.levelChange()
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            model.selectGlassPlaylist(pl)
-                                        }
-                                    }) {
-                                        HStack(spacing: 10) {
-                                            glassCoverThumbnail(url: pl.thumbnailURL, size: 44, cornerRadius: 12)
-                                            
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(pl.title)
-                                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                                    .foregroundColor(.white)
-                                                    .lineLimit(1)
-                                                
-                                                Text(pl.tracks.count > 0 ? "\(pl.tracks.count) songs" : (pl.subtitle.isEmpty ? "Playlist" : pl.subtitle))
-                                                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
-                                                    .foregroundColor(Color.white.opacity(0.62))
-                                                    .lineLimit(1)
+                        // ── Playlists Section ──
+                        if !allPlaylists.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                // Header Row
+                                HStack {
+                                    Text("YOUR LIBRARY")
+                                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                        .foregroundColor(Color.white.opacity(0.45))
+                                        .tracking(1.2)
+                                    Text("\(allPlaylists.count)")
+                                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                                        .foregroundColor(Color.white.opacity(0.70))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Capsule().fill(Color.white.opacity(0.12)))
+                                    Spacer()
+                                }
+                                .padding(.top, 2)
+                                
+                                // Sort Pills: Recent Activity, Most Played, A - Z
+                                glassLibrarySortPills
+                                
+                                // Compact Filter Search Bar (if > 4 playlists)
+                                if allPlaylists.count > 4 {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "magnifyingglass")
+                                            .font(.system(size: 9.5, weight: .medium))
+                                            .foregroundColor(Color.white.opacity(0.40))
+                                        TextField("Filter playlists...", text: $playlistFilterText)
+                                            .textFieldStyle(.plain)
+                                            .font(.system(size: 11, weight: .regular, design: .rounded))
+                                            .foregroundColor(.white)
+                                        if !playlistFilterText.isEmpty {
+                                            Button(action: { playlistFilterText = "" }) {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(Color.white.opacity(0.50))
                                             }
-                                            Spacer()
+                                            .buttonStyle(.plain)
                                         }
-                                        .padding(.horizontal, 8)
-                                        .frame(height: 56)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                                .fill(Color.white.opacity(0.09))
-                                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.20), lineWidth: 0.8))
-                                        )
                                     }
-                                    .buttonStyle(.plain)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4.5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.white.opacity(0.06))
+                                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.10), lineWidth: 0.6))
+                                    )
+                                }
+                                
+                                // Top 4 Compact 2x2 Grid (Non-endless layout)
+                                let topPlaylists = Array(filtered.prefix(4))
+                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                                    ForEach(topPlaylists) { pl in
+                                        glassCompactPlaylistGridCard(playlist: pl)
+                                    }
+                                }
+                                
+                                // If any top 4 playlist is expanded, show song viewer directly beneath the grid
+                                if let expId = expandedPlaylistId, let expandedPl = topPlaylists.first(where: { $0.id == expId }) {
+                                    glassExpandedPlaylistSongViewer(playlist: expandedPl)
+                                }
+                                
+                                // More Playlists Section (Collapsible & Bounded to prevent endless scrolling)
+                                if filtered.count > 4 {
+                                    let remaining = Array(filtered.dropFirst(4))
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Text("MORE PLAYLISTS (\(remaining.count))")
+                                                .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                                .foregroundColor(Color.white.opacity(0.45))
+                                                .tracking(0.8)
+                                            Spacer()
+                                            Button(action: {
+                                                MorphHaptics.levelChange()
+                                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                                    showAllPlaylists.toggle()
+                                                }
+                                            }) {
+                                                HStack(spacing: 3) {
+                                                    Text(showAllPlaylists ? "Show Less" : "Show All")
+                                                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                                                    Image(systemName: showAllPlaylists ? "chevron.up" : "chevron.down")
+                                                        .font(.system(size: 8.5, weight: .bold))
+                                                }
+                                                .foregroundColor(Color(hex: "#ff7ab8"))
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 3)
+                                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(.top, 4)
+                                        
+                                        if showAllPlaylists || !playlistFilterText.isEmpty {
+                                            ScrollView {
+                                                LazyVStack(spacing: 6) {
+                                                    ForEach(remaining) { pl in
+                                                        glassPlaylistCard(playlist: pl)
+                                                    }
+                                                }
+                                                .padding(.trailing, 2)
+                                            }
+                                            .frame(maxHeight: 220)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -5174,6 +5377,383 @@ public struct MorphIslandView: View {
                 }
             }
         }
+    }
+    
+    private var glassLibrarySortPills: some View {
+        HStack(spacing: 6) {
+            ForEach(LibrarySortMode.allCases) { mode in
+                let isSelected = (model.media.librarySortMode == mode)
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.media.librarySortMode = mode
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: mode.iconName)
+                            .font(.system(size: 9, weight: isSelected ? .bold : .medium))
+                        Text(mode.rawValue)
+                            .font(.system(size: 9.5, weight: isSelected ? .semibold : .medium, design: .rounded))
+                    }
+                    .foregroundColor(isSelected ? .white : Color.white.opacity(0.55))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3.5)
+                    .background(
+                        Capsule()
+                            .fill(isSelected ? Color.white.opacity(0.20) : Color.white.opacity(0.06))
+                            .overlay(
+                                Capsule()
+                                    .stroke(isSelected ? Color.white.opacity(0.35) : Color.white.opacity(0.08), lineWidth: 0.8)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+    }
+    
+    private func glassCompactPlaylistGridCard(playlist pl: YTMPlaylist) -> some View {
+        let isExpanded = (expandedPlaylistId == pl.id)
+        let displayTracks: [YTMPlaylistItem] = {
+            if !pl.tracks.isEmpty { return pl.tracks }
+            if let fromList = model.media.playlists.first(where: { $0.id == pl.id }), !fromList.tracks.isEmpty {
+                return fromList.tracks
+            }
+            let email = model.media.userEmail ?? model.media.activeProfile?.email
+            return YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: pl.id, email: email)
+        }()
+        let countText: String = {
+            if displayTracks.count > 0 { return "\(displayTracks.count) songs" }
+            if let count = pl.trackCount, count > 0 { return "\(count) songs" }
+            return pl.subtitle.isEmpty ? "Playlist" : pl.subtitle
+        }()
+        
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                glassCoverThumbnail(url: pl.thumbnailURL, size: 36, cornerRadius: 8)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pl.title)
+                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Text(countText)
+                        .font(.system(size: 9.5, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.60))
+                        .lineLimit(1)
+                }
+                
+                Spacer(minLength: 0)
+            }
+            
+            HStack(spacing: 6) {
+                // Play button - Liquid Glass Styling (NO solid white button)
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.selectGlassPlaylist(pl)
+                    model.playGlassSelectedPlaylistAll(shuffle: false)
+                }) {
+                    HStack(spacing: 3.5) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(Color(hex: "#00f0ff"))
+                        Text("Play")
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color(hex: "#00f0ff").opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Play playlist")
+                
+                Spacer()
+                
+                // Dropdown toggle
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                        if isExpanded {
+                            expandedPlaylistId = nil
+                        } else {
+                            expandedPlaylistId = pl.id
+                            if pl.tracks.isEmpty {
+                                model.preloadPlaylistTracks(for: pl)
+                            }
+                        }
+                    }
+                }) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.70))
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help(isExpanded ? "Collapse playlist songs" : "Dropdown playlist songs")
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(isExpanded ? 0.12 : 0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(isExpanded ? Color(hex: "#ff7ab8").opacity(0.45) : Color.white.opacity(0.14), lineWidth: 0.8)
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            MorphHaptics.levelChange()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                model.selectGlassPlaylist(pl)
+            }
+        }
+    }
+    
+    private func glassExpandedPlaylistSongViewer(playlist pl: YTMPlaylist) -> some View {
+        let displayTracks: [YTMPlaylistItem] = {
+            if !pl.tracks.isEmpty { return pl.tracks }
+            if let fromList = model.media.playlists.first(where: { $0.id == pl.id }), !fromList.tracks.isEmpty {
+                return fromList.tracks
+            }
+            let email = model.media.userEmail ?? model.media.activeProfile?.email
+            return YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: pl.id, email: email)
+        }()
+        
+        return VStack(spacing: 3) {
+            HStack {
+                Text("\(pl.title) • Songs")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer()
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        expandedPlaylistId = nil
+                    }
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(Color.white.opacity(0.50))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 4)
+            
+            Divider()
+                .background(Color.white.opacity(0.15))
+                .padding(.horizontal, 4)
+                .padding(.bottom, 2)
+            
+            if displayTracks.isEmpty && model.media.isLoadingTracks {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.6)
+                    Text("Loading songs...")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.65))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            } else if displayTracks.isEmpty {
+                Text("No songs found in this playlist")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.55))
+                    .padding(.vertical, 8)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 3) {
+                        ForEach(displayTracks.prefix(100)) { track in
+                            glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
+                                MorphHaptics.levelChange()
+                                if model.glassSelectedPlaylist?.id != pl.id {
+                                    model.selectGlassPlaylist(pl)
+                                }
+                                model.playGlassLibraryTrack(track)
+                            }
+                        }
+                    }
+                    .padding(.trailing, 2)
+                }
+                .frame(maxHeight: 180)
+                
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        model.selectGlassPlaylist(pl)
+                    }
+                }) {
+                    Text("View Full Playlist (\(displayTracks.count) songs) →")
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(Color(hex: "#ff7ab8"))
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(6)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.09))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color(hex: "#ff7ab8").opacity(0.35), lineWidth: 0.8))
+        )
+    }
+    
+    private func glassPlaylistCard(playlist pl: YTMPlaylist) -> some View {
+        let isExpanded = (expandedPlaylistId == pl.id)
+        let displayTracks: [YTMPlaylistItem] = {
+            if !pl.tracks.isEmpty { return pl.tracks }
+            if let fromList = model.media.playlists.first(where: { $0.id == pl.id }), !fromList.tracks.isEmpty {
+                return fromList.tracks
+            }
+            let email = model.media.userEmail ?? model.media.activeProfile?.email
+            return YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: pl.id, email: email)
+        }()
+        
+        return VStack(spacing: 0) {
+            // Main Playlist Card Header
+            HStack(spacing: 10) {
+                glassCoverThumbnail(url: pl.thumbnailURL, size: 44, cornerRadius: 12)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(pl.title)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Text(displayTracks.count > 0 ? "\(displayTracks.count) songs" : (pl.subtitle.isEmpty ? "Playlist" : pl.subtitle))
+                        .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.62))
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // Play button - Liquid Glass Styling (NO solid white button)
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    model.selectGlassPlaylist(pl)
+                    model.playGlassSelectedPlaylistAll(shuffle: false)
+                }) {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Color(hex: "#00f0ff"))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .overlay(Circle().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color(hex: "#00f0ff").opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("Play playlist")
+                
+                // Dropdown Toggle / View Button
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                        if isExpanded {
+                            expandedPlaylistId = nil
+                        } else {
+                            expandedPlaylistId = pl.id
+                            if pl.tracks.isEmpty {
+                                model.selectGlassPlaylist(pl)
+                            }
+                        }
+                    }
+                }) {
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.70))
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help(isExpanded ? "Collapse playlist songs" : "Dropdown playlist songs")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                MorphHaptics.levelChange()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    model.selectGlassPlaylist(pl)
+                }
+            }
+            
+            // Dropdown Songs List (when expanded)
+            if isExpanded {
+                VStack(spacing: 3) {
+                    Divider()
+                        .background(Color.white.opacity(0.15))
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 3)
+                    
+                    if displayTracks.isEmpty && model.media.isLoadingTracks {
+                        HStack(spacing: 6) {
+                            ProgressView().scaleEffect(0.6)
+                            Text("Loading songs...")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundColor(Color.white.opacity(0.65))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    } else if displayTracks.isEmpty {
+                        Text("No songs found in this playlist")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.55))
+                            .padding(.vertical, 8)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 3) {
+                                ForEach(displayTracks.prefix(100)) { track in
+                                    glassTrackRow(track: track, isCurrentlyPlaying: isTrackActive(track)) {
+                                        MorphHaptics.levelChange()
+                                        if model.glassSelectedPlaylist?.id != pl.id {
+                                            model.selectGlassPlaylist(pl)
+                                        }
+                                        model.playGlassLibraryTrack(track)
+                                    }
+                                }
+                            }
+                            .padding(.trailing, 2)
+                        }
+                        .frame(maxHeight: 180)
+                        
+                        Button(action: {
+                            MorphHaptics.levelChange()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                model.selectGlassPlaylist(pl)
+                            }
+                        }) {
+                            Text("View Full Playlist (\(displayTracks.count) songs) →")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundColor(Color(hex: "#ff7ab8"))
+                                .padding(.vertical, 5)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 6)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(isExpanded ? 0.12 : 0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(isExpanded ? Color(hex: "#ff7ab8").opacity(0.40) : Color.white.opacity(0.18), lineWidth: 0.8)
+                )
+        )
     }
     
     // MARK: - Glass Quick Picks Shelf (YouTube Music style)

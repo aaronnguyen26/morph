@@ -2517,10 +2517,33 @@ public final class NotchModel: ObservableObject {
             .store(in: &cancellables)
         
         media.$selectedPlaylist
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] updated in
-                guard let self = self, let updated = updated else { return }
-                if self.glassSelectedPlaylist?.id == updated.id && self.glassSelectedPlaylist != updated {
-                    self.glassSelectedPlaylist = updated
+                guard let self = self else { return }
+                if let updated = updated {
+                    let uId = updated.id.hasPrefix("VL") ? String(updated.id.dropFirst(2)) : updated.id
+                    let gId = self.glassSelectedPlaylist?.id.hasPrefix("VL") == true ? String(self.glassSelectedPlaylist!.id.dropFirst(2)) : (self.glassSelectedPlaylist?.id ?? "")
+                    if uId == gId || self.glassSelectedPlaylist?.id == updated.id {
+                        self.glassSelectedPlaylist = updated
+                    }
+                } else if self.glassSelectedPlaylist != nil && self.media.rightDeckSection != .playlists {
+                    self.glassSelectedPlaylist = nil
+                }
+            }
+            .store(in: &cancellables)
+        
+        media.$playlists
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] updatedList in
+                guard let self = self else { return }
+                if let current = self.glassSelectedPlaylist {
+                    let curClean = current.id.hasPrefix("VL") ? String(current.id.dropFirst(2)) : current.id
+                    if let matching = updatedList.first(where: {
+                        let mClean = $0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id
+                        return mClean == curClean || $0.id == current.id
+                    }), !matching.tracks.isEmpty && matching.tracks != current.tracks {
+                        self.glassSelectedPlaylist = matching
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -3154,14 +3177,99 @@ public final class NotchModel: ObservableObject {
     
     public func setGlassMusicSubtab(_ subtab: GlassMusicSubtab) {
         glassMusicSubtab = subtab
+        if subtab == .library {
+            let email = media.userEmail ?? media.activeProfile?.email
+            if media.playlists.isEmpty {
+                var cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: email)
+                if cached.isEmpty && email != nil {
+                    cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: nil)
+                }
+                if !cached.isEmpty {
+                    media.playlists = cached
+                }
+            }
+            if media.isSignedIn && (media.playlists.isEmpty || Date().timeIntervalSince(media.engine.lastLibrarySyncTime ?? .distantPast) > 300) {
+                media.refreshPlaylists()
+            }
+        }
     }
     
     public func selectGlassPlaylist(_ playlist: YTMPlaylist?) {
-        glassSelectedPlaylist = playlist
-        if let pl = playlist {
+        var target = playlist
+        if var p = target {
+            let cleanId = p.id.hasPrefix("VL") ? String(p.id.dropFirst(2)) : p.id
+            if let existing = media.playlists.first(where: {
+                let eClean = $0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id
+                return eClean == cleanId || $0.id == p.id
+            }), !existing.tracks.isEmpty {
+                p.tracks = existing.tracks
+                p.trackCount = existing.tracks.count
+            } else if p.tracks.isEmpty {
+                let email = media.userEmail ?? media.activeProfile?.email
+                var cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: p.id, email: email)
+                if cached.isEmpty {
+                    cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: cleanId, email: email)
+                }
+                if cached.isEmpty && email != nil {
+                    cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: p.id, email: nil)
+                    if cached.isEmpty {
+                        cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: cleanId, email: nil)
+                    }
+                }
+                if !cached.isEmpty {
+                    p.tracks = cached
+                    p.trackCount = cached.count
+                }
+            }
+            target = p
+        }
+        glassSelectedPlaylist = target
+        if let pl = target {
             media.selectPlaylist(pl)
-        } else if media.isLoadingTracks {
+        } else {
+            media.selectedPlaylist = nil
             media.backToPlaylists()
+        }
+    }
+    
+    public func preloadPlaylistTracks(for playlist: YTMPlaylist) {
+        let cleanId = playlist.id.hasPrefix("VL") ? String(playlist.id.dropFirst(2)) : playlist.id
+        if let existing = media.playlists.first(where: {
+            let eClean = $0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id
+            return eClean == cleanId || $0.id == playlist.id
+        }), !existing.tracks.isEmpty {
+            return
+        }
+        let email = media.userEmail ?? media.activeProfile?.email
+        var cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: playlist.id, email: email)
+        if cached.isEmpty {
+            cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: cleanId, email: email)
+        }
+        if !cached.isEmpty {
+            if let idx = media.playlists.firstIndex(where: { $0.id == playlist.id || ($0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id) == cleanId }) {
+                media.playlists[idx].tracks = cached
+                media.playlists[idx].trackCount = cached.count
+            }
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            do {
+                let page = try await self.media.engine.loadTracks(for: playlist)
+                if !page.tracks.isEmpty {
+                    if let idx = self.media.playlists.firstIndex(where: { $0.id == playlist.id || ($0.id.hasPrefix("VL") ? String($0.id.dropFirst(2)) : $0.id) == cleanId }) {
+                        self.media.playlists[idx].tracks = page.tracks
+                        self.media.playlists[idx].trackCount = page.tracks.count
+                    }
+                    YTMUserOfflineStore.shared.recordTracks(page.tracks)
+                    var updated = playlist
+                    updated.tracks = page.tracks
+                    updated.trackCount = page.tracks.count
+                    YTMUserOfflineStore.shared.savePlaylist(updated, for: email)
+                }
+            } catch {
+                // Silently ignore background prefetch errors
+            }
         }
     }
     
@@ -3179,9 +3287,16 @@ public final class NotchModel: ObservableObject {
         }
         all.append(contentsOf: media.playlist)
         all.append(contentsOf: media.quickPicks)
+        let targetEmail = media.userEmail ?? media.activeProfile?.email
         for pl in media.playlists {
-            all.append(contentsOf: pl.tracks)
+            if !pl.tracks.isEmpty {
+                all.append(contentsOf: pl.tracks)
+            } else {
+                let cachedTracks = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: pl.id, email: targetEmail)
+                all.append(contentsOf: cachedTracks)
+            }
         }
+        all.append(contentsOf: YTMUserOfflineStore.shared.getOfflineTracks())
         for track in glassTracks {
             all.append(YTMPlaylistItem(
                 id: track.id.uuidString,

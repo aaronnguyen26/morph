@@ -250,7 +250,7 @@ final class GlassIslandHTMLTests: XCTestCase {
     func testPromptRoutingToNotes() {
         model.setGlassIslandState(.prompt)
         model.submitGlassIslandPrompt("note: buy oat milk from market")
-        XCTAssertEqual(model.glassIslandState, .notes)
+        XCTAssertEqual(model.glassIslandState, .reply)
         XCTAssertEqual(model.glassNotes[0].body, "buy oat milk from market")
     }
     
@@ -271,21 +271,22 @@ final class GlassIslandHTMLTests: XCTestCase {
     func testPromptRoutingToCalendar() {
         model.setGlassIslandState(.prompt)
         model.submitGlassIslandPrompt("what is on today")
-        XCTAssertEqual(model.glassIslandState, .calendar)
-        XCTAssertEqual(model.glassSelectedDayIndex, model.glassTodayDayIndex)
+        XCTAssertEqual(model.glassIslandState, .reply)
+        XCTAssertEqual(model.glassReplyDomainTitle, "Calendar")
         
-        model.submitGlassIslandPrompt("calendar")
+        model.submitGlassIslandPrompt("open calendar")
         XCTAssertEqual(model.glassIslandState, .calendar)
     }
     
     func testPromptRoutingToMusic() {
         model.setGlassIslandState(.prompt)
         model.submitGlassIslandPrompt("play music")
-        XCTAssertEqual(model.glassIslandState, .music)
+        XCTAssertEqual(model.glassIslandState, .reply)
+        XCTAssertEqual(model.glassReplyDomainTitle, "Music Player")
         XCTAssertTrue(model.isGlassMusicPlaying)
         
         model.submitGlassIslandPrompt("pause")
-        XCTAssertEqual(model.glassIslandState, .music)
+        XCTAssertEqual(model.glassIslandState, .reply)
         XCTAssertFalse(model.isGlassMusicPlaying)
     }
     
@@ -294,7 +295,7 @@ final class GlassIslandHTMLTests: XCTestCase {
         model.submitGlassIslandPrompt("how far is the moon?")
         XCTAssertEqual(model.glassIslandState, .reply)
         XCTAssertEqual(model.glassReplyQuery, "how far is the moon?")
-        XCTAssertTrue(model.isGlassReplyLoading)
+        XCTAssertFalse(model.isGlassReplyLoading)
     }
     
     // MARK: - 7. Removed "Hover to open" & Refined Idle Edge Verification

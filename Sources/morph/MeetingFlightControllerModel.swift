@@ -711,6 +711,18 @@ public final class MeetingFlightControllerModel: ObservableObject {
         if let bundleID = detectedBrowserBundleID {
             Self.executeScriptInBrowser(bundleID: bundleID, script: muteJS)
         }
+        
+        // Native Zoom application shortcut: Command + Shift + A
+        let zoomMuteScript = """
+        tell application "System Events"
+            if exists process "zoom.us" then
+                tell process "zoom.us"
+                    keystroke "a" using {command down, shift down}
+                end tell
+            end if
+        end tell
+        """
+        _ = DefaultApplicationFormDetector.executeSimpleAppleScript(zoomMuteScript)
     }
     
     public func toggleCamera() {
@@ -731,6 +743,18 @@ public final class MeetingFlightControllerModel: ObservableObject {
         if let bundleID = detectedBrowserBundleID {
             Self.executeScriptInBrowser(bundleID: bundleID, script: camJS)
         }
+        
+        // Native Zoom application shortcut: Command + Shift + V
+        let zoomCamScript = """
+        tell application "System Events"
+            if exists process "zoom.us" then
+                tell process "zoom.us"
+                    keystroke "v" using {command down, shift down}
+                end tell
+            end if
+        end tell
+        """
+        _ = DefaultApplicationFormDetector.executeSimpleAppleScript(zoomCamScript)
     }
     
     @discardableResult
