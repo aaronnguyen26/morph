@@ -511,4 +511,133 @@ final class YTMQuickPicksTests: XCTestCase {
 
         XCTAssertNotNil(hosting, "MediaView must build and lay out cleanly with Quick Picks suggestions embedded in playlist detail")
     }
+
+    func testParseQuickPicksPrioritizesExplicitQuickPicksShelfOverOtherShelves() {
+        // Simulates realistic multi-shelf YouTube Music Home feed
+        func makeShelf(title: String, songs: [(String, String, String)]) -> [String: Any] {
+            return [
+                "musicCarouselShelfRenderer": [
+                    "header": [
+                        "musicCarouselShelfBasicHeaderRenderer": [
+                            "title": ["runs": [["text": title]]],
+                            "strapline": ["runs": [["text": "Subtitle"]]]
+                        ]
+                    ],
+                    "contents": songs.map { (songTitle, artist, vid) in
+                        [
+                            "musicResponsiveListItemRenderer": [
+                                "playlistItemData": ["videoId": vid],
+                                "flexColumns": [
+                                    ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": songTitle]]]]],
+                                    ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "\(artist) • 3:30"]]]]]
+                                ]
+                            ]
+                        ]
+                    }
+                ]
+            ]
+        }
+
+        let doc: [String: Any] = [
+            "contents": [
+                "singleColumnBrowseResultsRenderer": [
+                    "tabs": [[
+                        "tabRenderer": [
+                            "content": [
+                                "sectionListRenderer": [
+                                    "contents": [
+                                        makeShelf(title: "Speed dial", songs: [("Speed 1", "Artist 1", "v_speed1"), ("Speed 2", "Artist 2", "v_speed2")]),
+                                        makeShelf(title: "Quick picks", songs: [("True Pick 1", "Starboy Artist", "v_pick1"), ("True Pick 2", "Daft Artist", "v_pick2")]),
+                                        makeShelf(title: "Listen again", songs: [("Old Song 1", "Old Artist", "v_old1"), ("Old Song 2", "Old Artist", "v_old2")])
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]]
+                ]
+            ]
+        ]
+
+        let picks = YTMParser.parseQuickPicks(doc)
+        XCTAssertEqual(picks.count, 2, "Must accurately extract from the Quick picks shelf, not Speed dial")
+        XCTAssertEqual(picks[0].title, "True Pick 1", "Must match True Pick 1 from Quick picks shelf")
+        XCTAssertEqual(picks[0].videoId, "v_pick1")
+        XCTAssertEqual(picks[1].title, "True Pick 2")
+        XCTAssertEqual(picks[1].videoId, "v_pick2")
+    }
+
+    func testParseQuickPicksMatchesVietnameseLuaChonNhanh() {
+        let doc: [String: Any] = [
+            "contents": [
+                "musicCarouselShelfRenderer": [
+                    "header": [
+                        "musicCarouselShelfBasicHeaderRenderer": [
+                            "title": ["runs": [["text": "Lựa chọn nhanh"]]],
+                            "strapline": ["runs": [["text": "Bắt đầu danh sách bài hát"]]]
+                        ]
+                    ],
+                    "contents": [
+                        [
+                            "musicResponsiveListItemRenderer": [
+                                "playlistItemData": ["videoId": "v_vn1"],
+                                "flexColumns": [
+                                    ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "Bài hát A"]]]]],
+                                    ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "Ca sĩ A • 3:20"]]]]]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+        let picks = YTMParser.parseQuickPicks(doc)
+        XCTAssertEqual(picks.count, 1)
+        XCTAssertEqual(picks[0].title, "Bài hát A")
+        XCTAssertEqual(picks[0].videoId, "v_vn1")
+    }
+
+    func testParseLibraryPlaylistsWithVariousIdFormats() {
+        let doc: [String: Any] = [
+            "contents": [
+                [
+                    "musicTwoRowItemRenderer": [
+                        "title": ["runs": [["text": "Standard VL Playlist"]]],
+                        "subtitle": ["runs": [["text": "Playlist • 10 songs"]]],
+                        "navigationEndpoint": ["browseEndpoint": ["browseId": "VLPL12345"]]
+                    ]
+                ],
+                [
+                    "musicTwoRowItemRenderer": [
+                        "title": ["runs": [["text": "Raw PL Playlist"]]],
+                        "subtitle": ["runs": [["text": "Playlist • 25 songs"]]],
+                        "navigationEndpoint": ["browseEndpoint": ["browseId": "PL67890"]]
+                    ]
+                ],
+                [
+                    "musicTwoRowItemRenderer": [
+                        "title": ["runs": [["text": "Watch Endpoint Playlist"]]],
+                        "subtitle": ["runs": [["text": "Playlist • 5 songs"]]],
+                        "navigationEndpoint": ["watchPlaylistEndpoint": ["playlistId": "PLwatch555"]]
+                    ]
+                ]
+            ]
+        ]
+
+        let result = YTMParser.parseLibraryPlaylists(doc)
+        XCTAssertEqual(result.playlists.count, 3)
+        let ids = result.playlists.map { $0.id }
+        XCTAssertTrue(ids.contains("PL12345"))
+        XCTAssertTrue(ids.contains("PL67890"))
+        XCTAssertTrue(ids.contains("PLwatch555"))
+        
+        let p1 = result.playlists.first(where: { $0.id == "PL12345" })
+        XCTAssertEqual(p1?.browseId, "VLPL12345")
+        
+        let p2 = result.playlists.first(where: { $0.id == "PL67890" })
+        XCTAssertEqual(p2?.browseId, "VLPL67890")
+        
+        let p3 = result.playlists.first(where: { $0.id == "PLwatch555" })
+        XCTAssertEqual(p3?.browseId, "VLPLwatch555")
+    }
 }

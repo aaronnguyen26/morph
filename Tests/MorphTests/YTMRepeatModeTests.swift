@@ -376,4 +376,48 @@ final class YTMRepeatModeTests: XCTestCase {
         // Should return to Song 1 via playbackHistory
         XCTAssertEqual(media.trackTitle, "Song 1", "previousTrack must return to previous track from history in shuffle mode")
     }
+    
+    func testRepeatModeScriptEvaluatedWithoutDoubleDispatch() {
+        let engine = YouTubeMusicEngine()
+        var evaluatedScript: String?
+        engine.onEvaluate = { script in
+            evaluatedScript = script
+        }
+        
+        engine.setRepeatMode(.one)
+        
+        XCTAssertNotNil(evaluatedScript)
+        XCTAssertTrue(evaluatedScript?.contains("window._morphTargetRepeatMode = 'one'") == true)
+        XCTAssertFalse(evaluatedScript?.contains("v.loop = true") == true, "Must not set v.loop = true on MSE video element")
+        XCTAssertFalse(evaluatedScript?.contains("dispatchEvent(new MouseEvent('click'") == true, "Must not double-dispatch clicks")
+    }
+    
+    func testDOMPlaylistsDoNotOverwriteFullLibraryPlaylists() {
+        let engine = YouTubeMusicEngine()
+        let libPlaylist = YTMPlaylist(id: "PL_full", title: "My Library Playlist", tracks: [
+            YTMPlaylistItem(id: "t1", title: "Track 1", artist: "Artist 1")
+        ])
+        engine.userPlaylists = [libPlaylist]
+        
+        // Simulating 1-second DOM poll that only sees a single guide entry
+        let domPayload: [String: Any] = [
+            "title": "Track 1",
+            "artist": "Artist 1",
+            "isPlaying": true,
+            "playlists": [
+                [
+                    "id": "LM",
+                    "title": "Liked Music",
+                    "subtitle": "Auto Playlist"
+                ]
+            ]
+        ]
+        
+        engine.parseIncomingPayload(domPayload)
+        
+        // Both the loaded library playlist AND the liked music playlist must be retained
+        let ids = engine.userPlaylists.map { $0.id }
+        XCTAssertTrue(ids.contains("PL_full"), "Library playlist must NOT be wiped by DOM poll")
+        XCTAssertTrue(ids.contains("LM"))
+    }
 }

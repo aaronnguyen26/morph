@@ -219,6 +219,14 @@ public struct YTMPlaylist: Identifiable, Codable, Equatable {
     public var kind: YTMPlaylistKind
     /// Playlist id to pass as `list=` when starting playback (nil for artists → plain radio playback).
     public var playbackListId: String?
+    /// Date when the playlist was most recently played or accessed.
+    public var lastPlayedDate: Date?
+    /// Number of times songs from this playlist have been played.
+    public var playCount: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case id, title, subtitle, thumbnailURL, trackCount, tracks, browseId, kind, playbackListId, lastPlayedDate, playCount
+    }
     
     public init(
         id: String = UUID().uuidString,
@@ -229,7 +237,9 @@ public struct YTMPlaylist: Identifiable, Codable, Equatable {
         tracks: [YTMPlaylistItem] = [],
         browseId: String? = nil,
         kind: YTMPlaylistKind = .playlist,
-        playbackListId: String? = nil
+        playbackListId: String? = nil,
+        lastPlayedDate: Date? = nil,
+        playCount: Int = 0
     ) {
         self.id = id
         self.title = title
@@ -240,6 +250,23 @@ public struct YTMPlaylist: Identifiable, Codable, Equatable {
         self.browseId = browseId
         self.kind = kind
         self.playbackListId = playbackListId
+        self.lastPlayedDate = lastPlayedDate
+        self.playCount = playCount
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.subtitle = (try? c.decode(String.self, forKey: .subtitle)) ?? ""
+        self.thumbnailURL = try? c.decode(String.self, forKey: .thumbnailURL)
+        self.trackCount = try? c.decode(Int.self, forKey: .trackCount)
+        self.tracks = (try? c.decode([YTMPlaylistItem].self, forKey: .tracks)) ?? []
+        self.browseId = try? c.decode(String.self, forKey: .browseId)
+        self.kind = (try? c.decode(YTMPlaylistKind.self, forKey: .kind)) ?? .playlist
+        self.playbackListId = try? c.decode(String.self, forKey: .playbackListId)
+        self.lastPlayedDate = try? c.decode(Date.self, forKey: .lastPlayedDate)
+        self.playCount = (try? c.decode(Int.self, forKey: .playCount)) ?? 0
     }
 }
 
@@ -306,6 +333,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var userPlaylists: [YTMPlaylist] = []
     @Published public var isSignedIn: Bool = false
     @Published public var userEmail: String? = nil
+    
+    public var effectiveUserEmail: String? {
+        if let mail = userEmail, !mail.isEmpty { return mail }
+        if let mail = activeProfile?.email, !mail.isEmpty { return mail }
+        return nil
+    }
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
     @Published public var isWaitingForSignInCompletion: Bool = false
@@ -317,6 +350,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var libraryError: String? = nil
     @Published public var isLoadingLibrary: Bool = false
     private var lastLibrarySync: Date?
+    public var lastLibrarySyncTime: Date? { lastLibrarySync }
     
     @Published public var quickPicks: [YTMPlaylistItem] = []
     @Published public var isLoadingQuickPicks: Bool = false
@@ -350,6 +384,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.activeProfile = YTMProfileManager.shared.activeProfile
         if let initialEmail = self.activeProfile?.email, !initialEmail.isEmpty {
             self.userEmail = initialEmail
+        }
+        let stored = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.userEmail)
+        if !stored.isEmpty {
+            self.userPlaylists = stored
         }
         setupWebView(for: self.activeProfile)
     }
@@ -408,10 +446,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.userEmail = profile.email
         YTMProfileManager.shared.switchProfile(to: profile.id)
         
-        // Clear cached library and quick picks so we don't display another profile's data
-        self.userPlaylists = []
+        // Load stored library for this profile immediately
+        let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: profile.email)
+        self.userPlaylists = cached
         self.quickPicks = []
-        self.isLoadingLibrary = true
+        self.isLoadingLibrary = cached.isEmpty
         self.isLoadingQuickPicks = true
         
         guard !MorphEnvironment.isTestingEnvironment else { return }
@@ -434,8 +473,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func loadHome(for profile: YTMProfile? = nil) {
         guard !MorphEnvironment.isTestingEnvironment else { return }
         let target = profile ?? self.activeProfile
+        let targetEmail = target?.email ?? self.effectiveUserEmail
         var urlStr = kYTMURL
-        if let email = target?.email, !email.isEmpty {
+        if let email = targetEmail, !email.isEmpty {
             let encoded = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
             urlStr = "\(kYTMURL)/?authuser=\(encoded)"
         }
@@ -627,11 +667,26 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         var parsedPlaylists: [YTMPlaylist] = []
         if let rawPlaylists = body["playlists"] as? [[String: Any]] {
             for (idx, item) in rawPlaylists.enumerated() {
-                let pId = (item["id"] as? String) ?? "\(idx)"
+                let rawId = (item["id"] as? String) ?? ""
+                let pBrowse = item["browseId"] as? String
+                let pId: String = {
+                    if !rawId.isEmpty { return rawId }
+                    if let b = pBrowse, !b.isEmpty {
+                        if b.hasPrefix("VL") {
+                            return String(b.dropFirst(2))
+                        } else if let match = b.range(of: "list=([a-zA-Z0-9_-]+)", options: .regularExpression) {
+                            return String(b[match]).replacingOccurrences(of: "list=", with: "")
+                        }
+                        return b
+                    }
+                    return "\(idx)"
+                }()
                 let pTitle = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let pSub = (item["subtitle"] as? String) ?? "Playlist"
                 let pThumb = item["thumbnailURL"] as? String
-                let pBrowse = item["browseId"] as? String
+                // Strictly require actual user playlist: PL, LM, LL, WL, VL, FL (reject single song radios and albums)
+                guard pId.hasPrefix("PL") || pId == "LM" || pId == "LL" || pId == "WL" || pId.hasPrefix("VL") || pId.hasPrefix("FL") else { continue }
+                guard !pId.contains("RD") && !pId.contains("MPRE") && !pId.contains("OLAK") else { continue }
                 if !pTitle.isEmpty {
                     parsedPlaylists.append(YTMPlaylist(
                         id: pId,
@@ -644,7 +699,21 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
         }
         if !parsedPlaylists.isEmpty {
-            self.userPlaylists = parsedPlaylists
+            var combined = self.userPlaylists
+            for pl in parsedPlaylists {
+                if let idx = combined.firstIndex(where: { $0.id == pl.id }) {
+                    if combined[idx].tracks.isEmpty && !pl.tracks.isEmpty {
+                        combined[idx].tracks = pl.tracks
+                    }
+                    if combined[idx].thumbnailURL == nil {
+                        combined[idx].thumbnailURL = pl.thumbnailURL
+                    }
+                } else {
+                    combined.append(pl)
+                }
+            }
+            self.userPlaylists = combined
+            YTMUserOfflineStore.shared.savePlaylists(combined, for: self.userEmail)
         }
         
         if let rawPicks = body["quickPicks"] as? [[String: Any]], !rawPicks.isEmpty {
@@ -1337,10 +1406,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
             if (p && typeof p.seekTo === 'function') {
                 p.seekTo(\(seconds), true);
+                if (\(seconds) === 0 && typeof p.playVideo === 'function') {
+                    p.playVideo();
+                }
             } else {
                 var v = document.querySelector('video');
                 if (v && !isNaN(\(seconds))) {
                     v.currentTime = \(seconds);
+                    if (\(seconds) === 0) {
+                        v.play().catch(function(){});
+                    }
                 }
             }
             if (typeof window.morphSendUpdate === 'function') {
@@ -1464,10 +1539,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let script = """
         (function() {
             window._morphTargetRepeatMode = '\(mode.rawValue)';
-            var v = document.querySelector('video');
-            if (v) {
-                v.loop = (window._morphTargetRepeatMode === 'one');
-            }
+            window._morphRepeatLockoutUntil = Date.now() + 2000;
             var repeatBtn = document.querySelector('ytmusic-player-bar .repeat') || 
                             document.querySelector('#right-controls .repeat') || 
                             document.querySelector('.repeat.ytmusic-player-bar') ||
@@ -1509,10 +1581,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     (function(delay) {
                         setTimeout(function() {
                             (inner || repeatBtn).click();
-                            repeatBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                         }, delay);
-                    })(c * 120);
+                    })(c * 150);
                 }
+                setTimeout(function() {
+                    window._morphTargetRepeatMode = currentYTMMode();
+                }, (neededClicks * 150) + 100);
             }
             if (typeof window.morphSendUpdate === 'function') {
                 setTimeout(window.morphSendUpdate, 350);
@@ -1681,7 +1755,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     private var isWebViewReadyForInnerTube: Bool {
         guard let host = webView.url?.host else { return false }
-        return host.hasSuffix("music.youtube.com") && !webView.isLoading
+        return host.hasSuffix("music.youtube.com")
     }
     
     private func waitUntilReady(timeout: TimeInterval = 12) async throws {
@@ -1706,7 +1780,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             return try await override(endpoint, body)
         }
         try await waitUntilReady()
-        let authUser = (self.activeProfile?.email.isEmpty == false) ? self.activeProfile!.email : "0"
+        let intendedEmail = self.effectiveUserEmail ?? ""
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         let bodyJSON = String(decoding: bodyData, as: UTF8.self)
         let js = """
@@ -1716,7 +1790,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         const apiKey = cfg ? cfg.get('INNERTUBE_API_KEY') : null;
         const payload = JSON.parse(bodyJSON);
         payload.context = context;
-        let targetAuth = (context && context.user && context.user.authuser) || '\(authUser)';
+        let intendedAuth = '\(intendedEmail)';
+        const urlParams = new URLSearchParams(window.location.search);
+        let urlAuth = urlParams.get('authuser') || '';
+        let targetAuth = (context && context.user && typeof context.user.authuser !== 'undefined') 
+            ? context.user.authuser 
+            : (urlAuth.length > 0 ? urlAuth : (intendedAuth.length > 0 ? intendedAuth : '0'));
+        payload.context.user = payload.context.user || {};
+        payload.context.user.authuser = String(targetAuth);
         const headers = { 'Content-Type': 'application/json', 'X-Goog-AuthUser': String(targetAuth), 'X-Origin': 'https://music.youtube.com' };
         headers['X-Youtube-Client-Name'] = String((cfg && cfg.get('INNERTUBE_CONTEXT_CLIENT_NAME')) || 67);
         headers['X-Youtube-Client-Version'] = String((cfg && cfg.get('INNERTUBE_CONTEXT_CLIENT_VERSION')) || context.client.clientVersion);
@@ -1762,7 +1843,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         guard let url = URL(string: "https://music.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false") else {
             throw InnerTubeError.invalidResponse
         }
-        let authUser = (self.activeProfile?.email.isEmpty == false) ? self.activeProfile!.email : "0"
+        let intendedAuth = self.effectiveUserEmail ?? "0"
         var payload = body
         payload["context"] = [
             "client": [
@@ -1770,6 +1851,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 "clientVersion": "1.20250310.01.00",
                 "hl": "en",
                 "gl": "US"
+            ],
+            "user": [
+                "authuser": intendedAuth
             ]
         ]
         var request = URLRequest(url: url, timeoutInterval: 10)
@@ -1779,7 +1863,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         request.setValue("https://music.youtube.com/", forHTTPHeaderField: "Referer")
         request.setValue("67", forHTTPHeaderField: "X-Youtube-Client-Name")
         request.setValue("1.20250310.01.00", forHTTPHeaderField: "X-Youtube-Client-Version")
-        request.setValue(authUser, forHTTPHeaderField: "X-Goog-AuthUser")
+        request.setValue(intendedAuth, forHTTPHeaderField: "X-Goog-AuthUser")
         request.setValue(kCustomUserAgent, forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
@@ -1842,35 +1926,168 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
+    /// Scrapes playlists directly from the YouTube Music DOM if the engine's WKWebView has loaded the guide or library page.
+    public func scrapePlaylistsFromDOM() async -> [YTMPlaylist] {
+        guard let wv = self.webView else { return [] }
+        return await withCheckedContinuation { continuation in
+            let js = """
+            (function() {
+                var out = [];
+                var seen = {};
+                function cleanId(raw) {
+                    if (!raw) return '';
+                    var m = raw.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+                    if (m) return m[1];
+                    if (raw.indexOf('browse/VL') !== -1) return raw.split('browse/VL')[1].split('/')[0];
+                    return raw;
+                }
+                var entries = document.querySelectorAll('ytmusic-guide-entry-renderer, tp-yt-paper-item');
+                for (var i = 0; i < entries.length; i++) {
+                    var el = entries[i];
+                    var a = el.querySelector('a[href*="list="], a[href*="browse/VL"]');
+                    if (!a) continue;
+                    var href = a.getAttribute('href') || '';
+                    if (href.indexOf('watch?v=') !== -1) continue;
+                    var id = cleanId(href);
+                    if (!id || id.indexOf('RD') === 0 || id.indexOf('MPRE') === 0 || id.indexOf('OLAK') === 0) continue;
+                    var titleEl = el.querySelector('yt-formatted-string') || el.querySelector('.title') || a;
+                    var title = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : '';
+                    if (title && !seen[id]) {
+                        seen[id] = true;
+                        var clean = id.indexOf('VL') === 0 ? id.substring(2) : id;
+                        var bId = id.indexOf('VL') === 0 ? id : ('VL' + id);
+                        out.push({ id: clean, title: title, subtitle: "Playlist", browseId: bId, playbackListId: clean });
+                    }
+                }
+                var cards = document.querySelectorAll('ytmusic-two-row-item-renderer');
+                for (var j = 0; j < cards.length; j++) {
+                    var c = cards[j];
+                    var ca = c.querySelector('a[href*="list="], a[href*="browse/VL"]');
+                    if (!ca) continue;
+                    var chref = ca.getAttribute('href') || '';
+                    if (chref.indexOf('watch?v=') !== -1) continue;
+                    var cid = cleanId(chref);
+                    if (!cid || cid.indexOf('RD') === 0 || cid.indexOf('MPRE') === 0 || cid.indexOf('OLAK') === 0) continue;
+                    var ctitleEl = c.querySelector('.title a') || c.querySelector('.title') || c.querySelector('yt-formatted-string.title');
+                    var ctitle = ctitleEl ? (ctitleEl.innerText || ctitleEl.textContent || '').trim() : '';
+                    var csubEl = c.querySelector('.subtitle');
+                    var csub = csubEl ? (csubEl.innerText || csubEl.textContent || '').trim() : 'Playlist';
+                    if (csub.toLowerCase().indexOf('podcast') !== -1 || csub.toLowerCase().indexOf('episode') !== -1 || ctitle.toLowerCase().indexOf('podcast') !== -1) continue;
+                    var cimg = c.querySelector('img');
+                    var cthumb = cimg ? cimg.src : null;
+                    var cleanCid = cid.indexOf('VL') === 0 ? cid.substring(2) : cid;
+                    var bCid = cid.indexOf('VL') === 0 ? cid : ('VL' + cid);
+                    if (seen[cid] || seen[cleanCid]) {
+                        for (var k = 0; k < out.length; k++) {
+                            if (out[k].id === cleanCid || out[k].id === cid) {
+                                if (cthumb && !out[k].thumbnailURL) out[k].thumbnailURL = cthumb;
+                                if (csub && out[k].subtitle === 'Playlist') out[k].subtitle = csub;
+                            }
+                        }
+                    } else if (ctitle) {
+                        seen[cid] = true;
+                        seen[cleanCid] = true;
+                        out.push({ id: cleanCid, title: ctitle, subtitle: csub, thumbnailURL: cthumb, browseId: bCid, playbackListId: cleanCid });
+                    }
+                }
+                return JSON.stringify(out);
+            })()
+            """
+            wv.evaluateJavaScript(js) { res, _ in
+                guard let jsonStr = res as? String,
+                      let data = jsonStr.data(using: .utf8),
+                      let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                var parsed: [YTMPlaylist] = []
+                for dict in arr {
+                    guard let id = dict["id"] as? String, !id.isEmpty,
+                          let title = dict["title"] as? String, !title.isEmpty else { continue }
+                    let sub = (dict["subtitle"] as? String) ?? "Playlist"
+                    let thumb = dict["thumbnailURL"] as? String
+                    let bId = dict["browseId"] as? String
+                    let playId = dict["playbackListId"] as? String
+                    parsed.append(YTMPlaylist(id: id, title: title, subtitle: sub, thumbnailURL: thumb, browseId: bId, kind: .playlist, playbackListId: playId))
+                }
+                continuation.resume(returning: parsed)
+            }
+        }
+    }
+    
     public func refreshLibraryPlaylists() async {
         isLoadingLibrary = true
         libraryError = nil
         defer { isLoadingLibrary = false }
         do {
-            var doc = try await innerTube("browse", body: ["browseId": "FEmusic_liked_playlists"])
-            var parsed = YTMParser.parseLibraryPlaylists(doc)
-            var all = parsed.playlists
-            var seenIds = Set(all.map { $0.id })
-            var lastToken: String?
-            var pages = 0
-            while let token = parsed.continuation, token != lastToken, pages < 15 {
-                lastToken = token
-                doc = try await innerTube("browse", body: ["continuation": token])
-                parsed = YTMParser.parseLibraryPlaylists(doc)
-                for p in parsed.playlists where seenIds.insert(p.id).inserted { all.append(p) }
-                pages += 1
+            var all: [YTMPlaylist] = []
+            var seenIds = Set<String>()
+            
+            // 1. Scrape directly from DOM if WKWebView is loaded
+            let domPlaylists = await scrapePlaylistsFromDOM()
+            for p in domPlaylists where seenIds.insert(p.id).inserted {
+                all.append(p)
+            }
+            
+            // 2. Query valid InnerTube browse endpoints
+            // Prefer FEmusic_liked_playlists (dedicated Playlists section of user library)
+            let targets = ["FEmusic_liked_playlists", "FEmusic_library_landing"]
+            var lastError: Error?
+            for target in targets {
+                // If we already obtained real playlists from FEmusic_liked_playlists, do not pollute with library landing
+                if !all.isEmpty && target == "FEmusic_library_landing" {
+                    break
+                }
+                do {
+                    let doc = try await publicInnerTube("browse", body: ["browseId": target])
+                    var parsed = YTMParser.parseLibraryPlaylists(doc)
+                    for p in parsed.playlists where seenIds.insert(p.id).inserted {
+                        all.append(p)
+                    }
+                    var token = parsed.continuation
+                    var lastToken: String?
+                    var pages = 0
+                    while let t = token, t != lastToken, pages < 10 {
+                        lastToken = t
+                        if let nextDoc = try? await publicInnerTube("browse", body: ["continuation": t]) {
+                            parsed = YTMParser.parseLibraryPlaylists(nextDoc)
+                            for p in parsed.playlists where seenIds.insert(p.id).inserted {
+                                all.append(p)
+                            }
+                            token = parsed.continuation
+                            pages += 1
+                        } else {
+                            break
+                        }
+                    }
+                } catch {
+                    lastError = error
+                }
+            }
+            
+            if all.isEmpty, let err = lastError {
+                throw err
             }
             if !all.contains(where: { $0.id == "LM" }) && (isSignedIn || !all.isEmpty) {
                 all.insert(YTMPlaylist(id: "LM", title: "Liked Music", subtitle: "Auto playlist", browseId: "VLLM", kind: .playlist, playbackListId: "LM"), at: 0)
             }
             if all.isEmpty {
                 libraryError = isSignedIn ? nil : "Sign in to YouTube Music to see your playlists."
+                let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.effectiveUserEmail)
+                if !cached.isEmpty {
+                    userPlaylists = cached
+                }
             } else {
                 userPlaylists = all
                 lastLibrarySync = Date()
+                YTMUserOfflineStore.shared.savePlaylists(all, for: self.effectiveUserEmail)
             }
         } catch {
             libraryError = error.localizedDescription
+            let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.effectiveUserEmail)
+            if !cached.isEmpty && self.userPlaylists.isEmpty {
+                self.userPlaylists = cached
+            }
         }
     }
     
@@ -1917,6 +2134,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 }
             }
             if raw.hasPrefix("VL") { return raw }
+            if raw.hasPrefix("FE") || raw.hasPrefix("UC") || raw.hasPrefix("MPRE") { return raw }
             return "VL\(raw)"
         }
     }
@@ -1947,7 +2165,31 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func loadTracks(for playlist: YTMPlaylist) async throws -> YTMTrackPage {
         let bId = browseId(for: playlist)
         print("[Morph YTM] loadTracks for playlist: '\(playlist.title)' (id: '\(playlist.id)', kind: \(playlist.kind), browseId: '\(bId)')")
-        var page = try await loadAllPages(browseId: bId)
+        var page = (try? await loadAllPages(browseId: bId)) ?? YTMTrackPage()
+        
+        // If 0 tracks returned with current browseId, attempt alternate browseId (toggle VL prefix)
+        if page.tracks.isEmpty {
+            let altId = bId.hasPrefix("VL") ? String(bId.dropFirst(2)) : "VL\(bId)"
+            if let altPage = try? await loadAllPages(browseId: altId), !altPage.tracks.isEmpty {
+                page = altPage
+            }
+        }
+        
+        // Liked Music endpoint fallback: if Liked Music has 0 tracks with VLLM/LM, query FEmusic_liked_videos
+        if page.tracks.isEmpty && (playlist.id == "LM" || playlist.id == "VLLM" || playlist.title.lowercased().contains("liked")) {
+            if let likedPage = try? await loadAllPages(browseId: "FEmusic_liked_videos"), !likedPage.tracks.isEmpty {
+                page = likedPage
+            }
+        }
+        
+        // If still 0 tracks, fall back to locally stored tracks for this playlist
+        if page.tracks.isEmpty {
+            let cached = YTMUserOfflineStore.shared.getStoredTracks(forPlaylist: playlist.id, email: self.effectiveUserEmail)
+            if !cached.isEmpty {
+                page.tracks = cached
+            }
+        }
+        
         if playlist.kind == .artist, let more = page.moreBrowseId, more.hasPrefix("VL") {
             print("[Morph YTM] Fetching full top songs for artist via moreBrowseId: '\(more)'")
             if let full = try? await loadAllPages(browseId: more), full.tracks.count > page.tracks.count {
@@ -1957,6 +2199,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         if page.playbackListId == nil, playlist.kind == .playlist {
             page.playbackListId = playlist.playbackListId ?? (playlist.id.hasPrefix("VL") ? String(playlist.id.dropFirst(2)) : playlist.id)
         }
+        
+        // Persist the loaded tracks in the offline store so they are instantly accessible
+        if !page.tracks.isEmpty {
+            YTMUserOfflineStore.shared.savePlaylistTracks(page.tracks, forPlaylist: playlist.id, email: self.effectiveUserEmail)
+        }
+        
         return page
     }
     
@@ -2826,13 +3074,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         repeatMode = 'off';
                     }
                 }
-                if (window._morphTargetRepeatMode) {
+                if (window._morphTargetRepeatMode && Date.now() < (window._morphRepeatLockoutUntil || 0)) {
                     repeatMode = window._morphTargetRepeatMode;
                 } else {
                     window._morphTargetRepeatMode = repeatMode;
-                }
-                if (videoEl) {
-                    videoEl.loop = (repeatMode === 'one');
                 }
                 
                 // Playlist Queue extraction
@@ -2874,13 +3119,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var playlists = [];
                 var seenPlaylists = {};
                 try {
-                    // 1. Sidebar Guide Entries
-                    var guideEntries = document.querySelectorAll('ytmusic-guide-entry-renderer');
+                    // 1. Sidebar Guide Entries (strictly user playlists, never watch/video links)
+                    var guideEntries = document.querySelectorAll('ytmusic-guide-entry-renderer, tp-yt-paper-item');
                     for (var g = 0; g < guideEntries.length; g++) {
                         var gel = guideEntries[g];
-                        var gLink = gel.querySelector('a') || gel;
+                        var gLink = gel.querySelector('a[href*="playlist?list="], a[href*="browse/VL"]') || gel.querySelector('a') || gel;
                         var gHref = gLink.getAttribute('href') || '';
-                        var gTitleEl = gel.querySelector('yt-formatted-string.title') || gel.querySelector('.title') || gel.querySelector('tp-yt-paper-item');
+                        if (gHref.indexOf('watch?v=') !== -1) continue;
+                        var gTitleEl = gel.querySelector('yt-formatted-string.title') || gel.querySelector('.title') || gel.querySelector('tp-yt-paper-item') || gel;
                         var gTitle = gTitleEl ? (gTitleEl.innerText || gTitleEl.textContent || '').trim() : '';
                         
                         if (gHref.indexOf('playlist?list=') !== -1 || gHref.indexOf('browse/VL') !== -1) {
@@ -2889,24 +3135,60 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             if (gMatch) gId = gMatch[1];
                             else if (gHref.indexOf('browse/VL') !== -1) gId = gHref.split('browse/VL')[1].split('/')[0];
                             
+                            // Eliminate radios, albums, and single songs
+                            if (gId.indexOf('RD') === 0 || gId.indexOf('MPRE') === 0 || gId.indexOf('OLAK') === 0) continue;
+                            if (gId.indexOf('PL') !== 0 && gId !== 'LM' && gId !== 'LL' && gId !== 'WL' && gId.indexOf('VLPL') !== 0 && gId !== 'VLLM') continue;
+                            
                             var gImg = gel.querySelector('img');
                             var gThumb = gImg ? gImg.src : null;
                             
                             if (gTitle && gId && !seenPlaylists[gId]) {
                                 seenPlaylists[gId] = true;
+                                var bId = gId.indexOf('VL') === 0 ? gId : ('VL' + gId);
                                 playlists.push({
                                     id: gId,
                                     title: gTitle,
                                     subtitle: 'Playlist',
                                     thumbnailURL: gThumb,
-                                    browseId: gHref
+                                    browseId: bId
                                 });
                             }
                         }
                     }
                     
-                    // (Page shelves / search-result cards are deliberately NOT scraped: they used to leak
-                    // artist radios and recommendations into the user's playlist list.)
+                    // 2. Playlists on page grids / shelves (strictly user playlists, never songs/radios)
+                    var gridItems = document.querySelectorAll('ytmusic-two-row-item-renderer');
+                    for (var gi = 0; gi < gridItems.length; gi++) {
+                        var gEl = gridItems[gi];
+                        var aEl = gEl.querySelector('a[href*="playlist?list="], a[href*="browse/VLPL"], a[href*="browse/VLLM"]');
+                        if (!aEl) continue;
+                        var aHref = aEl.getAttribute('href') || '';
+                        if (aHref.indexOf('watch?v=') !== -1) continue;
+                        var tEl = gEl.querySelector('.title a') || gEl.querySelector('.title') || gEl.querySelector('yt-formatted-string.title');
+                        var tText = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
+                        var imgEl = gEl.querySelector('img');
+                        var imgThumb = imgEl ? imgEl.src : null;
+                        
+                        var plId = '';
+                        var plMatch = aHref.match(/[?&]list=([^&]+)/);
+                        if (plMatch) plId = plMatch[1];
+                        else if (aHref.indexOf('browse/VL') !== -1) plId = aHref.split('browse/VL')[1].split('/')[0];
+                        
+                        if (plId.indexOf('RD') === 0 || plId.indexOf('MPRE') === 0 || plId.indexOf('OLAK') === 0) continue;
+                        if (plId.indexOf('PL') !== 0 && plId !== 'LM' && plId !== 'LL' && plId !== 'WL' && plId.indexOf('VLPL') !== 0 && plId !== 'VLLM') continue;
+                        
+                        if (plId && tText && !seenPlaylists[plId]) {
+                            seenPlaylists[plId] = true;
+                            var bId = plId.indexOf('VL') === 0 ? plId : ('VL' + plId);
+                            playlists.push({
+                                id: plId,
+                                title: tText,
+                                subtitle: 'Playlist',
+                                thumbnailURL: imgThumb,
+                                browseId: bId
+                            });
+                        }
+                    }
 
                     // 3. Quick Picks extraction from Home feed
                     var quickPicks = [];
@@ -2916,9 +3198,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         // Pass 1: Prioritize explicit Quick Picks / Lựa chọn nhanh shelf
                         for (var s = 0; s < shelves.length; s++) {
                             var sh = shelves[s];
-                            var shTitleEl = sh.querySelector('yt-formatted-string.title') || sh.querySelector('.title') || sh.querySelector('h2');
-                            var shTitle = shTitleEl ? (shTitleEl.innerText || shTitleEl.textContent || '').toLowerCase() : '';
-                            if (shTitle.indexOf('quick pick') !== -1 || shTitle.indexOf('lựa chọn nhanh') !== -1) {
+                            var headerEl = sh.querySelector('ytmusic-carousel-shelf-basic-header-renderer, ytmusic-shelf-basic-header-renderer, .header, #header') || sh;
+                            var shHeaderText = (headerEl ? (headerEl.innerText || headerEl.textContent || '') : '').toLowerCase();
+                            if (shHeaderText.indexOf('quick pick') !== -1 || shHeaderText.indexOf('lựa chọn nhanh') !== -1) {
                                 targetShelf = sh;
                                 break;
                             }
@@ -2927,9 +3209,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         if (!targetShelf && window.location.pathname === '/' && shelves.length > 0) {
                             for (var s2 = 0; s2 < shelves.length; s2++) {
                                 var sh2 = shelves[s2];
-                                var shTitleEl2 = sh2.querySelector('yt-formatted-string.title') || sh2.querySelector('.title') || sh2.querySelector('h2');
-                                var shTitle2 = shTitleEl2 ? (shTitleEl2.innerText || shTitleEl2.textContent || '').toLowerCase() : '';
-                                if (shTitle2.indexOf('listen again') !== -1 || shTitle2.indexOf('start radio') !== -1 || s2 === 0) {
+                                var headerEl2 = sh2.querySelector('ytmusic-carousel-shelf-basic-header-renderer, ytmusic-shelf-basic-header-renderer, .header, #header') || sh2;
+                                var shHeaderText2 = (headerEl2 ? (headerEl2.innerText || headerEl2.textContent || '') : '').toLowerCase();
+                                if (shHeaderText2.indexOf('listen again') !== -1 || shHeaderText2.indexOf('start radio') !== -1 || s2 === 0) {
                                     targetShelf = sh2;
                                     break;
                                 }
@@ -2945,12 +3227,15 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                 var itTitle = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
                                 var itArtist = aEl ? (aEl.innerText || aEl.textContent || '').trim() : '';
                                 var itDur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
-                                var linkEl = itEl.querySelector('a[href*="watch?v="]');
+                                var linkEl = itEl.querySelector('a[href*="watch?v="]') || itEl.querySelector('a[href*="/watch"]') || itEl.querySelector('a[href*="v="]');
                                 var vId = '';
                                 if (linkEl) {
                                     var href = linkEl.getAttribute('href') || '';
                                     var vMatch = href.match(/[?&]v=([^&]+)/);
                                     if (vMatch) vId = vMatch[1];
+                                }
+                                if (!vId && itEl.data && itEl.data.playlistItemData && itEl.data.playlistItemData.videoId) {
+                                    vId = itEl.data.playlistItemData.videoId;
                                 }
                                 var imgEl = itEl.querySelector('img');
                                 var thumb = imgEl ? imgEl.src : null;
@@ -3002,6 +3287,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             if (uName && typeof uName === 'string') {
                                 userDisplayName = uName.trim();
                             }
+                            var ctx = window.ytcfg.get('INNERTUBE_CONTEXT');
+                            if (!userEmail && ctx && ctx.user && ctx.user.email) {
+                                userEmail = ctx.user.email.trim();
+                            }
+                        }
+                        if (!userEmail) {
+                            var urlMatch = window.location.href.match(/[?&]authuser=([^&]+)/);
+                            if (urlMatch) {
+                                var decodedAuth = decodeURIComponent(urlMatch[1]).trim();
+                                if (decodedAuth.indexOf('@') !== -1) {
+                                    userEmail = decodedAuth;
+                                }
+                            }
                         }
                         if (!isSignedIn) {
                             var hasAvatar = document.querySelector('button#avatar-btn, img#avatar-btn, ytmusic-settings-button, tp-yt-paper-icon-button#avatar-btn, ytmusic-sign-in-button[hidden]');
@@ -3015,7 +3313,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         if (avatarImg && avatarImg.src && avatarImg.src.indexOf('http') === 0) {
                             userAvatarURL = avatarImg.src;
                         }
-                        var avatarBtn = document.querySelector('button#avatar-btn, img#avatar-btn, tp-yt-paper-icon-button#avatar-btn, ytmusic-settings-button');
+                        var avatarBtn = document.querySelector('button#avatar-btn, img#avatar-btn, tp-yt-paper-icon-button#avatar-btn, ytmusic-settings-button, yt-icon-button#avatar-btn, button[aria-label*="@"]');
                         if (avatarBtn) {
                             var aria = avatarBtn.getAttribute('aria-label') || avatarBtn.getAttribute('alt') || avatarBtn.getAttribute('title') || '';
                             if (!userEmail) {
@@ -3029,6 +3327,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                 if (nameMatch) {
                                     userDisplayName = nameMatch[1].trim();
                                 }
+                            }
+                        }
+                        if (!userEmail) {
+                            var accountEmailEl = document.querySelector('ytd-active-account-header-renderer #email, ytmusic-active-account-header-renderer #email, #account-name + #email, #email.ytd-active-account-header-renderer');
+                            if (accountEmailEl) {
+                                var em = (accountEmailEl.innerText || accountEmailEl.textContent || '').trim();
+                                if (em.indexOf('@') !== -1) userEmail = em;
                             }
                         }
                     } catch(ie) {}
@@ -3316,9 +3621,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var v = document.querySelector('video');
                 if (v && !v._morphListeners) {
                     v._morphListeners = true;
-                    if (window._morphTargetRepeatMode === 'one') {
-                        v.loop = true;
-                    }
                     ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange', 'loadedmetadata', 'canplay'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
                             dismissModalsAndEnableAutoplay();
@@ -3340,29 +3642,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             if ((evt === 'loadedmetadata' || evt === 'canplay') && _morphTransitionPending && !window._morphUserPaused) {
                                 ensureActivePlayback();
                             }
-                            if (evt === 'timeupdate') {
-                                if (window._morphTargetRepeatMode === 'one' || (v && v.loop)) {
-                                    if (v.duration > 0 && v.currentTime >= (v.duration - 0.35)) {
-                                        v.currentTime = 0;
-                                        var p = document.getElementById('movie_player') || document.querySelector('#movie_player');
-                                        if (p && typeof p.seekTo === 'function') {
-                                            p.seekTo(0, true);
-                                        }
-                                        if (p && typeof p.playVideo === 'function') {
-                                            p.playVideo();
-                                        }
-                                        v.play();
-                                        return;
-                                    }
-                                }
-                            }
                             window.morphSendUpdate(evt === 'play' || evt === 'pause' || evt === 'ended');
                         });
                     });
                     
                     // Auto-advance or seamless repeat when current track ends
                     v.addEventListener('ended', function(e) {
-                        if (window._morphTargetRepeatMode === 'one' || (v && v.loop)) {
+                        if (window._morphTargetRepeatMode === 'one') {
                             if (e) {
                                 e.stopPropagation();
                                 e.stopImmediatePropagation();

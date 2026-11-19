@@ -129,7 +129,31 @@ public enum YTMParser {
     }
     
     static func text(_ text: Any?) -> String {
-        runs(text).compactMap { $0["text"] as? String }.joined()
+        if let s = text as? String {
+            return s
+        }
+        guard let d = dict(text) else { return "" }
+        if let s = d["simpleText"] as? String, !s.isEmpty {
+            return s
+        }
+        let r = runs(d)
+        if !r.isEmpty {
+            let joined = r.compactMap { $0["text"] as? String }.joined()
+            if !joined.isEmpty { return joined }
+        }
+        if let s = d["text"] as? String, !s.isEmpty {
+            return s
+        }
+        if let s = d["content"] as? String, !s.isEmpty {
+            return s
+        }
+        if let first = firstString(in: d, key: "simpleText"), !first.isEmpty {
+            return first
+        }
+        if let first = firstString(in: d, key: "text"), !first.isEmpty {
+            return first
+        }
+        return ""
     }
     
     static func thumbnail(_ node: Any?) -> String? {
@@ -178,6 +202,7 @@ public enum YTMParser {
         if let v = dict(dict(item["playNavigationEndpoint"])?["watchEndpoint"])?["videoId"] as? String, !v.isEmpty { return v }
         if let v = dict(dict(item["onTap"])?["watchEndpoint"])?["videoId"] as? String, !v.isEmpty { return v }
         if let v = firstString(in: item, key: "videoId"), !v.isEmpty { return v }
+        if let v = firstString(in: item, key: "encryptedVideoId"), !v.isEmpty { return v }
         return nil
     }
     
@@ -188,8 +213,14 @@ public enum YTMParser {
     
     /// Parses one `musicResponsiveListItemRenderer` into a playable track.
     static func track(from item: [String: Any], index: Int) -> YTMPlaylistItem? {
-        guard let vid = videoId(of: item) else { return nil }
-        let title = text(flexText(item, 0)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let vid = videoId(of: item)
+        var title = text(flexText(item, 0)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty {
+            title = text(item["headline"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if title.isEmpty {
+            title = text(item["title"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !title.isEmpty else { return nil }
         
         var artist = ""
@@ -201,6 +232,9 @@ public enum YTMParser {
             if isPlayCount(seg) { continue }
             if artist.isEmpty { artist = seg }
         }
+        if artist.isEmpty {
+            artist = text(item["subtitle"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         
         let fixed = array(item["fixedColumns"])
         if let first = fixed.first,
@@ -210,14 +244,17 @@ public enum YTMParser {
         }
         
         let setId = dict(item["playlistItemData"])?["playlistSetVideoId"] as? String
+        let fallbackId = "\(index)_\(abs(title.hashValue))"
+        let effectiveId = setId ?? (vid.map { "\($0)#\(index)" } ?? fallbackId)
+        
         return YTMPlaylistItem(
-            id: setId ?? "\(vid)#\(index)",
+            id: effectiveId,
             title: title,
             artist: artist,
             duration: duration,
             isPlaying: false,
             videoId: vid,
-            thumbnailURL: thumbnail(item["thumbnail"])
+            thumbnailURL: thumbnail(item["thumbnail"]) ?? thumbnail(item["thumbnails"])
         )
     }
     
@@ -271,6 +308,16 @@ public enum YTMParser {
             }
         }
         
+        // Direct fallback: if no tracks parsed from shelves, scan all items in document
+        if page.tracks.isEmpty {
+            for item in collect(doc, key: "musicResponsiveListItemRenderer") {
+                if let t = track(from: item, index: idx) {
+                    page.tracks.append(t)
+                    idx += 1
+                }
+            }
+        }
+        
         // First-page playlist responses keep the continuation on the enclosing sectionListRenderer.
         if page.continuation == nil, !usedFallbackShelf, !shelves.isEmpty {
             for section in collect(doc, key: "sectionListRenderer") {
@@ -302,20 +349,59 @@ public enum YTMParser {
         var seen = Set<String>()
         
         func add(browseId: String, title: String, subtitle: String, thumb: String?) {
-            guard browseId.hasPrefix("VL"), !title.isEmpty else { return }
-            let id = String(browseId.dropFirst(2))
+            let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedBid = browseId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanTitle.isEmpty, !trimmedBid.isEmpty else { return }
+            // Eliminate individual song mixes, radios (RD...), albums (MPRE, OLAK), podcasts, and non-playlists
+            let cleanBid = trimmedBid.hasPrefix("VL") ? String(trimmedBid.dropFirst(2)) : trimmedBid
+            guard !cleanBid.hasPrefix("RD") && !cleanBid.hasPrefix("MPRE") && !cleanBid.hasPrefix("OLAK") else { return }
+            let lowerSub = subtitle.lowercased()
+            if lowerSub.contains("podcast") || lowerSub.contains("episode") || lowerSub.contains("show") { return }
+            let lowerTitle = cleanTitle.lowercased()
+            if lowerTitle.contains("podcast") || lowerTitle.contains("episode") { return }
+            let isUserPlaylist = trimmedBid.hasPrefix("PL") || trimmedBid.hasPrefix("VLPL") || trimmedBid.hasPrefix("VL") || trimmedBid.hasPrefix("FL") || trimmedBid == "LM" || trimmedBid == "VLLM" || trimmedBid == "LL" || trimmedBid == "WL" || trimmedBid == "VLLL" || trimmedBid == "VLWL"
+            guard isUserPlaylist else { return }
+            
+            let cleanBrowseId: String
+            let id: String
+            if trimmedBid.hasPrefix("VL") {
+                cleanBrowseId = trimmedBid
+                id = String(trimmedBid.dropFirst(2))
+            } else if trimmedBid.hasPrefix("FE") || trimmedBid.hasPrefix("UC") {
+                cleanBrowseId = trimmedBid
+                id = trimmedBid
+            } else {
+                cleanBrowseId = "VL" + trimmedBid
+                id = trimmedBid
+            }
             guard !id.isEmpty, seen.insert(id).inserted else { return }
-            out.append(YTMPlaylist(id: id, title: title, subtitle: subtitle, thumbnailURL: thumb, browseId: browseId, kind: .playlist))
+            var parsedTrackCount: Int? = nil
+            let lowerSubtitle = subtitle.lowercased()
+            if let match = lowerSubtitle.range(of: #"(\d+)\s*(?:song|track|item)"#, options: .regularExpression) {
+                let seg = String(lowerSubtitle[match])
+                let digits = seg.filter { $0.isNumber }
+                parsedTrackCount = Int(digits)
+            }
+            out.append(YTMPlaylist(id: id, title: cleanTitle, subtitle: subtitle, thumbnailURL: thumb, trackCount: parsedTrackCount, browseId: cleanBrowseId, kind: .playlist))
         }
         
         for card in collect(doc, key: "musicTwoRowItemRenderer") {
-            let bid = dict(dict(card["navigationEndpoint"])?["browseEndpoint"])?["browseId"] as? String ?? ""
-            add(browseId: bid, title: text(card["title"]), subtitle: text(card["subtitle"]), thumb: thumbnail(card["thumbnailRenderer"]))
+            let bid = dict(dict(card["navigationEndpoint"])?["browseEndpoint"])?["browseId"] as? String
+                ?? dict(dict(card["navigationEndpoint"])?["watchPlaylistEndpoint"])?["playlistId"] as? String
+                ?? dict(dict(card["navigationEndpoint"])?["watchEndpoint"])?["playlistId"] as? String
+                ?? firstString(in: card, key: "playlistId")
+                ?? ""
+            add(browseId: bid, title: text(card["title"]), subtitle: text(card["subtitle"]), thumb: thumbnail(card["thumbnailRenderer"]) ?? thumbnail(card["thumbnail"]))
         }
         for item in collect(doc, key: "musicResponsiveListItemRenderer") {
-            let bid = dict(dict(item["navigationEndpoint"])?["browseEndpoint"])?["browseId"] as? String ?? ""
+            let bid = dict(dict(item["navigationEndpoint"])?["browseEndpoint"])?["browseId"] as? String
+                ?? dict(dict(item["navigationEndpoint"])?["watchPlaylistEndpoint"])?["playlistId"] as? String
+                ?? dict(dict(item["navigationEndpoint"])?["watchEndpoint"])?["playlistId"] as? String
+                ?? firstString(in: item, key: "playlistId")
+                ?? ""
             let title = text(flexText(item, 0)).trimmingCharacters(in: .whitespacesAndNewlines)
-            add(browseId: bid, title: title, subtitle: text(flexText(item, 1)), thumb: thumbnail(item["thumbnail"]))
+            let effectiveTitle = title.isEmpty ? text(item["title"]) : title
+            add(browseId: bid, title: effectiveTitle, subtitle: text(flexText(item, 1)), thumb: thumbnail(item["thumbnail"]) ?? thumbnail(item["thumbnails"]))
         }
         return (out, continuation(in: doc))
     }
@@ -450,6 +536,23 @@ public enum YTMParser {
         )
     }
     
+    /// Extracts the full composite header text from a carousel or list shelf
+    static func shelfHeaderText(_ shelf: [String: Any]) -> String {
+        var collected: [String] = []
+        if let h = dict(shelf["header"]) {
+            let headerRenderer = dict(h["musicCarouselShelfBasicHeaderRenderer"])
+                ?? dict(h["musicShelfBasicHeaderRenderer"])
+                ?? h
+            let t = text(headerRenderer["title"])
+            if !t.isEmpty { collected.append(t) }
+            let s = text(headerRenderer["strapline"])
+            if !s.isEmpty { collected.append(s) }
+        }
+        let t = text(shelf["title"])
+        if !t.isEmpty { collected.append(t) }
+        return collected.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+    
     /// Parses the YouTube Music Home feed (`FEmusic_home`) and extracts the algorithmic Quick Picks shelf.
     public static func parseQuickPicks(_ doc: [String: Any]) -> [YTMPlaylistItem] {
         var candidateShelves: [[String: Any]] = []
@@ -457,7 +560,7 @@ public enum YTMParser {
         candidateShelves += collect(doc, key: "musicShelfRenderer")
         
         let priorityKeywords = [
-            "quick pick", "listen again", "start radio", "mixed for you",
+            "quick pick", "lựa chọn nhanh", "listen again", "start radio", "mixed for you",
             "mixed for", "forgotten favorite", "recommend", "picks",
             "similar to", "deep cuts", "from your library"
         ]
@@ -482,9 +585,20 @@ public enum YTMParser {
             return tracks
         }
         
-        // 1. Check matching priority shelves first
+        // 1. Check specifically for explicit Quick Picks shelf first (highest priority)
         for shelf in candidateShelves {
-            let headerText = (text(shelf["header"]) + " " + text(shelf["title"])).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let headerText = shelfHeaderText(shelf)
+            if headerText.contains("quick pick") || headerText.contains("lựa chọn nhanh") {
+                let tracks = extractTracks(from: shelf)
+                if !tracks.isEmpty {
+                    return YTMPlaylistItem.deduplicate(tracks)
+                }
+            }
+        }
+        
+        // 2. Check other priority keywords if explicit quick picks shelf was not named as such
+        for shelf in candidateShelves {
+            let headerText = shelfHeaderText(shelf)
             if priorityKeywords.contains(where: { headerText.contains($0) }) {
                 let tracks = extractTracks(from: shelf)
                 if !tracks.isEmpty {
@@ -493,7 +607,7 @@ public enum YTMParser {
             }
         }
         
-        // 2. Fallback: First shelf with at least 2 playable songs
+        // 3. Fallback: First shelf with at least 2 playable songs
         for shelf in candidateShelves {
             let tracks = extractTracks(from: shelf)
             if tracks.count >= 2 {
