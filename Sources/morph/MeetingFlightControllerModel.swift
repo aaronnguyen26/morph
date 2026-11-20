@@ -214,8 +214,17 @@ public struct DefaultMeetingAppDetector: MeetingAppDetector {
         return nil
     }
     
+    @MainActor private static var lastBrowserMeetingTabScanTimestamp: TimeInterval = 0
+    
     /// Queries running web browsers to detect active Google Meet or Zoom tabs
-    private static func inspectBrowserTabsForMeetings() -> DetectedMeetingInfo? {
+    @MainActor private static func inspectBrowserTabsForMeetings(isAlreadyDetected: Bool = false) -> DetectedMeetingInfo? {
+        let now = ProcessInfo.processInfo.systemUptime
+        // Throttled: if no meeting is currently active, only scan all browser tabs via AppleScript max once per 10s
+        if !isAlreadyDetected && (now - lastBrowserMeetingTabScanTimestamp < 10.0) {
+            return nil
+        }
+        lastBrowserMeetingTabScanTimestamp = now
+        
         let runningApps = NSWorkspace.shared.runningApplications
         
         let targetBrowsers: [(bundleID: String, name: String)] = [
@@ -910,7 +919,7 @@ public final class MeetingFlightControllerModel: ObservableObject {
     }
     
     private func startPeriodicAppScanning() {
-        scanCancellable = Timer.publish(every: 1.5, on: .main, in: .common)
+        scanCancellable = Timer.publish(every: 3.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkRunningMeetingApps()
