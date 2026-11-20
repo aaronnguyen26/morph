@@ -3843,10 +3843,11 @@ public final class FormInputAutoTracker: @unchecked Sendable {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var globalKeyMonitor: Any?
-    private var axSyncTimer: AnyCancellable?
-    private var fullScanTimer: AnyCancellable?
+    internal var axSyncTimer: AnyCancellable?
+    internal var fullScanTimer: AnyCancellable?
     private var debouncedAXSyncTask: Task<Void, Never>?
     public private(set) var isRunning: Bool = false
+    public private(set) var isFormActive: Bool = false
     
     // MARK: Focus confirmation
     // Typed characters are NEVER written to a guessed field. They go to the field whose browser focus has been
@@ -4090,11 +4091,14 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         guard !isRunning else { return }
         isRunning = true
         setupEventTap()
-        setupAXSync()
+        Task { @MainActor [weak self] in
+            self?.updateAXSyncState()
+        }
     }
     
     public func stop() {
         isRunning = false
+        isFormActive = false
         debouncedAXSyncTask?.cancel()
         debouncedAXSyncTask = nil
         fastLiveSyncTask?.cancel()
@@ -4163,7 +4167,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             NSLog("[MORPH-AUTOTRACKER] CGEvent tap creation failed. Falling back to NSEvent global monitor.")
             // Fallback for environments where CGEventTap cannot be attached
             globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] event in
-                guard let self = self, self.isRunning else { return }
+                guard let self = self, self.isRunning, self.isFormActive else { return }
                 if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventUserDataTag {
                     return
                 }
@@ -4202,7 +4206,7 @@ public final class FormInputAutoTracker: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         
-        guard isRunning else { return Unmanaged.passUnretained(event) }
+        guard isRunning && isFormActive else { return Unmanaged.passUnretained(event) }
         if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventUserDataTag {
             return Unmanaged.passUnretained(event)
         }
@@ -4233,28 +4237,49 @@ public final class FormInputAutoTracker: @unchecked Sendable {
         return Unmanaged.passUnretained(event)
     }
     
-    private func setupAXSync() {
-        // Fast 0.1s poll to sync focused element value and active field alignment
-        axSyncTimer = Timer.publish(every: 0.1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self = self, let model = self.formModel,
-                          model.isFormDetected, model.isAutoCaptureEnabled else { return }
-                    self.syncFocusedElement()
-                }
-            }
+    @MainActor
+    public func updateAXSyncState() {
+        guard isRunning, let model = formModel else {
+            isFormActive = false
+            axSyncTimer?.cancel()
+            axSyncTimer = nil
+            fullScanTimer?.cancel()
+            fullScanTimer = nil
+            return
+        }
+        let active = model.isFormDetected && model.isAutoCaptureEnabled
+        self.isFormActive = active
+        guard active else {
+            axSyncTimer?.cancel()
+            axSyncTimer = nil
+            fullScanTimer?.cancel()
+            fullScanTimer = nil
+            return
+        }
         
-        // High-frequency 0.25s background scan of all browser window inputs & AppleScript fallback
-        fullScanTimer = Timer.publish(every: 0.25, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let self = self, let model = self.formModel,
-                          model.isFormDetected, model.isAutoCaptureEnabled else { return }
-                    self.formModel?.syncLiveFormInputValues(isBackground: true)
+        if axSyncTimer == nil {
+            axSyncTimer = Timer.publish(every: 0.1, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self = self, let model = self.formModel,
+                              model.isFormDetected, model.isAutoCaptureEnabled else { return }
+                        self.syncFocusedElement()
+                    }
                 }
-            }
+        }
+        
+        if fullScanTimer == nil {
+            fullScanTimer = Timer.publish(every: 0.25, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        guard let self = self, let model = self.formModel,
+                              model.isFormDetected, model.isAutoCaptureEnabled else { return }
+                        self.formModel?.syncLiveFormInputValues(isBackground: true)
+                    }
+                }
+        }
     }
     
     public static func isInteractiveInputRole(_ role: String) -> Bool {
@@ -8315,6 +8340,7 @@ public final class ApplicationFormModel: ObservableObject {
     private var workspaceLaunchObserver: NSObjectProtocol?
     private var workspaceUnhideObserver: NSObjectProtocol?
     private var receiptsCancellable: AnyCancellable?
+    private var axSyncStateCancellable: AnyCancellable?
     private var isAppleScriptSyncRunning: Bool = false
     private var hasPendingUrgentLiveSync: Bool = false
     private var awaitingReopenSnapshotClear: Bool = false
@@ -8352,6 +8378,12 @@ public final class ApplicationFormModel: ObservableObject {
             self.autoTracker = FormInputAutoTracker(model: self)
             self.autoTracker?.start()
             startPolling()
+            
+            self.axSyncStateCancellable = Publishers.CombineLatest($isFormDetected, $isAutoCaptureEnabled)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    self?.autoTracker?.updateAXSyncState()
+                }
         }
         self.isBootstrapping = false
         rebuildAdaptiveProfile()
@@ -9722,8 +9754,8 @@ public final class ApplicationFormModel: ObservableObject {
             }
         }
         
-        // 4. Periodic 0.25s backup monitor (off-main-actor) complementing event-driven AXObserver
-        pollTimer = Timer.publish(every: 0.25, on: .main, in: .common)
+        // 4. Periodic 2.0s backup monitor (off-main-actor) complementing event-driven AXObserver
+        pollTimer = Timer.publish(every: 2.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.refreshBrowserAXObserverIfNeeded()
