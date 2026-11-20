@@ -374,7 +374,11 @@ public final class ShortcutManager: NSObject, ObservableObject {
             return Unmanaged.passUnretained(event)
         }
         
-        let canControlSession = hasControllableMediaSession(for: model)
+        // Fast-path: Only evaluate media session control when an actual media or function key is detected
+        let canControlSession: () -> Bool = { [weak self] in
+            guard let self = self else { return false }
+            return self.hasControllableMediaSession(for: self.model)
+        }
         
         // 1. NSSystemDefined (type 14) - Hardware Media Keys (F7, F8, F9, NX_KEYTYPE_PLAY = 16)
         if type.rawValue == 14 {
@@ -390,7 +394,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 switch keyCode {
                 case 16: // NX_KEYTYPE_PLAY (F8 Play / Pause)
                     if isKeyDown {
-                        guard canControlSession else {
+                        guard canControlSession() else {
                             swallowedSystemMediaKeyCodes.remove(keyCode)
                             return Unmanaged.passUnretained(event)
                         }
@@ -410,7 +414,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                     }
                 case 17, 19: // NX_KEYTYPE_NEXT / NX_KEYTYPE_FAST (F9 Next)
                     if isKeyDown {
-                        guard canControlSession else {
+                        guard canControlSession() else {
                             swallowedSystemMediaKeyCodes.remove(keyCode)
                             return Unmanaged.passUnretained(event)
                         }
@@ -430,7 +434,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                     }
                 case 18, 20: // NX_KEYTYPE_PREVIOUS / NX_KEYTYPE_REWIND (F7 Previous)
                     if isKeyDown {
-                        guard canControlSession else {
+                        guard canControlSession() else {
                             swallowedSystemMediaKeyCodes.remove(keyCode)
                             return Unmanaged.passUnretained(event)
                         }
@@ -463,6 +467,11 @@ public final class ShortcutManager: NSObject, ObservableObject {
                 return Unmanaged.passUnretained(event)
             }
             
+            // Ultra-fast path: If not F7 (98), F8 (100), or F9 (101), immediately pass through
+            guard keyCode == 98 || keyCode == 100 || keyCode == 101 else {
+                return Unmanaged.passUnretained(event)
+            }
+            
             let flags = event.flags
             let isCmd = flags.contains(.maskCommand)
             let isCtrl = flags.contains(.maskControl)
@@ -472,7 +481,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
             if !isCmd && !isCtrl && !isOpt {
                 switch keyCode {
                 case 100: // F8 Function Key
-                    guard canControlSession else {
+                    guard canControlSession() else {
                         swallowedVirtualKeyCodes.remove(keyCode)
                         return Unmanaged.passUnretained(event)
                     }
@@ -485,7 +494,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                     }
                     return nil
                 case 101: // F9 Function Key
-                    guard canControlSession else {
+                    guard canControlSession() else {
                         swallowedVirtualKeyCodes.remove(keyCode)
                         return Unmanaged.passUnretained(event)
                     }
@@ -498,7 +507,7 @@ public final class ShortcutManager: NSObject, ObservableObject {
                     }
                     return nil
                 case 98: // F7 Function Key
-                    guard canControlSession else {
+                    guard canControlSession() else {
                         swallowedVirtualKeyCodes.remove(keyCode)
                         return Unmanaged.passUnretained(event)
                     }

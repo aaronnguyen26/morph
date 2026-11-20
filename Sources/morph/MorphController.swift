@@ -23,6 +23,8 @@ public final class MorphController: NSObject {
     private var lastMousePoint: NSPoint?
     private var lastMouseTimestamp: TimeInterval = 0
     private var lastClickTimestamp: TimeInterval = 0
+    private var lastUnderlyingKeyTimestamp: TimeInterval = 0
+    private var lastUnderlyingScrollTimestamp: TimeInterval = 0
     public private(set) var lastUnderlyingInteractionTimestamp: TimeInterval = 0
     public private(set) var isExplicitlyDismissed: Bool = false
     public private(set) var lastDismissalTimestamp: TimeInterval = 0
@@ -417,14 +419,23 @@ public final class MorphController: NSObject {
     private func setupMouseMonitors() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
         
-        // 1. High-frequency 50ms (20Hz) active mouse location poller.
+        // 1. Adaptive 50ms active mouse location poller.
         // Direct main thread read from macOS WindowServer via RunLoop.common.
-        // Guarantees immediate, rock-solid hover detection across all windows and displays,
-        // completely bypassing macOS background event monitor throttling.
+        // Skips execution when Morph is resting and cursor is in the lower workspace.
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             MainActor.assumeIsolated {
-                self.checkMousePosition(NSEvent.mouseLocation)
+                let mouseLoc = NSEvent.mouseLocation
+                // Adaptive polling: if Morph is collapsed and mouse is far below the notch, skip polling
+                if !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive &&
+                   (self.model.glassIslandState == .idle || !self.model.isGlassIslandEnabled) &&
+                   !self.model.dropShelf.isDraggingOverNotch && !self.isFileDragActive() {
+                    let screen = self.targetScreen()
+                    if mouseLoc.y < (screen.frame.maxY - 120) {
+                        return
+                    }
+                }
+                self.checkMousePosition(mouseLoc)
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -434,7 +445,17 @@ public final class MorphController: NSObject {
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
             guard let self = self else { return }
             DispatchQueue.main.async { [weak self] in
-                self?.checkMousePosition(NSEvent.mouseLocation)
+                guard let self = self else { return }
+                let mouseLoc = NSEvent.mouseLocation
+                if !self.model.isExpanded && !self.model.isSpotlightBarActive && !self.model.isTimerPopupActive &&
+                   (self.model.glassIslandState == .idle || !self.model.isGlassIslandEnabled) &&
+                   !self.model.dropShelf.isDraggingOverNotch && !self.isFileDragActive() {
+                    let screen = self.targetScreen()
+                    if mouseLoc.y < (screen.frame.maxY - 120) {
+                        return
+                    }
+                }
+                self.checkMousePosition(mouseLoc)
             }
         }
         
@@ -476,25 +497,33 @@ public final class MorphController: NSObject {
                     }
                 }
             } else {
+                self.registerUnderlyingAppInteraction()
+            }
+        }
+        
+        // 5. Universal platform keystroke monitor: detects active typing in ANY underlying application
+        // Coalesces keystrokes to max 6Hz main queue dispatches
+        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
+            guard let self = self else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastUnderlyingKeyTimestamp >= 0.15 {
+                self.lastUnderlyingKeyTimestamp = now
                 DispatchQueue.main.async { [weak self] in
                     self?.registerUnderlyingAppInteraction()
                 }
             }
         }
         
-        // 5. Universal platform keystroke monitor: detects active typing in ANY underlying application
-        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
-            guard let self = self else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.registerUnderlyingAppInteraction()
-            }
-        }
-        
         // 6. Universal platform scroll monitor: detects trackpad/mousewheel scrolling in ANY underlying application
+        // Coalesces high-frequency scrolling (up to 120Hz) to max 6Hz main queue dispatches
         scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] _ in
             guard let self = self else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.registerUnderlyingAppInteraction()
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastUnderlyingScrollTimestamp >= 0.15 {
+                self.lastUnderlyingScrollTimestamp = now
+                DispatchQueue.main.async { [weak self] in
+                    self?.registerUnderlyingAppInteraction()
+                }
             }
         }
         
@@ -513,12 +542,19 @@ public final class MorphController: NSObject {
     /// Records user interaction with ANY underlying application on macOS, immediately cancelling
     /// any pending hover dwell expansion and enforcing a cooldown buffer.
     public func registerUnderlyingAppInteraction() {
-        if !model.isExpanded {
-            hoverIntentWorkItem?.cancel()
-            hoverIntentWorkItem = nil
-            let now = ProcessInfo.processInfo.systemUptime
-            lastUnderlyingInteractionTimestamp = now
-            lastClickTimestamp = now
+        let now = ProcessInfo.processInfo.systemUptime
+        lastUnderlyingInteractionTimestamp = now
+        lastClickTimestamp = now
+        if !model.isExpanded && hoverIntentWorkItem != nil {
+            if Thread.isMainThread {
+                hoverIntentWorkItem?.cancel()
+                hoverIntentWorkItem = nil
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.hoverIntentWorkItem?.cancel()
+                    self?.hoverIntentWorkItem = nil
+                }
+            }
         }
     }
     
@@ -572,10 +608,41 @@ public final class MorphController: NSObject {
     }
     
     public func checkMousePosition(_ mouseLoc: NSPoint) {
+        let isDraggingFiles = isFileDragActive()
+        let isMorphOpen = (model.isGlassIslandEnabled && model.glassIslandState != .idle) ||
+            ((model.interactionMode == .spotlightBar)
+            ? (model.isSpotlightBarActive || model.isTimerPopupActive || model.isExpanded)
+            : model.isExpanded)
+        
+        // Fast-path early exit: if Morph is collapsed/resting and no file drag is active,
+        // and cursor is far below the notch (> 120pt from top edge of screen),
+        // skip all detailed geometry, velocity calculations, and sensitive rect checks.
+        if !isMorphOpen && !isDraggingFiles {
+            let screen = targetScreen()
+            if mouseLoc.y < (screen.frame.maxY - 120) {
+                if model.dropShelf.isDraggingOverNotch {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                        model.dropShelf.isDraggingOverNotch = false
+                    }
+                    panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+                }
+                if hoverIntentWorkItem != nil {
+                    hoverIntentWorkItem?.cancel()
+                    hoverIntentWorkItem = nil
+                }
+                dwellEntryLocation = nil
+                dwellStartTime = 0
+                if model.isHovered {
+                    model.isHovered = false
+                    panel?.ignoresMouseEvents = shouldIgnoreMouseEvents
+                }
+                return
+            }
+        }
+        
         let isInside = isMouseInsideMorphUI(mouseLoc)
         let now = ProcessInfo.processInfo.systemUptime
         
-        let isDraggingFiles = isFileDragActive()
         if isDraggingFiles {
             panel?.ignoresMouseEvents = false
             if isInside {
@@ -607,11 +674,6 @@ public final class MorphController: NSObject {
         }
         lastMousePoint = mouseLoc
         lastMouseTimestamp = now
-        
-        let isMorphOpen = (model.isGlassIslandEnabled && model.glassIslandState != .idle) ||
-            ((model.interactionMode == .spotlightBar)
-            ? (model.isSpotlightBarActive || model.isTimerPopupActive || model.isExpanded)
-            : model.isExpanded)
         
         if isInside {
             collapseWorkItem?.cancel()
