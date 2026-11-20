@@ -599,7 +599,8 @@ public final class NotchModel: ObservableObject {
     @Published public var glassTimerDur: Int = 1500
     @Published public var glassTimerStatus: GlassTimerStatus = .ready
     @Published public var glassTimerDoneCount: Int = 1
-    private var glassTimerTimer: Timer? = nil
+    internal var glassTimerTimer: Timer? = nil
+    public var isGlassTimerRunning: Bool { glassTimerTimer != nil }
     private var glassTimerEndTime: Date? = nil
     
     // Music Player State
@@ -2466,6 +2467,15 @@ public final class NotchModel: ObservableObject {
             }
             .store(in: &cancellables)
             
+        // Ambient visualizer activation: only run 8.3Hz visualizer timer when music UI is actively on-screen
+        Publishers.CombineLatest3($isExpanded, $selectedTab, $glassIslandState)
+            .sink { [weak self] expanded, tab, glassState in
+                guard let self = self else { return }
+                let isMusicVisible = (expanded && tab == .music) || (self.isGlassIslandEnabled && glassState == .music)
+                self.media.isVisualizerActive = isMusicVisible
+            }
+            .store(in: &cancellables)
+            
         // Sync real YouTube Music tracks to Glass Island tracks
         media.$quickPicks
             .sink { [weak self] picks in
@@ -3000,7 +3010,7 @@ public final class NotchModel: ObservableObject {
         glassTimerStatus = .running
         glassTimerEndTime = Date().addingTimeInterval(TimeInterval(glassTimerLeft))
         glassTimerTimer?.invalidate()
-        glassTimerTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        glassTimerTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 if let end = self.glassTimerEndTime {

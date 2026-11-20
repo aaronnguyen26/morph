@@ -126,6 +126,14 @@ public final class MediaControllerModel: ObservableObject {
     
     // Ambient 3-bar equalizer heights (0.15 ... 1.0)
     @Published public var visualizerBars: [CGFloat] = [0.18, 0.18, 0.18]
+    public var isVisualizerActive: Bool = false {
+        didSet {
+            if oldValue != isVisualizerActive {
+                syncVisualizerTimer()
+            }
+        }
+    }
+    private var lastScriptableScanTimestamp: TimeInterval = 0
     
     public let engine: YouTubeMusicEngine
     public let systemAudio: SystemAudioServiceProtocol
@@ -135,7 +143,8 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private var cancellables = Set<AnyCancellable>()
-    private var visualizerTimer: AnyCancellable?
+    internal var visualizerTimer: AnyCancellable?
+    public var isVisualizerTimerRunning: Bool { visualizerTimer != nil }
     private var browserPollTimer: AnyCancellable?
     private var playbackTicker: AnyCancellable?
     
@@ -224,6 +233,14 @@ public final class MediaControllerModel: ObservableObject {
         setupEngineObservers()
         setupSystemAudioObserver()
         setupNetworkObserver()
+        
+        Publishers.CombineLatest($isPlaying, $isMuted)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.syncVisualizerTimer()
+            }
+            .store(in: &cancellables)
+            
         if !isTestingEnvironment {
             startVisualizer()
             startPlaybackTicker()
@@ -2256,26 +2273,42 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     // MARK: - Ambient Visualizer
-    private func startVisualizer() {
-        visualizerTimer = Timer.publish(every: 0.12, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                if self.isPlaying && !self.isMuted {
-                    self.visualizerBars = [
-                        CGFloat.random(in: 0.25...0.95),
-                        CGFloat.random(in: 0.45...1.0),
-                        CGFloat.random(in: 0.20...0.85)
-                    ]
-                } else {
-                    self.visualizerBars = [0.18, 0.18, 0.18]
-                }
+    public func syncVisualizerTimer() {
+        let shouldRun = isVisualizerActive && isPlaying && !isMuted
+        if shouldRun {
+            if visualizerTimer == nil {
+                visualizerTimer = Timer.publish(every: 0.12, on: .main, in: .common)
+                    .autoconnect()
+                    .sink { [weak self] _ in
+                        guard let self = self else { return }
+                        if self.isPlaying && !self.isMuted && self.isVisualizerActive {
+                            self.visualizerBars = [
+                                CGFloat.random(in: 0.25...0.95),
+                                CGFloat.random(in: 0.45...1.0),
+                                CGFloat.random(in: 0.20...0.85)
+                            ]
+                        } else {
+                            self.visualizerBars = [0.18, 0.18, 0.18]
+                            self.syncVisualizerTimer()
+                        }
+                    }
             }
+        } else {
+            visualizerTimer?.cancel()
+            visualizerTimer = nil
+            if visualizerBars != [0.18, 0.18, 0.18] {
+                visualizerBars = [0.18, 0.18, 0.18]
+            }
+        }
+    }
+    
+    private func startVisualizer() {
+        syncVisualizerTimer()
     }
     
     // MARK: - Fallback Browser AppleScript Bridge (When external browser is used)
     private func startBrowserPolling() {
-        browserPollTimer = Timer.publish(every: 2.0, on: .main, in: .common)
+        browserPollTimer = Timer.publish(every: 3.5, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -2406,6 +2439,13 @@ public final class MediaControllerModel: ObservableObject {
         }
         
         // 2. Multi-browser AppleScript Tab Inspection (for scriptable browsers with tabs)
+        // Throttled: only scan all browser tabs via AppleScript if already connected, or max once every 12 seconds
+        let now = ProcessInfo.processInfo.systemUptime
+        if !self.isBrowserConnected && (now - self.lastScriptableScanTimestamp < 12.0) {
+            return
+        }
+        self.lastScriptableScanTimestamp = now
+        
         let scriptResult = await scanScriptableBrowserTabs()
         guard !isTestingEnvironment, !engine.trackData.isPlaying, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
         

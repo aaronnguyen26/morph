@@ -2919,7 +2919,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     private var injectedPlayerObserverJavaScript: String {
         return """
         (function() {
-            function getTrackInfo() {
+            var _morphCachedPlaylists = [];
+            var _morphCachedQuickPicks = [];
+            var _morphLastHeavyScanTime = 0;
+            var _morphLastPathname = '';
+
+            function getTrackInfo(force) {
                 var title = '';
                 var artist = '';
                 var art = null;
@@ -3116,157 +3121,173 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 } catch(qe) {}
                 
                 // User Playlists extraction (Sidebar Guide + Page Shelves)
-                var playlists = [];
-                var seenPlaylists = {};
-                try {
-                    // 1. Sidebar Guide Entries (strictly user playlists, never watch/video links)
-                    var guideEntries = document.querySelectorAll('ytmusic-guide-entry-renderer, tp-yt-paper-item');
-                    for (var g = 0; g < guideEntries.length; g++) {
-                        var gel = guideEntries[g];
-                        var gLink = gel.querySelector('a[href*="playlist?list="], a[href*="browse/VL"]') || gel.querySelector('a') || gel;
-                        var gHref = gLink.getAttribute('href') || '';
-                        if (gHref.indexOf('watch?v=') !== -1) continue;
-                        var gTitleEl = gel.querySelector('yt-formatted-string.title') || gel.querySelector('.title') || gel.querySelector('tp-yt-paper-item') || gel;
-                        var gTitle = gTitleEl ? (gTitleEl.innerText || gTitleEl.textContent || '').trim() : '';
-                        
-                        if (gHref.indexOf('playlist?list=') !== -1 || gHref.indexOf('browse/VL') !== -1) {
-                            var gId = '';
-                            var gMatch = gHref.match(/[?&]list=([^&]+)/);
-                            if (gMatch) gId = gMatch[1];
-                            else if (gHref.indexOf('browse/VL') !== -1) gId = gHref.split('browse/VL')[1].split('/')[0];
-                            
-                            // Eliminate radios, albums, and single songs
-                            if (gId.indexOf('RD') === 0 || gId.indexOf('MPRE') === 0 || gId.indexOf('OLAK') === 0) continue;
-                            if (gId.indexOf('PL') !== 0 && gId !== 'LM' && gId !== 'LL' && gId !== 'WL' && gId.indexOf('VLPL') !== 0 && gId !== 'VLLM') continue;
-                            
-                            var gImg = gel.querySelector('img');
-                            var gThumb = gImg ? gImg.src : null;
-                            
-                            if (gTitle && gId && !seenPlaylists[gId]) {
-                                seenPlaylists[gId] = true;
-                                var bId = gId.indexOf('VL') === 0 ? gId : ('VL' + gId);
-                                playlists.push({
-                                    id: gId,
-                                    title: gTitle,
-                                    subtitle: 'Playlist',
-                                    thumbnailURL: gThumb,
-                                    browseId: bId
-                                });
-                            }
-                        }
-                    }
-                    
-                    // 2. Playlists on page grids / shelves (strictly user playlists, never songs/radios)
-                    var gridItems = document.querySelectorAll('ytmusic-two-row-item-renderer');
-                    for (var gi = 0; gi < gridItems.length; gi++) {
-                        var gEl = gridItems[gi];
-                        var aEl = gEl.querySelector('a[href*="playlist?list="], a[href*="browse/VLPL"], a[href*="browse/VLLM"]');
-                        if (!aEl) continue;
-                        var aHref = aEl.getAttribute('href') || '';
-                        if (aHref.indexOf('watch?v=') !== -1) continue;
-                        var tEl = gEl.querySelector('.title a') || gEl.querySelector('.title') || gEl.querySelector('yt-formatted-string.title');
-                        var tText = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
-                        var imgEl = gEl.querySelector('img');
-                        var imgThumb = imgEl ? imgEl.src : null;
-                        
-                        var plId = '';
-                        var plMatch = aHref.match(/[?&]list=([^&]+)/);
-                        if (plMatch) plId = plMatch[1];
-                        else if (aHref.indexOf('browse/VL') !== -1) plId = aHref.split('browse/VL')[1].split('/')[0];
-                        
-                        if (plId.indexOf('RD') === 0 || plId.indexOf('MPRE') === 0 || plId.indexOf('OLAK') === 0) continue;
-                        if (plId.indexOf('PL') !== 0 && plId !== 'LM' && plId !== 'LL' && plId !== 'WL' && plId.indexOf('VLPL') !== 0 && plId !== 'VLLM') continue;
-                        
-                        if (plId && tText && !seenPlaylists[plId]) {
-                            seenPlaylists[plId] = true;
-                            var bId = plId.indexOf('VL') === 0 ? plId : ('VL' + plId);
-                            playlists.push({
-                                id: plId,
-                                title: tText,
-                                subtitle: 'Playlist',
-                                thumbnailURL: imgThumb,
-                                browseId: bId
-                            });
-                        }
-                    }
-
-                    // 3. Quick Picks extraction from Home feed
-                    var quickPicks = [];
+                var nowScan = Date.now();
+                var pathChanged = (window.location.pathname !== _morphLastPathname);
+                var shouldScanShelves = force || pathChanged || (nowScan - _morphLastHeavyScanTime > 30000) || (_morphCachedPlaylists.length === 0);
+                
+                var playlists = _morphCachedPlaylists;
+                var quickPicks = _morphCachedQuickPicks;
+                
+                if (shouldScanShelves) {
+                    _morphLastHeavyScanTime = nowScan;
+                    _morphLastPathname = window.location.pathname;
+                    var newPlaylists = [];
+                    var newQuickPicks = [];
+                    var seenPlaylists = {};
                     try {
-                        var shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
-                        var targetShelf = null;
-                        // Pass 1: Prioritize explicit Quick Picks / Lựa chọn nhanh shelf
-                        for (var s = 0; s < shelves.length; s++) {
-                            var sh = shelves[s];
-                            var headerEl = sh.querySelector('ytmusic-carousel-shelf-basic-header-renderer, ytmusic-shelf-basic-header-renderer, .header, #header') || sh;
-                            var shHeaderText = (headerEl ? (headerEl.innerText || headerEl.textContent || '') : '').toLowerCase();
-                            if (shHeaderText.indexOf('quick pick') !== -1 || shHeaderText.indexOf('lựa chọn nhanh') !== -1) {
-                                targetShelf = sh;
-                                break;
-                            }
-                        }
-                        // Pass 2: If no explicit Quick Picks shelf, fallback only on home page root ('/')
-                        if (!targetShelf && window.location.pathname === '/' && shelves.length > 0) {
-                            for (var s2 = 0; s2 < shelves.length; s2++) {
-                                var sh2 = shelves[s2];
-                                var headerEl2 = sh2.querySelector('ytmusic-carousel-shelf-basic-header-renderer, ytmusic-shelf-basic-header-renderer, .header, #header') || sh2;
-                                var shHeaderText2 = (headerEl2 ? (headerEl2.innerText || headerEl2.textContent || '') : '').toLowerCase();
-                                if (shHeaderText2.indexOf('listen again') !== -1 || shHeaderText2.indexOf('start radio') !== -1 || s2 === 0) {
-                                    targetShelf = sh2;
-                                    break;
-                                }
-                            }
-                        }
-                        if (targetShelf) {
-                            var items = targetShelf.querySelectorAll('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
-                            for (var itIdx = 0; itIdx < Math.min(items.length, 25); itIdx++) {
-                                var itEl = items[itIdx];
-                                var tEl = itEl.querySelector('.title a') || itEl.querySelector('.title') || itEl.querySelector('yt-formatted-string.title');
-                                var aEl = itEl.querySelector('.subtitle a') || itEl.querySelector('.byline a') || itEl.querySelector('.subtitle') || itEl.querySelector('.byline');
-                                var dEl = itEl.querySelector('.fixed-column') || itEl.querySelector('.duration');
-                                var itTitle = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
-                                var itArtist = aEl ? (aEl.innerText || aEl.textContent || '').trim() : '';
-                                var itDur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
-                                var linkEl = itEl.querySelector('a[href*="watch?v="]') || itEl.querySelector('a[href*="/watch"]') || itEl.querySelector('a[href*="v="]');
-                                var vId = '';
-                                if (linkEl) {
-                                    var href = linkEl.getAttribute('href') || '';
-                                    var vMatch = href.match(/[?&]v=([^&]+)/);
-                                    if (vMatch) vId = vMatch[1];
-                                }
-                                if (!vId && itEl.data && itEl.data.playlistItemData && itEl.data.playlistItemData.videoId) {
-                                    vId = itEl.data.playlistItemData.videoId;
-                                }
-                                var imgEl = itEl.querySelector('img');
-                                var thumb = imgEl ? imgEl.src : null;
-                                if (itTitle) {
-                                    quickPicks.push({
-                                        id: vId ? vId : ('qp_' + itIdx),
-                                        title: itTitle,
-                                        artist: itArtist,
-                                        duration: itDur,
-                                        videoId: vId ? vId : null,
-                                        thumbnailURL: thumb
+                        // 1. Sidebar Guide Entries (strictly user playlists, never watch/video links)
+                        var guideEntries = document.querySelectorAll('ytmusic-guide-entry-renderer, tp-yt-paper-item');
+                        for (var g = 0; g < guideEntries.length; g++) {
+                            var gel = guideEntries[g];
+                            var gLink = gel.querySelector('a[href*="playlist?list="], a[href*="browse/VL"]') || gel.querySelector('a') || gel;
+                            var gHref = gLink.getAttribute('href') || '';
+                            if (gHref.indexOf('watch?v=') !== -1) continue;
+                            var gTitleEl = gel.querySelector('yt-formatted-string.title') || gel.querySelector('.title') || gel.querySelector('tp-yt-paper-item') || gel;
+                            var gTitle = gTitleEl ? (gTitleEl.innerText || gTitleEl.textContent || '').trim() : '';
+                            
+                            if (gHref.indexOf('playlist?list=') !== -1 || gHref.indexOf('browse/VL') !== -1) {
+                                var gId = '';
+                                var gMatch = gHref.match(/[?&]list=([^&]+)/);
+                                if (gMatch) gId = gMatch[1];
+                                else if (gHref.indexOf('browse/VL') !== -1) gId = gHref.split('browse/VL')[1].split('/')[0];
+                                
+                                // Eliminate radios, albums, and single songs
+                                if (gId.indexOf('RD') === 0 || gId.indexOf('MPRE') === 0 || gId.indexOf('OLAK') === 0) continue;
+                                if (gId.indexOf('PL') !== 0 && gId !== 'LM' && gId !== 'LL' && gId !== 'WL' && gId.indexOf('VLPL') !== 0 && gId !== 'VLLM') continue;
+                                
+                                var gImg = gel.querySelector('img');
+                                var gThumb = gImg ? gImg.src : null;
+                                
+                                if (gTitle && gId && !seenPlaylists[gId]) {
+                                    seenPlaylists[gId] = true;
+                                    var bId = gId.indexOf('VL') === 0 ? gId : ('VL' + gId);
+                                    newPlaylists.push({
+                                        id: gId,
+                                        title: gTitle,
+                                        subtitle: 'Playlist',
+                                        thumbnailURL: gThumb,
+                                        browseId: bId
                                     });
                                 }
                             }
                         }
-                    } catch(qpe) {}
-
-                    // 4. Ensure Liked Music if link is present
-                    if (!seenPlaylists['LM']) {
-                        var lEl = document.querySelector('a[href*="list=LM"]');
-                        if (lEl) {
-                            seenPlaylists['LM'] = true;
-                            playlists.unshift({
-                                id: 'LM',
-                                title: 'Liked Music',
-                                subtitle: 'Auto Playlist',
-                                thumbnailURL: null,
-                                browseId: 'playlist?list=LM'
-                            });
+                        
+                        // 2. Playlists on page grids / shelves (strictly user playlists, never songs/radios)
+                        var gridItems = document.querySelectorAll('ytmusic-two-row-item-renderer');
+                        for (var gi = 0; gi < gridItems.length; gi++) {
+                            var gEl = gridItems[gi];
+                            var aEl = gEl.querySelector('a[href*="playlist?list="], a[href*="browse/VLPL"], a[href*="browse/VLLM"]');
+                            if (!aEl) continue;
+                            var aHref = aEl.getAttribute('href') || '';
+                            if (aHref.indexOf('watch?v=') !== -1) continue;
+                            var tEl = gEl.querySelector('.title a') || gEl.querySelector('.title') || gEl.querySelector('yt-formatted-string.title');
+                            var tText = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
+                            var imgEl = gEl.querySelector('img');
+                            var imgThumb = imgEl ? imgEl.src : null;
+                            
+                            var plId = '';
+                            var plMatch = aHref.match(/[?&]list=([^&]+)/);
+                            if (plMatch) plId = plMatch[1];
+                            else if (aHref.indexOf('browse/VL') !== -1) plId = aHref.split('browse/VL')[1].split('/')[0];
+                            
+                            if (plId.indexOf('RD') === 0 || plId.indexOf('MPRE') === 0 || plId.indexOf('OLAK') === 0) continue;
+                            if (plId.indexOf('PL') !== 0 && plId !== 'LM' && plId !== 'LL' && plId !== 'WL' && plId.indexOf('VLPL') !== 0 && plId !== 'VLLM') continue;
+                            
+                            if (plId && tText && !seenPlaylists[plId]) {
+                                seenPlaylists[plId] = true;
+                                var bId = plId.indexOf('VL') === 0 ? plId : ('VL' + plId);
+                                newPlaylists.push({
+                                    id: plId,
+                                    title: tText,
+                                    subtitle: 'Playlist',
+                                    thumbnailURL: imgThumb,
+                                    browseId: bId
+                                });
+                            }
                         }
-                    }
+
+                        // 3. Quick Picks extraction from Home feed
+                        try {
+                            var shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
+                            var targetShelf = null;
+                            // Pass 1: Prioritize explicit Quick Picks / Lựa chọn nhanh shelf
+                            for (var s = 0; s < shelves.length; s++) {
+                                var sh = shelves[s];
+                                var headerEl = sh.querySelector('ytmusic-carousel-shelf-basic-header-renderer, ytmusic-shelf-basic-header-renderer, .header, #header') || sh;
+                                var shHeaderText = (headerEl ? (headerEl.innerText || headerEl.textContent || '') : '').toLowerCase();
+                                if (shHeaderText.indexOf('quick pick') !== -1 || shHeaderText.indexOf('lựa chọn nhanh') !== -1) {
+                                    targetShelf = sh;
+                                    break;
+                                }
+                            }
+                            // Pass 2: If no explicit Quick Picks shelf, fallback only on home page root ('/')
+                            if (!targetShelf && window.location.pathname === '/' && shelves.length > 0) {
+                                for (var s2 = 0; s2 < shelves.length; s2++) {
+                                    var sh2 = shelves[s2];
+                                    var headerEl2 = sh2.querySelector('ytmusic-carousel-shelf-basic-header-renderer, ytmusic-shelf-basic-header-renderer, .header, #header') || sh2;
+                                    var shHeaderText2 = (headerEl2 ? (headerEl2.innerText || headerEl2.textContent || '') : '').toLowerCase();
+                                    if (shHeaderText2.indexOf('listen again') !== -1 || shHeaderText2.indexOf('start radio') !== -1 || s2 === 0) {
+                                        targetShelf = sh2;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (targetShelf) {
+                                var items = targetShelf.querySelectorAll('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
+                                for (var itIdx = 0; itIdx < Math.min(items.length, 25); itIdx++) {
+                                    var itEl = items[itIdx];
+                                    var tEl = itEl.querySelector('.title a') || itEl.querySelector('.title') || itEl.querySelector('yt-formatted-string.title');
+                                    var aEl = itEl.querySelector('.subtitle a') || itEl.querySelector('.byline a') || itEl.querySelector('.subtitle') || itEl.querySelector('.byline');
+                                    var dEl = itEl.querySelector('.fixed-column') || itEl.querySelector('.duration');
+                                    var itTitle = tEl ? (tEl.innerText || tEl.textContent || '').trim() : '';
+                                    var itArtist = aEl ? (aEl.innerText || aEl.textContent || '').trim() : '';
+                                    var itDur = dEl ? (dEl.innerText || dEl.textContent || '').trim() : '';
+                                    var linkEl = itEl.querySelector('a[href*="watch?v="]') || itEl.querySelector('a[href*="/watch"]') || itEl.querySelector('a[href*="v="]');
+                                    var vId = '';
+                                    if (linkEl) {
+                                        var href = linkEl.getAttribute('href') || '';
+                                        var vMatch = href.match(/[?&]v=([^&]+)/);
+                                        if (vMatch) vId = vMatch[1];
+                                    }
+                                    if (!vId && itEl.data && itEl.data.playlistItemData && itEl.data.playlistItemData.videoId) {
+                                        vId = itEl.data.playlistItemData.videoId;
+                                    }
+                                    var imgEl = itEl.querySelector('img');
+                                    var thumb = imgEl ? imgEl.src : null;
+                                    if (itTitle) {
+                                        newQuickPicks.push({
+                                            id: vId ? vId : ('qp_' + itIdx),
+                                            title: itTitle,
+                                            artist: itArtist,
+                                            duration: itDur,
+                                            videoId: vId ? vId : null,
+                                            thumbnailURL: thumb
+                                        });
+                                    }
+                                }
+                            }
+                        } catch(qpe) {}
+
+                        // 4. Ensure Liked Music if link is present
+                        if (!seenPlaylists['LM']) {
+                            var lEl = document.querySelector('a[href*="list=LM"]');
+                            if (lEl) {
+                                seenPlaylists['LM'] = true;
+                                newPlaylists.unshift({
+                                    id: 'LM',
+                                    title: 'Liked Music',
+                                    subtitle: 'Auto Playlist',
+                                    thumbnailURL: null,
+                                    browseId: 'playlist?list=LM'
+                                });
+                            }
+                        }
+                    } catch(pe) {}
+                    if (newPlaylists.length > 0) _morphCachedPlaylists = newPlaylists;
+                    if (newQuickPicks.length > 0) _morphCachedQuickPicks = newQuickPicks;
+                    playlists = _morphCachedPlaylists;
+                    quickPicks = _morphCachedQuickPicks;
+                }
                     
                     // 5. User Signed-In State & Email Detection
                     var isSignedIn = false;
@@ -3364,6 +3385,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             
             var _morphLastSendTime = 0;
             var _morphSendPendingTimeout = null;
+            var _morphSentPausedState = false;
             
             window.morphSendUpdate = function(force, isEnded) {
                 try {
@@ -3382,9 +3404,15 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         _morphSendPendingTimeout = null;
                     }
                     _morphLastSendTime = now;
-                    var data = getTrackInfo();
+                    var data = getTrackInfo(force);
                     if (isEnded) {
                         data.isEnded = true;
+                    }
+                    if (!data.isPlaying && !isEnded && !force) {
+                        if (_morphSentPausedState) return;
+                        _morphSentPausedState = true;
+                    } else if (data.isPlaying) {
+                        _morphSentPausedState = false;
                     }
                     window.webkit.messageHandlers.\(kHandlerName).postMessage(data);
                 } catch(e) {}

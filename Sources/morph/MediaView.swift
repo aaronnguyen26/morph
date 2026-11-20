@@ -42,6 +42,8 @@ public struct MediaView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear { media.isVisualizerActive = true }
+        .onDisappear { media.isVisualizerActive = false }
     }
     
     // MARK: - Left Deck (Now Playing Engine)
