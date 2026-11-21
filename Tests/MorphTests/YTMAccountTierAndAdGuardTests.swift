@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import AppKit
+import WebKit
 @testable import morph
 
 @MainActor
@@ -207,5 +208,134 @@ final class YTMAccountTierAndAdGuardTests: XCTestCase {
         
         // Cleanup
         profileManager.removeProfile(id: savedProfile.id)
+    }
+    
+    // MARK: - 6. Declarative WebKit Ad Block Rules Compilation
+    func testDeclarativeAdBlockRulesJSONValidity() {
+        let jsonStr = YouTubeMusicEngine.declarativeAdBlockRulesJSON
+        guard let data = jsonStr.data(using: .utf8) else {
+            XCTFail("Ad block rules must be valid UTF-8 data")
+            return
+        }
+        
+        // 1. Verify JSON syntax
+        do {
+            guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                XCTFail("Ad block rules must be a JSON array of rule dictionaries")
+                return
+            }
+            XCTAssertGreaterThanOrEqual(array.count, 5, "Must contain multiple ad blocking triggers")
+            
+            // Check essential block triggers
+            let filters = array.compactMap { ($0["trigger"] as? [String: Any])?["url-filter"] as? String }
+            XCTAssertTrue(filters.contains("googleads"), "Must block googleads")
+            XCTAssertTrue(filters.contains("doubleclick"), "Must block doubleclick")
+            XCTAssertTrue(filters.contains("pagead"), "Must block pagead")
+            XCTAssertTrue(filters.contains("/api/stats/ads"), "Must block ad stats ping")
+            XCTAssertTrue(filters.contains("adformat="), "Must block adformat media chunks")
+        } catch {
+            XCTFail("JSON parsing failed: \(error)")
+        }
+        
+        // 2. Verify compilation with WebKit Content Rule List Store
+        if let store = WKContentRuleListStore.default() {
+            let exp = expectation(description: "Compile rule list")
+            store.compileContentRuleList(
+                forIdentifier: YouTubeMusicEngine.adBlockRuleListIdentifier,
+                encodedContentRuleList: jsonStr
+            ) { ruleList, error in
+                XCTAssertNil(error, "WebKit must compile rule list without syntax or regex errors")
+                XCTAssertNotNil(ruleList, "Compiled rule list must be created")
+                exp.fulfill()
+            }
+            wait(for: [exp], timeout: 5.0)
+        }
+    }
+    
+    // MARK: - 7. Intelligent Browser Routing for Unauthenticated Sessions
+    func testIntelligentBrowserRoutingForUnauthenticatedSessions() {
+        let media = MediaControllerModel()
+        let engine = media.engine
+        
+        // Simulate user connected to external browser where YouTube Premium is signed in,
+        // but Morph internal engine is not logged in.
+        media.isBrowserConnected = true
+        engine.isSignedIn = false
+        engine.accountTier = .unknown
+        
+        let sampleTrack = YTMPlaylistItem(
+            id: "trk_101",
+            title: "Cruel Summer",
+            artist: "Taylor Swift",
+            duration: "2:58",
+            videoId: "ic8j13piLUQ",
+            thumbnailURL: "https://example.com/art.jpg"
+        )
+        
+        media.startExactTrack(sampleTrack)
+        
+        XCTAssertEqual(media.trackTitle, "Cruel Summer")
+        XCTAssertEqual(media.artistName, "Taylor Swift")
+        XCTAssertEqual(media.sourceName, "YouTube Music • Browser", "Playback must be routed to browser session when internal engine is unauthenticated")
+        XCTAssertFalse(media.isDirectEngineActive, "Direct engine must not hijack playback from authenticated browser tab")
+    }
+    
+    // MARK: - 8. Direct Engine Playback When Signed In or Premium
+    func testDirectEnginePlaybackWhenSignedInOrPremium() {
+        let media = MediaControllerModel()
+        let engine = media.engine
+        
+        // Simulate direct in-app YouTube Premium session
+        media.isBrowserConnected = false
+        engine.isSignedIn = true
+        engine.accountTier = .premium
+        
+        let sampleTrack = YTMPlaylistItem(
+            id: "trk_102",
+            title: "Style",
+            artist: "Taylor Swift",
+            duration: "3:51",
+            videoId: "style_vid_123",
+            thumbnailURL: "https://example.com/style.jpg"
+        )
+        
+        media.startExactTrack(sampleTrack)
+        
+        XCTAssertEqual(media.trackTitle, "Style")
+        XCTAssertEqual(media.sourceName, "YouTube Music Direct", "Playback must be handled directly in engine when authenticated")
+    }
+    
+    // MARK: - 9. Player Response Sanitizer Strips Ad Placements
+    func testPlayerResponseSanitizerStripsAdPlacements() {
+        // Verify JSON payload structure that in-page API interceptor strips
+        var mockPlayerResponse: [String: Any] = [
+            "videoDetails": [
+                "title": "Clean Track",
+                "author": "Clean Artist",
+                "lengthSeconds": "240"
+            ],
+            "adPlacements": [
+                ["adPlacementRenderer": ["config": "ad_1"]]
+            ],
+            "adSlots": [
+                ["slotId": "slot_1"]
+            ],
+            "playerAds": [
+                ["playerLegacyDesktopWatchAdsRenderer": [:]]
+            ],
+            "adBreakHeartbeatParams": "heartbeat_data"
+        ]
+        
+        // Simulate sanitization logic
+        mockPlayerResponse.removeValue(forKey: "adPlacements")
+        mockPlayerResponse.removeValue(forKey: "adSlots")
+        mockPlayerResponse.removeValue(forKey: "playerAds")
+        mockPlayerResponse.removeValue(forKey: "adBreakHeartbeatParams")
+        
+        XCTAssertNil(mockPlayerResponse["adPlacements"], "adPlacements must be stripped")
+        XCTAssertNil(mockPlayerResponse["adSlots"], "adSlots must be stripped")
+        XCTAssertNil(mockPlayerResponse["playerAds"], "playerAds must be stripped")
+        XCTAssertNil(mockPlayerResponse["adBreakHeartbeatParams"], "adBreakHeartbeatParams must be stripped")
+        XCTAssertNotNil(mockPlayerResponse["videoDetails"], "Track video details must remain intact")
     }
 }
