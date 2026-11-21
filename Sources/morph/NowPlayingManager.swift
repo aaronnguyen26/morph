@@ -215,7 +215,7 @@ public final class NowPlayingManager: NSObject, ObservableObject {
     /// Updates the macOS Now Playing Info dictionary for Control Center, Lock Screen, and Media Keys.
     public func updateNowPlayingInfo() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
-        guard let media = media else { return }
+        guard let media = media, !media.isAdPlaying else { return }
         
         let isPlaying = media.isEffectivelyPlaying
         MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused

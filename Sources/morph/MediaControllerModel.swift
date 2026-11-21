@@ -65,6 +65,18 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var quickPicksError: String? = nil
     @Published public var isSignedIn: Bool = false
     @Published public var userEmail: String? = nil
+    @Published public var accountTier: YTMAccountTier = .unknown
+    @Published public var isAdPlaying: Bool = false
+    @Published public var adSuppressedCount: Int = 0
+    
+    public var isAccountPremium: Bool {
+        return accountTier == .premium
+    }
+    
+    public var hasAds: Bool {
+        return accountTier.hasAds
+    }
+    
     @Published public var profiles: [YTMProfile] = []
     @Published public var activeProfile: YTMProfile? = nil
     @Published public var isProfileSwitcherOpen: Bool = false
@@ -213,6 +225,11 @@ public final class MediaControllerModel: ObservableObject {
         } else if let mail = engine.userEmail, !mail.isEmpty {
             self.userEmail = mail
         }
+        if let tier = initialProfile?.accountTier, tier != .unknown {
+            self.accountTier = tier
+        } else if engine.accountTier != .unknown {
+            self.accountTier = engine.accountTier
+        }
         
         let storedPlaylists = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.userEmail)
         if !storedPlaylists.isEmpty {
@@ -313,6 +330,17 @@ public final class MediaControllerModel: ObservableObject {
         engine.$trackData
             .sink { [weak self] data in
                 guard let self = self else { return }
+                
+                if data.accountTier != .unknown && self.accountTier != data.accountTier {
+                    self.accountTier = data.accountTier
+                }
+                self.isAdPlaying = data.isAdPlaying
+                self.adSuppressedCount = data.adSuppressedCount
+                
+                // Zero-Ad Guarantee: If an advertisement is actively playing, protect the displayed song title and artist!
+                if data.isAdPlaying {
+                    return
+                }
                 
                 // If YouTube Music is playing or has track data, prioritize direct engine
                 if !data.title.isEmpty && data.title != "YouTube Music" && data.duration > 0 {
@@ -521,6 +549,32 @@ public final class MediaControllerModel: ObservableObject {
                         self.refreshPlaylists()
                     }
                 }
+            }
+            .store(in: &cancellables)
+            
+        engine.$accountTier
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] tier in
+                guard let self = self else { return }
+                if tier != .unknown && self.accountTier != tier {
+                    self.accountTier = tier
+                }
+            }
+            .store(in: &cancellables)
+            
+        engine.$isAdPlaying
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isAd in
+                guard let self = self else { return }
+                self.isAdPlaying = isAd
+            }
+            .store(in: &cancellables)
+            
+        engine.$adSuppressedCount
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] count in
+                guard let self = self else { return }
+                self.adSuppressedCount = count
             }
             .store(in: &cancellables)
             
@@ -2210,6 +2264,9 @@ public final class MediaControllerModel: ObservableObject {
         YTMProfileManager.shared.switchProfile(to: profile.id)
         self.activeProfile = profile
         self.userEmail = profile.email
+        if profile.accountTier != .unknown {
+            self.accountTier = profile.accountTier
+        }
         let cached = YTMUserOfflineStore.shared.getStoredPlaylists(for: profile.email)
         self.playlists = cached
         self.selectedPlaylist = nil
@@ -2325,12 +2382,16 @@ public final class MediaControllerModel: ObservableObject {
         public let browser: String
         public let trackTitle: String
         public let artistName: String
+        public let tier: YTMAccountTier
+        public let isAd: Bool
         
-        public init(found: Bool, browser: String, trackTitle: String, artistName: String) {
+        public init(found: Bool, browser: String, trackTitle: String, artistName: String, tier: YTMAccountTier = .unknown, isAd: Bool = false) {
             self.found = found
             self.browser = browser
             self.trackTitle = trackTitle
             self.artistName = artistName
+            self.tier = tier
+            self.isAd = isAd
         }
     }
     
@@ -2400,11 +2461,16 @@ public final class MediaControllerModel: ObservableObject {
                     track = clean
                 }
                 
+                let isAd = trimmedTitle.localizedCaseInsensitiveContains("Advertisement") || clean.lowercased() == "advertisement"
+                let detectedTier: YTMAccountTier = trimmedTitle.contains("YouTube Music Premium") ? .premium : .unknown
+                
                 return WindowServerYTMResult(
                     found: true,
                     browser: browserName,
-                    trackTitle: track,
-                    artistName: artist
+                    trackTitle: isAd ? "" : track,
+                    artistName: isAd ? "" : artist,
+                    tier: detectedTier,
+                    isAd: isAd
                 )
             }
         }
@@ -2422,6 +2488,13 @@ public final class MediaControllerModel: ObservableObject {
                 self.isBrowserConnected = true
                 self.isSignedIn = true
                 self.sourceName = "YouTube Music • \(wsDetection.browser)"
+                if wsDetection.tier != .unknown && self.accountTier != wsDetection.tier {
+                    self.accountTier = wsDetection.tier
+                }
+                self.isAdPlaying = wsDetection.isAd
+                if wsDetection.isAd {
+                    return
+                }
                 
                 if !wsDetection.trackTitle.isEmpty {
                     self.trackTitle = wsDetection.trackTitle
