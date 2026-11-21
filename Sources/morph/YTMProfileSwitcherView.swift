@@ -150,10 +150,24 @@ public struct YTMProfileSwitcherView: View {
                 .clipShape(Circle())
                 
                 VStack(alignment: .leading, spacing: 1.5) {
-                    Text(p.displayName.isEmpty ? p.email : p.displayName)
-                        .font(.system(size: 12.5, weight: isCurrent ? .bold : .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(p.displayName.isEmpty ? p.email : p.displayName)
+                            .font(.system(size: 12.5, weight: isCurrent ? .bold : .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        
+                        if p.accountTier != .unknown {
+                            Text(p.accountTier.badgeTitle)
+                                .font(.system(size: 6.5, weight: .bold, design: .rounded))
+                                .foregroundColor(p.accountTier == .premium ? Color(hex: "#FFD700") : Color.white.opacity(0.60))
+                                .padding(.horizontal, 3.5)
+                                .padding(.vertical, 0.8)
+                                .background(
+                                    Capsule()
+                                        .fill(p.accountTier == .premium ? Color(hex: "#FFD700").opacity(0.20) : Color.white.opacity(0.08))
+                                )
+                        }
+                    }
                     
                     Text(p.email)
                         .font(.system(size: 10.5, weight: .regular))

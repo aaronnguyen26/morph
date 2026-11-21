@@ -365,14 +365,46 @@ public struct MediaView: View {
                     .lineLimit(1)
                 
                 HStack(spacing: 3.5) {
-                    Image(systemName: media.isOffline ? "arrow.down.circle.fill" : "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 6.5))
-                        .foregroundColor(media.isOffline ? theme.textSecondary : theme.textTertiary)
-                    
-                    Text(media.isOffline ? "Cached Offline" : (media.isSignedIn ? "YouTube Music Premium" : "Direct Stream"))
-                        .font(.system(size: 7, weight: .medium, design: .rounded))
-                        .foregroundColor(media.isOffline ? theme.textSecondary : theme.textTertiary)
-                        .lineLimit(1)
+                    if media.isOffline {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 6.5))
+                            .foregroundColor(theme.textSecondary)
+                        Text("Cached Offline")
+                            .font(.system(size: 7, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.textSecondary)
+                    } else if media.isAdPlaying {
+                        Image(systemName: "shield.fill")
+                            .font(.system(size: 6.5))
+                            .foregroundColor(Color(hex: "#10B981"))
+                        Text("Ad Muted & Skipped")
+                            .font(.system(size: 7, weight: .semibold, design: .rounded))
+                            .foregroundColor(Color(hex: "#10B981"))
+                    } else if media.isSignedIn {
+                        Image(systemName: media.accountTier == .premium ? "crown.fill" : "antenna.radiowaves.left.and.right")
+                            .font(.system(size: 6.5))
+                            .foregroundColor(media.accountTier == .premium ? Color(hex: "#FFD700") : theme.textTertiary)
+                        
+                        Text(media.accountTier == .premium ? "YouTube Music Premium" : "YouTube Music Free")
+                            .font(.system(size: 7, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.textTertiary)
+                        
+                        Text(media.accountTier.badgeTitle)
+                            .font(.system(size: 6, weight: .bold, design: .rounded))
+                            .foregroundColor(media.accountTier == .premium ? Color(hex: "#FFD700") : Color.white.opacity(0.65))
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 0.8)
+                            .background(
+                                Capsule()
+                                    .fill(media.accountTier == .premium ? Color(hex: "#FFD700").opacity(0.18) : Color.white.opacity(0.08))
+                            )
+                    } else {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.system(size: 6.5))
+                            .foregroundColor(theme.textTertiary)
+                        Text("Direct Stream")
+                            .font(.system(size: 7, weight: .medium, design: .rounded))
+                            .foregroundColor(theme.textTertiary)
+                    }
                 }
                 .padding(.top, 1)
             }
