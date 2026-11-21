@@ -1391,12 +1391,29 @@ public final class MediaControllerModel: ObservableObject {
             trackTransitionLockoutUntil = Date().addingTimeInterval(2.5)
         }
         
-        if let vid = track.videoId, !vid.isEmpty {
-            engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
+        // Intelligent Playback Routing:
+        // If the user has an active browser tab connected (where their YouTube Premium session lives)
+        // and direct engine is not signed in to YouTube Premium, route track to their browser tab
+        // so their YouTube Premium experience is 100% preserved with zero ads!
+        if isBrowserConnected && !engine.isSignedIn && engine.accountTier != .premium {
+            sourceName = "YouTube Music • Browser"
+            if let vid = track.videoId, !vid.isEmpty {
+                executeBrowserPlayTrack(videoId: vid, listId: listId)
+            } else {
+                let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+                if !query.isEmpty {
+                    executeBrowserSearch(query: query)
+                }
+            }
         } else {
-            let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
-            if !query.isEmpty {
-                playSearch(query)
+            sourceName = "YouTube Music Direct"
+            if let vid = track.videoId, !vid.isEmpty {
+                engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
+            } else {
+                let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+                if !query.isEmpty {
+                    playSearch(query)
+                }
             }
         }
     }
@@ -1808,9 +1825,9 @@ public final class MediaControllerModel: ObservableObject {
             triggerOfflineHandling(for: sel.title)
             return
         }
-        if let vid = first.videoId, sel.id != "pl_queue" {
+        if first.videoId != nil, sel.id != "pl_queue" {
             markPlaying(first)
-            engine.play(videoId: vid, listId: selectedPlaybackListId, fallbackToRadio: false)
+            startExactTrack(first, listId: selectedPlaybackListId)
             return
         }
         playSongInSelectedPlaylist(first)
@@ -2478,13 +2495,13 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func pollBrowserState() async {
-        guard !isTestingEnvironment, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
+        guard !isTestingEnvironment, !self.userIntentionallyPaused, !(self.isDirectEngineActive && self.engine.trackData.isPlaying) else { return }
         
         // 1. Instant WindowServer Scan (sub-millisecond, covers Polar, Chrome, Safari, etc.)
         let wsDetection = detectYouTubeMusicInWindowServer()
         if wsDetection.found {
             await MainActor.run {
-                guard !self.engine.trackData.isPlaying, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
+                guard !self.engine.trackData.isPlaying, !self.userIntentionallyPaused else { return }
                 self.isBrowserConnected = true
                 self.isSignedIn = true
                 self.sourceName = "YouTube Music • \(wsDetection.browser)"
@@ -2520,14 +2537,18 @@ public final class MediaControllerModel: ObservableObject {
         self.lastScriptableScanTimestamp = now
         
         let scriptResult = await scanScriptableBrowserTabs()
-        guard !isTestingEnvironment, !engine.trackData.isPlaying, !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
+        guard !isTestingEnvironment, !engine.trackData.isPlaying, !self.userIntentionallyPaused, !(self.isDirectEngineActive && self.engine.trackData.isPlaying) else { return }
         
         if scriptResult.found {
             await MainActor.run {
-                guard !self.userIntentionallyPaused, !self.isDirectEngineActive else { return }
+                guard !self.userIntentionallyPaused, !(self.isDirectEngineActive && self.engine.trackData.isPlaying) else { return }
                 self.isBrowserConnected = true
                 self.isSignedIn = true
                 self.sourceName = "YouTube Music • \(scriptResult.browser)"
+                if scriptResult.tier == .premium {
+                    self.accountTier = .premium
+                    self.engine.accountTier = .premium
+                }
                 self.parseTabTitle(scriptResult.tabTitle, source: "YouTube Music • \(scriptResult.browser)")
                 if self.playlists.isEmpty {
                     Task { [weak self] in
@@ -2543,8 +2564,8 @@ public final class MediaControllerModel: ObservableObject {
         }
     }
     
-    private func scanScriptableBrowserTabs() async -> (found: Bool, browser: String, tabTitle: String) {
-        guard !isTestingEnvironment else { return (false, "", "") }
+    private func scanScriptableBrowserTabs() async -> (found: Bool, browser: String, tabTitle: String, tier: YTMAccountTier) {
+        guard !isTestingEnvironment else { return (false, "", "", .unknown) }
         
         let chromeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty
         let braveRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.brave.Browser").isEmpty
@@ -2553,49 +2574,82 @@ public final class MediaControllerModel: ObservableObject {
         let safariRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty
         
         guard chromeRunning || braveRunning || edgeRunning || arcRunning || safariRunning else {
-            return (false, "", "")
+            return (false, "", "", .unknown)
         }
         
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
-                func runCheck(appName: String) -> String? {
-                    let script = """
-                    tell application "\(appName)"
-                        repeat with w in windows
-                            repeat with t in tabs of w
-                                if (URL of t) contains "music.youtube.com" then
-                                    return (title of t)
-                                end if
+                func runCheck(appName: String, isSafari: Bool = false) -> (title: String, tier: YTMAccountTier)? {
+                    let script: String
+                    if isSafari {
+                        script = """
+                        tell application "Safari"
+                            repeat with w in windows
+                                repeat with t in tabs of w
+                                    if (URL of t) contains "music.youtube.com" then
+                                        set tabTitle to (title of t)
+                                        set isPrem to "false"
+                                        try
+                                            set isPrem to (do JavaScript "(function() { if (window.ytcfg && typeof ytcfg.get === 'function') { if (ytcfg.get('USER_IS_PREMIUM') === true || ytcfg.get('IS_PREMIUM') === true) return 'true'; var c = ytcfg.get('INNERTUBE_CONTEXT'); if (c && c.user && (c.user.isSubscriptionUser === true || c.user.hasActiveSubscription === true)) return 'true'; } var l = document.querySelector('ytmusic-logo, [aria-label*=\\"Premium\\" i]'); if (l && (l.getAttribute('aria-label')||'').toLowerCase().indexOf('premium') !== -1) return 'true'; return 'false'; })()" in t)
+                                        end try
+                                        return tabTitle & "|||" & isPrem
+                                    end if
+                                end repeat
                             end repeat
-                        end repeat
-                    end tell
-                    return ""
-                    """
-                    return MorphAppleScriptRunner.run(script, timeout: 2.0)
+                        end tell
+                        return ""
+                        """
+                    } else {
+                        script = """
+                        tell application "\(appName)"
+                            repeat with w in windows
+                                repeat with t in tabs of w
+                                    if (URL of t) contains "music.youtube.com" then
+                                        set tabTitle to (title of t)
+                                        set isPrem to "false"
+                                        try
+                                            set isPrem to (execute t javascript "(function() { if (window.ytcfg && typeof ytcfg.get === 'function') { if (ytcfg.get('USER_IS_PREMIUM') === true || ytcfg.get('IS_PREMIUM') === true) return 'true'; var c = ytcfg.get('INNERTUBE_CONTEXT'); if (c && c.user && (c.user.isSubscriptionUser === true || c.user.hasActiveSubscription === true)) return 'true'; } var l = document.querySelector('ytmusic-logo, [aria-label*=\\"Premium\\" i]'); if (l && (l.getAttribute('aria-label')||'').toLowerCase().indexOf('premium') !== -1) return 'true'; return 'false'; })()")
+                                        end try
+                                        return tabTitle & "|||" & isPrem
+                                    end if
+                                end repeat
+                            end repeat
+                        end tell
+                        return ""
+                        """
+                    }
+                    guard let raw = MorphAppleScriptRunner.run(script, timeout: 2.0), !raw.isEmpty else { return nil }
+                    if raw.contains("|||") {
+                        let parts = raw.components(separatedBy: "|||")
+                        let title = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        let isPrem = parts.count > 1 && parts[1].trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+                        return (title, isPrem ? .premium : .unknown)
+                    }
+                    return (raw.trimmingCharacters(in: .whitespacesAndNewlines), .unknown)
                 }
                 
-                if chromeRunning, let title = runCheck(appName: "Google Chrome") {
-                    continuation.resume(returning: (true, "Chrome", title))
+                if chromeRunning, let res = runCheck(appName: "Google Chrome") {
+                    continuation.resume(returning: (true, "Chrome", res.title, res.tier))
                     return
                 }
-                if braveRunning, let title = runCheck(appName: "Brave Browser") {
-                    continuation.resume(returning: (true, "Brave", title))
+                if braveRunning, let res = runCheck(appName: "Brave Browser") {
+                    continuation.resume(returning: (true, "Brave", res.title, res.tier))
                     return
                 }
-                if edgeRunning, let title = runCheck(appName: "Microsoft Edge") {
-                    continuation.resume(returning: (true, "Edge", title))
+                if edgeRunning, let res = runCheck(appName: "Microsoft Edge") {
+                    continuation.resume(returning: (true, "Edge", res.title, res.tier))
                     return
                 }
-                if arcRunning, let title = runCheck(appName: "Arc") {
-                    continuation.resume(returning: (true, "Arc", title))
+                if arcRunning, let res = runCheck(appName: "Arc") {
+                    continuation.resume(returning: (true, "Arc", res.title, res.tier))
                     return
                 }
-                if safariRunning, let title = runCheck(appName: "Safari") {
-                    continuation.resume(returning: (true, "Safari", title))
+                if safariRunning, let res = runCheck(appName: "Safari", isSafari: true) {
+                    continuation.resume(returning: (true, "Safari", res.title, res.tier))
                     return
                 }
                 
-                continuation.resume(returning: (false, "", ""))
+                continuation.resume(returning: (false, "", "", .unknown))
             }
         }
     }
@@ -2723,136 +2777,131 @@ public final class MediaControllerModel: ObservableObject {
             if (btn) btn.click();
         })();
         """
-        let escapedJS = jsCommand.replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ")
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "\(escapedJS)"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs(jsCommand)
     }
     
     private func executeBrowserPreviousTrack() {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
         Self.postSystemMediaKey(key: 20)
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "document.querySelector('.previous-button') ? document.querySelector('.previous-button').click() : null;"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs("document.querySelector('.previous-button') ? document.querySelector('.previous-button').click() : null;")
     }
     
     private func executeBrowserSeek(to seconds: TimeInterval) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "var v = document.querySelector('video'); if (v) { v.currentTime = \(seconds); }"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs("var v = document.querySelector('video'); if (v) { v.currentTime = \(seconds); }")
     }
     
     private func executeBrowserVolume(_ vol: Double) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "var v = document.querySelector('video'); if (v) { v.volume = \(vol); }"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs("var v = document.querySelector('video'); if (v) { v.volume = \(vol); }")
     }
     
     private func executeBrowserMute(_ muted: Bool) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "var v = document.querySelector('video'); if (v) { v.muted = \(muted); }"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs("var v = document.querySelector('video'); if (v) { v.muted = \(muted); }")
     }
     
     private func executeBrowserShuffle(_ enabled: Bool) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "(function() { var btn = document.querySelector('ytmusic-player-bar .shuffle') || document.querySelector('#right-controls .shuffle') || document.querySelector('.shuffle'); if (btn) { var inner = btn.querySelector('button, #button') || btn; var cur = btn.getAttribute('aria-pressed') === 'true' || inner.getAttribute('aria-pressed') === 'true' || btn.classList.contains('active'); if (cur !== \(enabled)) { (inner || btn).click(); } } })();"
-                        end try
-                    end if
-                end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+        runBrowserJavaScriptAcrossTabs("(function() { var btn = document.querySelector('ytmusic-player-bar .shuffle') || document.querySelector('#right-controls .shuffle') || document.querySelector('.shuffle'); if (btn) { var inner = btn.querySelector('button, #button') || btn; var cur = btn.getAttribute('aria-pressed') === 'true' || inner.getAttribute('aria-pressed') === 'true' || btn.classList.contains('active'); if (cur !== \(enabled)) { (inner || btn).click(); } } })();")
     }
 
     private func executeBrowserRepeat(_ mode: YTMRepeatMode) {
         guard !isDirectEngineActive && !isTestingEnvironment else { return }
-        let script = """
-        tell application "Google Chrome"
-            repeat with w in windows
-                repeat with t in tabs of w
-                    if (URL of t) contains "music.youtube.com" then
-                        try
-                            execute t javascript "(function() { var v = document.querySelector('video'); if (v) { v.loop = (\(mode == .one)); } var btn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat'); if (btn) { var inner = btn.querySelector('button, #button') || btn; var getMode = function() { var l = ((btn.getAttribute('aria-label')||'') + ' ' + (inner.getAttribute('aria-label')||'') + ' ' + (btn.getAttribute('title')||'')).toLowerCase(); if (l.indexOf('one')!==-1 || l.indexOf('1')!==-1 || l.indexOf('một')!==-1) return 'one'; if (l.indexOf('all')!==-1 || l.indexOf('tất cả')!==-1) return 'all'; return 'off'; }; var target = '\(mode.rawValue)'; var cur = getMode(); var clicks = 0; if (cur !== target) { if (cur === 'off') clicks = (target === 'all' ? 1 : 2); else if (cur === 'all') clicks = (target === 'one' ? 1 : 2); else if (cur === 'one') clicks = (target === 'off' ? 1 : 2); } for (var i = 0; i < clicks; i++) { (function(d){ setTimeout(function(){ (inner || btn).click(); }, d); })(i * 120); } } })();"
-                        end try
-                    end if
+        let js = "(function() { var v = document.querySelector('video'); if (v) { v.loop = (\(mode == .one)); } var btn = document.querySelector('ytmusic-player-bar .repeat') || document.querySelector('#right-controls .repeat') || document.querySelector('.repeat'); if (btn) { var inner = btn.querySelector('button, #button') || btn; var getMode = function() { var l = ((btn.getAttribute('aria-label')||'') + ' ' + (inner.getAttribute('aria-label')||'') + ' ' + (btn.getAttribute('title')||'')).toLowerCase(); if (l.indexOf('one')!==-1 || l.indexOf('1')!==-1 || l.indexOf('một')!==-1) return 'one'; if (l.indexOf('all')!==-1 || l.indexOf('tất cả')!==-1) return 'all'; return 'off'; }; var target = '\(mode.rawValue)'; var cur = getMode(); var clicks = 0; if (cur !== target) { if (cur === 'off') clicks = (target === 'all' ? 1 : 2); else if (cur === 'all') clicks = (target === 'one' ? 1 : 2); else if (cur === 'one') clicks = (target === 'off' ? 1 : 2); } for (var i = 0; i < clicks; i++) { (function(d){ setTimeout(function(){ (inner || btn).click(); }, d); })(i * 120); } } })();"
+        runBrowserJavaScriptAcrossTabs(js)
+    }
+    
+    public func executeBrowserPlayTrack(videoId: String, listId: String? = nil) {
+        guard !isTestingEnvironment else { return }
+        let cleanVid = videoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanVid.isEmpty else { return }
+        var targetURL = "https://music.youtube.com/watch?v=\(cleanVid)"
+        if let list = listId, !list.isEmpty {
+            targetURL += "&list=\(list)"
+        }
+        runBrowserNavigationAcrossTabs(targetURL: targetURL, videoId: cleanVid)
+    }
+    
+    public func executeBrowserSearch(query: String) {
+        guard !isTestingEnvironment else { return }
+        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        let encoded = clean.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? clean
+        let targetURL = "https://music.youtube.com/search?q=\(encoded)"
+        runBrowserNavigationAcrossTabs(targetURL: targetURL, videoId: nil)
+    }
+    
+    private func runBrowserNavigationAcrossTabs(targetURL: String, videoId: String?) {
+        guard !isTestingEnvironment else { return }
+        let chromiumApps: [(bundleId: String, appName: String)] = [
+            ("com.google.Chrome", "Google Chrome"),
+            ("com.brave.Browser", "Brave Browser"),
+            ("com.microsoft.edgemac", "Microsoft Edge"),
+            ("company.thebrowser.Browser", "Arc")
+        ]
+        
+        let jsSnippet: String
+        if let vid = videoId, !vid.isEmpty {
+            jsSnippet = "(function() { var p = document.getElementById('movie_player'); if (p && typeof p.loadVideoById === 'function') { p.loadVideoById('\(vid)'); } else { window.location.href = '\(targetURL)'; } })();"
+        } else {
+            jsSnippet = "window.location.href = '\(targetURL)';"
+        }
+        let escapedJS = jsSnippet
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+        
+        var appScripts: [String] = []
+        for entry in chromiumApps where !NSRunningApplication.runningApplications(withBundleIdentifier: entry.bundleId).isEmpty {
+            appScripts.append("""
+            tell application "\(entry.appName)"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if (URL of t) contains "music.youtube.com" then
+                            try
+                                execute t javascript "\(escapedJS)"
+                                return
+                            on error
+                                set URL of t to "\(targetURL)"
+                                return
+                            end try
+                        end if
+                    end repeat
                 end repeat
-            end repeat
-        end tell
-        """
-        runScriptAsync(script)
+            end tell
+            """)
+        }
+        
+        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Safari").isEmpty {
+            appScripts.append("""
+            tell application "Safari"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if (URL of t) contains "music.youtube.com" then
+                            try
+                                do JavaScript "\(escapedJS)" in t
+                                return
+                            on error
+                                set URL of t to "\(targetURL)"
+                                return
+                            end try
+                        end if
+                    end repeat
+                end repeat
+            end tell
+            """)
+        }
+        
+        guard !appScripts.isEmpty else { return }
+        let combinedScript = appScripts.joined(separator: "\n")
+        Task.detached(priority: .utility) {
+            _ = MorphAppleScriptRunner.run(combinedScript, timeout: 2.5)
+        }
     }
     
     private func runScriptAsync(_ scriptSource: String) {
         guard !isTestingEnvironment else { return }
-        guard !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty else { return }
-        
         Task.detached(priority: .utility) {
             _ = MorphAppleScriptRunner.run(scriptSource, timeout: 2.5)
         }
