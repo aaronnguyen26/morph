@@ -397,13 +397,39 @@ public struct MediaView: View {
                                 Capsule()
                                     .fill(media.accountTier == .premium ? Color(hex: "#FFD700").opacity(0.18) : Color.white.opacity(0.08))
                             )
-                    } else {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
+                    } else if media.isBrowserConnected {
+                        Image(systemName: media.accountTier == .premium ? "crown.fill" : "globe")
                             .font(.system(size: 6.5))
-                            .foregroundColor(theme.textTertiary)
-                        Text("Direct Stream")
+                            .foregroundColor(media.accountTier == .premium ? Color(hex: "#FFD700") : theme.textTertiary)
+                        
+                        Text(media.accountTier == .premium ? "YouTube Music Premium" : "Browser Synced")
                             .font(.system(size: 7, weight: .medium, design: .rounded))
                             .foregroundColor(theme.textTertiary)
+                        
+                        Text(media.accountTier == .premium ? "PRO" : "SYNC")
+                            .font(.system(size: 6, weight: .bold, design: .rounded))
+                            .foregroundColor(media.accountTier == .premium ? Color(hex: "#FFD700") : Color.white.opacity(0.65))
+                            .padding(.horizontal, 3.5)
+                            .padding(.vertical, 0.8)
+                            .background(
+                                Capsule()
+                                    .fill(media.accountTier == .premium ? Color(hex: "#FFD700").opacity(0.18) : Color.white.opacity(0.08))
+                            )
+                    } else {
+                        Button(action: {
+                            media.openSignIn()
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "crown")
+                                    .font(.system(size: 6.5))
+                                    .foregroundColor(Color(hex: "#FFD700"))
+                                Text("Sign in for YouTube Premium")
+                                    .font(.system(size: 7, weight: .semibold, design: .rounded))
+                                    .foregroundColor(Color(hex: "#FFD700"))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help("Sign in to your YouTube Premium account for direct ad-free playback")
                     }
                 }
                 .padding(.top, 1)
