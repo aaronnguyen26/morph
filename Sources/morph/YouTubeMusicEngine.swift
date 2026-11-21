@@ -459,12 +459,60 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         setupWebView(for: self.activeProfile)
     }
     
+    // MARK: - Declarative WebKit Content Blocking (Zero Ad Guarantee)
+    public static var compiledAdBlockRuleList: WKContentRuleList?
+    public static let adBlockRuleListIdentifier = "MorphYTMAdBlockRulesV2"
+    public static let declarativeAdBlockRulesJSON: String = """
+    [
+        { "trigger": { "url-filter": "googleads" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "doubleclick" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "googlesyndication" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "pagead" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "/api/stats/ads" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "/ptracking" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "adformat=" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "/get_midroll_info" }, "action": { "type": "block" } },
+        { "trigger": { "url-filter": "ad_break" }, "action": { "type": "block" } },
+        {
+            "trigger": { "url-filter": ".*" },
+            "action": {
+                "type": "css-display-none",
+                "selector": ".ytp-ad-module, .video-ads, ytmusic-mealbar-promo-renderer, ytmusic-upsell-dialog-renderer, .ytp-ad-player-overlay, .ytp-ad-preview-text, .ytp-ad-text, .ytp-ad-skip-button-slot, tp-yt-paper-dialog.ytmusic-upsell-dialog-renderer"
+            }
+        }
+    ]
+    """
+    
+    public func applyDeclarativeAdBlocking(to contentController: WKUserContentController) {
+        guard !MorphEnvironment.isTestingEnvironment else { return }
+        if let cached = Self.compiledAdBlockRuleList {
+            contentController.add(cached)
+            return
+        }
+        
+        guard let store = WKContentRuleListStore.default() else { return }
+        
+        store.lookUpContentRuleList(forIdentifier: Self.adBlockRuleListIdentifier) { [weak contentController] list, error in
+            if let list = list {
+                Self.compiledAdBlockRuleList = list
+                contentController?.add(list)
+            } else {
+                store.compileContentRuleList(forIdentifier: Self.adBlockRuleListIdentifier, encodedContentRuleList: Self.declarativeAdBlockRulesJSON) { [weak contentController] compiledList, compileError in
+                    if let compiledList = compiledList {
+                        Self.compiledAdBlockRuleList = compiledList
+                        contentController?.add(compiledList)
+                    }
+                }
+            }
+        }
+    }
+    
     public func setupWebView(for profile: YTMProfile? = nil) {
         let contentController = WKUserContentController()
         contentController.add(self, name: kHandlerName)
         
-        // 1. Injected at Document Start: Chrome Stealth Fingerprint
-        // Satisfies Google Botguard checks on accounts.google.com before any scripts run
+        // 1. Injected at Document Start: Chrome Stealth Fingerprint & Player Ad Neutralizer
+        // Satisfies Google Botguard checks on accounts.google.com and strips ads from player responses before execution
         let stealthScript = WKUserScript(
             source: chromeStealthJavaScript,
             injectionTime: .atDocumentStart,
@@ -479,6 +527,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             forMainFrameOnly: false
         )
         contentController.addUserScript(bridgeScript)
+        
+        // 3. Declarative Content Blocking: Native WebKit-level blocking of ad servers and ad video requests
+        applyDeclarativeAdBlocking(to: contentController)
         
         let config = WKWebViewConfiguration()
         config.userContentController = contentController
@@ -2720,6 +2771,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             // Parse cookies string ("key=value; key2=val2")
             let cookiePairs = rawCookies.components(separatedBy: ";")
             let cookieStore = await MainActor.run { WKWebsiteDataStore.default().httpCookieStore }
+            var hasRealAuthCookie = false
             
             for pair in cookiePairs {
                 let parts = pair.components(separatedBy: "=")
@@ -2727,6 +2779,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 let name = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
                 let value = parts.dropFirst().joined(separator: "=").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !name.isEmpty, !value.isEmpty else { continue }
+                
+                if name == "SAPISID" || name == "__Secure-3PAPISID" || name == "__Secure-1PAPISID" || name == "SSID" || name == "LOGIN_INFO" {
+                    hasRealAuthCookie = true
+                }
                 
                 let props: [HTTPCookiePropertyKey: Any] = [
                     .name: name,
@@ -2741,10 +2797,15 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
             
             await MainActor.run {
-                self.isSignedIn = true
-                self.fetchRealUserPlaylists()
-                // Reload internal webView to apply the newly imported session cookies
-                self.loadHome()
+                if hasRealAuthCookie {
+                    self.isSignedIn = true
+                    self.fetchRealUserPlaylists()
+                    // Reload internal webView to apply the newly imported session cookies
+                    self.loadHome()
+                } else {
+                    // If HttpOnly credentials were not returned by document.cookie, check existing WK website data store cookies
+                    self.checkAuthCookies()
+                }
             }
         }
     }
@@ -2999,6 +3060,120 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     configurable: true
                 });
             } catch(e) {}
+            
+            // 8. Zero-Ad Guarantee: YouTube Music API Player Response Sanitizer & Fast-Forward
+            try {
+                function sanitizePlayerResponse(obj) {
+                    if (!obj || typeof obj !== 'object') return obj;
+                    try {
+                        if (obj.adPlacements) delete obj.adPlacements;
+                        if (obj.adSlots) delete obj.adSlots;
+                        if (obj.playerAds) delete obj.playerAds;
+                        if (obj.adBreakHeartbeatParams) delete obj.adBreakHeartbeatParams;
+                        if (obj.playbackTracking && obj.playbackTracking.videostatsPlaybackUrl) {
+                            delete obj.playbackTracking.videostatsPlaybackUrl;
+                        }
+                    } catch(e) {}
+                    return obj;
+                }
+
+                // Monkeypatch window.fetch for /youtubei/v1/player
+                if (typeof window.fetch === 'function') {
+                    var origFetch = window.fetch;
+                    window.fetch = function() {
+                        var url = arguments[0];
+                        var urlStr = (typeof url === 'string') ? url : (url && url.url ? url.url : '');
+                        if (urlStr && urlStr.indexOf('/youtubei/v1/player') !== -1) {
+                            return origFetch.apply(this, arguments).then(function(res) {
+                                try {
+                                    return res.clone().json().then(function(json) {
+                                        sanitizePlayerResponse(json);
+                                        return new Response(JSON.stringify(json), {
+                                            status: res.status,
+                                            statusText: res.statusText,
+                                            headers: res.headers
+                                        });
+                                    }).catch(function() { return res; });
+                                } catch(e) {
+                                    return res;
+                                }
+                            });
+                        }
+                        return origFetch.apply(this, arguments);
+                    };
+                }
+
+                // Monkeypatch XMLHttpRequest for /youtubei/v1/player
+                if (typeof window.XMLHttpRequest === 'function') {
+                    var origOpen = XMLHttpRequest.prototype.open;
+                    var origSend = XMLHttpRequest.prototype.send;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        this._morphReqUrl = url;
+                        return origOpen.apply(this, arguments);
+                    };
+                    XMLHttpRequest.prototype.send = function() {
+                        if (this._morphReqUrl && typeof this._morphReqUrl === 'string' && this._morphReqUrl.indexOf('/youtubei/v1/player') !== -1) {
+                            var self = this;
+                            var origGetter = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+                            if (origGetter && origGetter.get) {
+                                Object.defineProperty(self, 'responseText', {
+                                    get: function() {
+                                        var raw = origGetter.get.call(self);
+                                        try {
+                                            var parsed = JSON.parse(raw);
+                                            sanitizePlayerResponse(parsed);
+                                            return JSON.stringify(parsed);
+                                        } catch(e) {
+                                            return raw;
+                                        }
+                                    },
+                                    configurable: true
+                                });
+                            }
+                        }
+                        return origSend.apply(this, arguments);
+                    };
+                }
+
+                // Intercept window.ytInitialPlayerResponse
+                var _morphInitialResponse = window.ytInitialPlayerResponse;
+                try {
+                    Object.defineProperty(window, 'ytInitialPlayerResponse', {
+                        get: function() { return _morphInitialResponse; },
+                        set: function(val) {
+                            _morphInitialResponse = sanitizePlayerResponse(val);
+                        },
+                        configurable: true
+                    });
+                } catch(e) {}
+
+                // Active 0ms Video Fast-Forward & Audio Mute on HTMLMediaElement.prototype.play
+                if (typeof HTMLMediaElement === 'function' && HTMLMediaElement.prototype) {
+                    var origPlay = HTMLMediaElement.prototype.play;
+                    HTMLMediaElement.prototype.play = function() {
+                        try {
+                            var moviePlayer = document.getElementById('movie_player') || document.querySelector('#movie_player, .html5-video-player');
+                            var isAd = (moviePlayer && (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting'))) ||
+                                       document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay') !== null ||
+                                       (this.src && (this.src.indexOf('&adformat=') !== -1 || this.src.indexOf('adformat=') !== -1));
+                            if (isAd) {
+                                this.muted = true;
+                                this.playbackRate = 16.0;
+                                if (isFinite(this.duration) && this.duration > 0) {
+                                    this.currentTime = this.duration;
+                                } else {
+                                    this.currentTime = 99999;
+                                }
+                                var skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, button.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-slot button');
+                                if (skip) {
+                                    try { skip.click(); } catch(se) {}
+                                }
+                            }
+                        } catch(e) {}
+                        return origPlay.apply(this, arguments);
+                    };
+                }
+            } catch(e) {}
         })();
         """
     }
@@ -3067,6 +3242,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     var moviePlayer = playerEl || document.getElementById('movie_player') || document.querySelector('#movie_player, .html5-video-player');
                     if (moviePlayer) {
                         if (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting')) {
+                            isAdPlaying = true;
+                        }
+                    }
+                    if (!isAdPlaying && videoEl && videoEl.src) {
+                        if (videoEl.src.indexOf('adformat=') !== -1 || videoEl.src.indexOf('&oad=') !== -1 || videoEl.src.indexOf('/pagead/') !== -1) {
                             isAdPlaying = true;
                         }
                     }
@@ -3907,9 +4087,30 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var v = document.querySelector('video');
                 if (v && !v._morphListeners) {
                     v._morphListeners = true;
-                    ['play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange', 'loadedmetadata', 'canplay'].forEach(function(evt) {
+                    ['loadstart', 'play', 'pause', 'timeupdate', 'ended', 'durationchange', 'volumechange', 'loadedmetadata', 'canplay'].forEach(function(evt) {
                         v.addEventListener(evt, function() {
                             dismissModalsAndEnableAutoplay();
+                            
+                            // Instant ad fast-forward & mute on any media event
+                            try {
+                                var pAd = document.getElementById('movie_player') || document.querySelector('#movie_player, .html5-video-player');
+                                var isAdNow = (pAd && (pAd.classList.contains('ad-showing') || pAd.classList.contains('ad-interrupting'))) ||
+                                              (v.src && (v.src.indexOf('adformat=') !== -1 || v.src.indexOf('/pagead/') !== -1)) ||
+                                              document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay') !== null;
+                                if (isAdNow) {
+                                    v.muted = true;
+                                    v.playbackRate = 16.0;
+                                    if (isFinite(v.duration) && v.duration > 0) {
+                                        v.currentTime = v.duration;
+                                    } else {
+                                        v.currentTime = 99999;
+                                    }
+                                    var skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, button.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-slot button');
+                                    if (skip) {
+                                        try { skip.click(); } catch(se) {}
+                                    }
+                                }
+                            } catch(eAd) {}
                             if (evt === 'play' && (window._morphUserPaused || Date.now() < (window._morphPauseLockoutUntil || 0))) {
                                 try {
                                     v.pause();
