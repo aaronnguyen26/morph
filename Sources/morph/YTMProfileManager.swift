@@ -14,6 +14,7 @@ public struct YTMProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var createdAt: Date
     public var lastUsedAt: Date
     public var isChromeImported: Bool
+    public var accountTier: YTMAccountTier
     
     public init(
         id: UUID = UUID(),
@@ -24,7 +25,8 @@ public struct YTMProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         isDefault: Bool = false,
         createdAt: Date = Date(),
         lastUsedAt: Date = Date(),
-        isChromeImported: Bool = false
+        isChromeImported: Bool = false,
+        accountTier: YTMAccountTier = .unknown
     ) {
         self.id = id
         self.email = email
@@ -35,6 +37,25 @@ public struct YTMProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.isChromeImported = isChromeImported
+        self.accountTier = accountTier
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, email, displayName, avatarLocalPath, avatarURL, isDefault, createdAt, lastUsedAt, isChromeImported, accountTier
+    }
+    
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.email = try container.decode(String.self, forKey: .email)
+        self.displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? ""
+        self.avatarLocalPath = try container.decodeIfPresent(String.self, forKey: .avatarLocalPath)
+        self.avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL)
+        self.isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.lastUsedAt = try container.decodeIfPresent(Date.self, forKey: .lastUsedAt) ?? Date()
+        self.isChromeImported = try container.decodeIfPresent(Bool.self, forKey: .isChromeImported) ?? false
+        self.accountTier = try container.decodeIfPresent(YTMAccountTier.self, forKey: .accountTier) ?? .unknown
     }
     
     public var avatarImage: NSImage? {
@@ -194,7 +215,7 @@ public final class YTMProfileManager: ObservableObject {
     }
     
     /// Updates the currently active profile when a new email is detected from the web player.
-    public func handleDetectedEmail(_ email: String, avatarURL: String? = nil, displayName: String? = nil) {
+    public func handleDetectedEmail(_ email: String, avatarURL: String? = nil, displayName: String? = nil, accountTier: YTMAccountTier = .unknown) {
         guard !email.isEmpty else { return }
         
         let avatarInfo = resolveAvatarForProfile(email: email)
@@ -202,7 +223,7 @@ public final class YTMProfileManager: ObservableObject {
         let effectiveAvatarURL = avatarURL ?? avatarInfo.url
         let effectiveName = displayName ?? (email.components(separatedBy: "@").first ?? "User")
         
-        // 1. If a profile already exists for this exact email: switch to it and update avatar/name
+        // 1. If a profile already exists for this exact email: switch to it and update avatar/name/tier
         if let idx = profiles.firstIndex(where: { $0.email.lowercased() == email.lowercased() }) {
             if effectiveAvatarPath != nil {
                 profiles[idx].avatarLocalPath = effectiveAvatarPath
@@ -212,6 +233,9 @@ public final class YTMProfileManager: ObservableObject {
             }
             if !effectiveName.isEmpty && (profiles[idx].displayName.isEmpty || profiles[idx].displayName == "Profile" || profiles[idx].displayName == "User") {
                 profiles[idx].displayName = effectiveName
+            }
+            if accountTier != .unknown {
+                profiles[idx].accountTier = accountTier
             }
             profiles[idx].lastUsedAt = Date()
             self.activeProfileId = profiles[idx].id
@@ -227,6 +251,9 @@ public final class YTMProfileManager: ObservableObject {
             profiles[idx].displayName = effectiveName
             profiles[idx].avatarLocalPath = effectiveAvatarPath
             profiles[idx].avatarURL = effectiveAvatarURL
+            if accountTier != .unknown {
+                profiles[idx].accountTier = accountTier
+            }
             profiles[idx].lastUsedAt = Date()
             saveProfiles()
             DispatchQueue.main.async { self.objectWillChange.send() }
@@ -240,12 +267,27 @@ public final class YTMProfileManager: ObservableObject {
             avatarLocalPath: effectiveAvatarPath,
             avatarURL: effectiveAvatarURL,
             lastUsedAt: Date(),
-            isChromeImported: effectiveAvatarPath != nil
+            isChromeImported: effectiveAvatarPath != nil,
+            accountTier: accountTier
         )
         profiles.append(newProfile)
         self.activeProfileId = newProfile.id
         saveProfiles()
         DispatchQueue.main.async { self.objectWillChange.send() }
+    }
+    
+    public func updateActiveProfileTier(_ tier: YTMAccountTier) {
+        guard let active = activeProfile else { return }
+        updateProfileTier(id: active.id, tier: tier)
+    }
+    
+    public func updateProfileTier(id: UUID, tier: YTMAccountTier) {
+        guard let idx = profiles.firstIndex(where: { $0.id == id }) else { return }
+        if profiles[idx].accountTier != tier {
+            profiles[idx].accountTier = tier
+            saveProfiles()
+            DispatchQueue.main.async { self.objectWillChange.send() }
+        }
     }
     
     /// Updates the active profile's remote avatar URL (e.g. from YouTube Music webview DOM img#avatar-btn)

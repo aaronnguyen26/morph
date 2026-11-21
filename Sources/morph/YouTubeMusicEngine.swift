@@ -42,6 +42,50 @@ public enum YTMRepeatMode: String, Codable, CaseIterable {
     }
 }
 
+/// Represents the subscription tier of a YouTube Music account.
+/// Distinguishes between paid ad-free subscribers and free ad-supported accounts.
+public enum YTMAccountTier: String, Codable, CaseIterable, Equatable, Sendable {
+    case basic = "basic"
+    case premium = "premium"
+    case unknown = "unknown"
+    
+    public var isPremium: Bool {
+        return self == .premium
+    }
+    
+    public var displayTitle: String {
+        switch self {
+        case .premium: return "YouTube Music Premium"
+        case .basic: return "YouTube Music Free"
+        case .unknown: return "Direct Stream"
+        }
+    }
+    
+    public var shortTitle: String {
+        switch self {
+        case .premium: return "Premium"
+        case .basic: return "Basic"
+        case .unknown: return "Free"
+        }
+    }
+    
+    public var badgeTitle: String {
+        switch self {
+        case .premium: return "PRO"
+        case .basic: return "BASIC"
+        case .unknown: return "GUEST"
+        }
+    }
+    
+    public var hasAds: Bool {
+        switch self {
+        case .premium: return false
+        case .basic: return true
+        case .unknown: return true
+        }
+    }
+}
+
 public struct YTMPlaylistItem: Identifiable, Codable, Equatable {
     public var id: String
     public var title: String
@@ -287,6 +331,9 @@ public struct YTMTrackData: Codable, Equatable {
     public var playlists: [YTMPlaylist]
     public var isSignedIn: Bool
     public var userEmail: String?
+    public var accountTier: YTMAccountTier
+    public var isAdPlaying: Bool
+    public var adSuppressedCount: Int
     
     public init(
         title: String = "",
@@ -304,7 +351,10 @@ public struct YTMTrackData: Codable, Equatable {
         queue: [YTMPlaylistItem] = [],
         playlists: [YTMPlaylist] = [],
         isSignedIn: Bool = false,
-        userEmail: String? = nil
+        userEmail: String? = nil,
+        accountTier: YTMAccountTier = .unknown,
+        isAdPlaying: Bool = false,
+        adSuppressedCount: Int = 0
     ) {
         self.title = title
         self.artist = artist
@@ -322,6 +372,9 @@ public struct YTMTrackData: Codable, Equatable {
         self.playlists = playlists
         self.isSignedIn = isSignedIn
         self.userEmail = userEmail
+        self.accountTier = accountTier
+        self.isAdPlaying = isAdPlaying
+        self.adSuppressedCount = adSuppressedCount
     }
 }
 
@@ -333,6 +386,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     @Published public var userPlaylists: [YTMPlaylist] = []
     @Published public var isSignedIn: Bool = false
     @Published public var userEmail: String? = nil
+    @Published public var accountTier: YTMAccountTier = .unknown
+    @Published public var isAdPlaying: Bool = false
+    @Published public var adSuppressedCount: Int = 0
+    
+    public var isAccountPremium: Bool {
+        return accountTier == .premium
+    }
+    
+    public var hasAds: Bool {
+        return accountTier.hasAds
+    }
     
     public var effectiveUserEmail: String? {
         if let mail = userEmail, !mail.isEmpty { return mail }
@@ -384,6 +448,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.activeProfile = YTMProfileManager.shared.activeProfile
         if let initialEmail = self.activeProfile?.email, !initialEmail.isEmpty {
             self.userEmail = initialEmail
+        }
+        if let initialTier = self.activeProfile?.accountTier, initialTier != .unknown {
+            self.accountTier = initialTier
         }
         let stored = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.userEmail)
         if !stored.isEmpty {
@@ -444,6 +511,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func switchProfile(to profile: YTMProfile) {
         self.activeProfile = profile
         self.userEmail = profile.email
+        if profile.accountTier != .unknown {
+            self.accountTier = profile.accountTier
+        }
         YTMProfileManager.shared.switchProfile(to: profile.id)
         
         // Load stored library for this profile immediately
@@ -594,6 +664,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let repeatMode = YTMRepeatMode(rawValue: repStr) ?? .off
         let signedIn = (body["isSignedIn"] as? Bool) ?? false
         let isEnded = (body["isEnded"] as? Bool) ?? false
+        let rawTier = (body["accountTier"] as? String)?.lowercased() ?? "unknown"
+        let detectedTier = YTMAccountTier(rawValue: rawTier) ?? .unknown
+        let isAd = (body["isAdPlaying"] as? Bool) ?? false
+        let adCount = (body["adSuppressedCount"] as? Int) ?? 0
         
         if isEnded {
             self.trackEndedPublisher.send()
@@ -765,7 +839,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             YTMProfileManager.shared.handleDetectedEmail(
                 email,
                 avatarURL: (extractedAvatarURL?.isEmpty == false ? extractedAvatarURL : nil),
-                displayName: (extractedDisplayName?.isEmpty == false ? extractedDisplayName : nil)
+                displayName: (extractedDisplayName?.isEmpty == false ? extractedDisplayName : nil),
+                accountTier: detectedTier
             )
             self.activeProfile = YTMProfileManager.shared.activeProfile
         } else if let avUrl = extractedAvatarURL, !avUrl.isEmpty, self.isSignedIn {
@@ -774,6 +849,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         } else if !self.isSignedIn {
             self.userEmail = nil
         }
+        
+        if detectedTier != .unknown {
+            self.accountTier = detectedTier
+            if let prof = self.activeProfile {
+                YTMProfileManager.shared.updateProfileTier(id: prof.id, tier: detectedTier)
+                self.activeProfile = YTMProfileManager.shared.activeProfile
+            }
+        }
+        self.isAdPlaying = isAd
+        self.adSuppressedCount = adCount
         
         self.trackData = YTMTrackData(
             title: title.isEmpty ? "YouTube Music" : title,
@@ -791,7 +876,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             queue: parsedQueue,
             playlists: parsedPlaylists.isEmpty ? self.userPlaylists : parsedPlaylists,
             isSignedIn: self.isSignedIn,
-            userEmail: self.userEmail
+            userEmail: self.userEmail,
+            accountTier: self.accountTier,
+            isAdPlaying: self.isAdPlaying,
+            adSuppressedCount: self.adSuppressedCount
         )
         if playing {
             self.isResumeRequested = false
@@ -2923,6 +3011,12 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             var _morphCachedQuickPicks = [];
             var _morphLastHeavyScanTime = 0;
             var _morphLastPathname = '';
+            var _morphLastValidTrackTitle = '';
+            var _morphLastValidTrackArtist = '';
+            var _morphLastValidTrackArt = null;
+            var _morphWasAdPlaying = false;
+            var _morphAdSuppressedCount = 0;
+            var _morphLastKnownAccountTier = 'unknown';
 
             function getTrackInfo(force) {
                 var title = '';
@@ -2966,6 +3060,98 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 
                 var videoEl = document.querySelector('video');
                 var playerEl = document.getElementById('movie_player') || document.querySelector('#movie_player');
+                
+                // Zero-Ad Guarantee: Detect if an advertisement is playing or interrupting
+                var isAdPlaying = false;
+                try {
+                    var moviePlayer = playerEl || document.getElementById('movie_player') || document.querySelector('#movie_player, .html5-video-player');
+                    if (moviePlayer) {
+                        if (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting')) {
+                            isAdPlaying = true;
+                        }
+                    }
+                    if (!isAdPlaying) {
+                        var adOverlay = document.querySelector('.ytp-ad-player-overlay, .ytp-ad-module .video-ads, ytmusic-player[ad-showing], .ad-showing, .ad-interrupting');
+                        if (adOverlay && (adOverlay.offsetParent !== null || adOverlay.offsetWidth > 0)) {
+                            isAdPlaying = true;
+                        }
+                    }
+                    if (!isAdPlaying) {
+                        var adText = document.querySelector('.ytp-ad-preview-text, .ytp-ad-text, .ytp-ad-text-overlay');
+                        if (adText && (adText.offsetParent !== null || adText.offsetWidth > 0)) {
+                            isAdPlaying = true;
+                        }
+                    }
+                    if (!isAdPlaying && (title.indexOf('Advertisement') !== -1 || title === 'Ad')) {
+                        isAdPlaying = true;
+                    }
+                } catch(e) {}
+                
+                if (isAdPlaying) {
+                    // 1. Audio Mute: Ensure the user NEVER has to listen to ads!
+                    if (videoEl && !videoEl.muted) {
+                        videoEl.muted = true;
+                    }
+                    
+                    // 2. Click skip button immediately if available
+                    var skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, button.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-container button, .ytp-ad-skip-button-slot button');
+                    if (skipBtn) {
+                        try { skipBtn.click(); } catch(se) {}
+                    }
+                    
+                    // 3. Fast-forward video to finish the ad instantly
+                    if (videoEl) {
+                        try {
+                            if (isFinite(videoEl.duration) && videoEl.duration > 0) {
+                                videoEl.currentTime = videoEl.duration;
+                            } else {
+                                videoEl.currentTime = 99999;
+                            }
+                            videoEl.playbackRate = 16.0;
+                        } catch(fe) {}
+                    }
+                    
+                    // 4. Auto-dismiss upsell/promo modals
+                    var upsellDismiss = document.querySelectorAll(
+                        'ytmusic-mealbar-promo-renderer #dismiss-button, ' +
+                        'ytmusic-upsell-dialog-renderer #dismiss-button, ' +
+                        'yt-mealbar-promo-renderer #dismiss-button, ' +
+                        '.ytp-ad-overlay-close-button, ' +
+                        'tp-yt-paper-dialog #dismiss-button'
+                    );
+                    for (var d = 0; d < upsellDismiss.length; d++) {
+                        var ub = upsellDismiss[d];
+                        if (ub && (ub.offsetParent !== null || ub.offsetWidth > 0)) {
+                            var innerB = ub.querySelector('button, #button') || ub;
+                            try { innerB.click(); } catch(de) {}
+                        }
+                    }
+                    
+                    // 5. Track metadata protection: keep the real song info
+                    if (_morphLastValidTrackTitle) {
+                        title = _morphLastValidTrackTitle;
+                    }
+                    if (_morphLastValidTrackArtist) {
+                        artist = _morphLastValidTrackArtist;
+                    }
+                    if (_morphLastValidTrackArt) {
+                        art = _morphLastValidTrackArt;
+                    }
+                } else {
+                    if (window._morphWasAdPlaying) {
+                        if (videoEl) {
+                            videoEl.muted = (isMuted === true);
+                            videoEl.playbackRate = 1.0;
+                        }
+                        _morphAdSuppressedCount++;
+                    }
+                    if (title && title !== 'YouTube Music' && !/advertisement/i.test(title)) {
+                        _morphLastValidTrackTitle = title;
+                        _morphLastValidTrackArtist = artist;
+                        _morphLastValidTrackArt = art;
+                    }
+                }
+                window._morphWasAdPlaying = isAdPlaying;
                 
                 var isPlaying = false;
                 if (window._morphUserPaused) {
@@ -3358,6 +3544,75 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             }
                         }
                     } catch(ie) {}
+                    
+                    // 6. Account Tier (Pro/Premium vs Basic/Free) Detection
+                    var accountTier = 'unknown';
+                    try {
+                        if (window.ytcfg && typeof window.ytcfg.get === 'function') {
+                            var ctx = window.ytcfg.get('INNERTUBE_CONTEXT');
+                            if (ctx && ctx.user) {
+                                if (ctx.user.isSubscriptionUser === true || ctx.user.hasActiveSubscription === true) {
+                                    accountTier = 'premium';
+                                }
+                            }
+                            if (accountTier === 'unknown') {
+                                if (window.ytcfg.get('USER_IS_PREMIUM') === true || window.ytcfg.get('IS_PREMIUM') === true) {
+                                    accountTier = 'premium';
+                                }
+                            }
+                        }
+                        
+                        if (accountTier === 'unknown') {
+                            var logoEl = document.querySelector('ytmusic-logo, ytmusic-nav-bar ytmusic-logo, #logo, #logo-icon, a.ytmusic-logo');
+                            if (logoEl) {
+                                var aria = (logoEl.getAttribute('aria-label') || logoEl.getAttribute('title') || logoEl.innerText || logoEl.textContent || '');
+                                if (/premium/i.test(aria)) {
+                                    accountTier = 'premium';
+                                }
+                            }
+                            if (accountTier === 'unknown') {
+                                var premSelector = document.querySelector('ytmusic-logo [aria-label*="Premium" i], a[title*="Premium" i], [aria-label*="YouTube Music Premium" i]');
+                                if (premSelector) {
+                                    accountTier = 'premium';
+                                }
+                            }
+                        }
+                        
+                        if (accountTier === 'unknown') {
+                            var upgradeLink = document.querySelector(
+                                'ytmusic-pivot-bar-item-renderer[tab-id="FEmusic_upgrade"], ' +
+                                'ytmusic-pivot-bar-renderer a[href*="/upgrade"], ' +
+                                'ytmusic-pivot-bar-renderer a[href*="/musicpremium"], ' +
+                                'a[href*="/musicpremium"], ' +
+                                'ytmusic-guide-entry-renderer a[href*="/musicpremium"], ' +
+                                'ytmusic-guide-entry-renderer a[href*="/upgrade"], ' +
+                                'a[aria-label*="Upgrade" i], ' +
+                                'a[aria-label*="Get Music Premium" i]'
+                            );
+                            if (upgradeLink) {
+                                accountTier = 'basic';
+                            }
+                        }
+                        
+                        if (accountTier === 'unknown') {
+                            var paidMem = document.querySelector('a[href*="/paid_memberships"], ytmusic-guide-entry-renderer a[href*="/paid_memberships"]');
+                            if (paidMem) {
+                                accountTier = 'premium';
+                            }
+                        }
+                        
+                        if (accountTier === 'unknown' && isSignedIn) {
+                            var logoEl2 = document.querySelector('ytmusic-logo, ytmusic-nav-bar ytmusic-logo');
+                            if (logoEl2) {
+                                accountTier = 'basic';
+                            }
+                        }
+                        if (accountTier !== 'unknown') {
+                            _morphLastKnownAccountTier = accountTier;
+                        } else if (_morphLastKnownAccountTier !== 'unknown') {
+                            accountTier = _morphLastKnownAccountTier;
+                        }
+                    } catch(te) {}
                 } catch(pe) {}
                 
                 return {
@@ -3379,7 +3634,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     isSignedIn: isSignedIn,
                     userEmail: userEmail,
                     userAvatarURL: userAvatarURL,
-                    userDisplayName: userDisplayName
+                    userDisplayName: userDisplayName,
+                    accountTier: accountTier,
+                    isAdPlaying: isAdPlaying,
+                    adSuppressedCount: _morphAdSuppressedCount
                 };
             }
             
