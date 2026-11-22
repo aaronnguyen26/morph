@@ -2829,22 +2829,22 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
-    // MARK: - On-Demand Dedicated Web View Window (Zero Ghost Windows On Launch)
+    // MARK: - Dedicated YouTube Music Authentication Window (Compact, Modern & Native)
     @discardableResult
     public func ensurePlayerWindow() -> NSWindow {
         if let win = playerWindow {
             return win
         }
         let win = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 1100, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 100, y: 100, width: 520, height: 680),
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        win.title = "YouTube Music — Morph Direct Engine"
-        win.titlebarAppearsTransparent = false
+        win.title = "Connect YouTube Music — Morph"
+        win.titlebarAppearsTransparent = true
         win.isReleasedWhenClosed = false
-        win.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
+        win.backgroundColor = NSColor(red: 0.08, green: 0.07, blue: 0.12, alpha: 1.0)
         
         let delegate = PlayerWindowDelegate { [weak self] in
             self?.hidePlayerWindow()
@@ -2852,17 +2852,19 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.windowDelegate = delegate
         win.delegate = delegate
         
-        // Build Container with Top Navigation Toolbar + Web View
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
+        // Build Container with Top Auth Toolbar + Web View
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 680))
         container.autoresizingMask = [.width, .height]
         
-        // Toolbar Hosting View (Height: 42 pt)
-        let toolbarView = NSHostingView(rootView: PlayerWindowToolbarView(engine: self))
-        toolbarView.frame = NSRect(x: 0, y: 760 - 42, width: 1100, height: 42)
+        // Auth Toolbar Hosting View (Height: 48 pt)
+        let toolbarView = NSHostingView(rootView: MorphMusicAuthToolbarView(engine: self, onClose: { [weak self] in
+            self?.hidePlayerWindow()
+        }))
+        toolbarView.frame = NSRect(x: 0, y: 680 - 48, width: 520, height: 48)
         toolbarView.autoresizingMask = [.width, .minYMargin]
         
-        // Web View (Height: 718 pt)
-        self.webView.frame = NSRect(x: 0, y: 0, width: 1100, height: 760 - 42)
+        // Web View (Height: 632 pt)
+        self.webView.frame = NSRect(x: 0, y: 0, width: 520, height: 680 - 48)
         self.webView.autoresizingMask = [.width, .height]
         
         container.addSubview(self.webView)
@@ -2871,8 +2873,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         win.contentView = container
         win.center()
         
-        // Zero ghost windows: do NOT order back with alpha = 0.0.
-        // The window stays off-screen until explicitly shown via showPlayerWindow().
         win.alphaValue = 1.0
         win.ignoresMouseEvents = false
         
@@ -4343,6 +4343,95 @@ public struct PlayerWindowProfileMenuView: View {
     }
 }
 
+// MARK: - Redesigned YouTube Music Auth Window Header
+public struct MorphMusicAuthToolbarView: View {
+    @ObservedObject var engine: YouTubeMusicEngine
+    var onClose: () -> Void
+    
+    public init(engine: YouTubeMusicEngine, onClose: @escaping () -> Void = {}) {
+        self.engine = engine
+        self.onClose = onClose
+    }
+    
+    public var body: some View {
+        HStack(spacing: 12) {
+            // YouTube Music Brand Icon + Title
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(hex: "#ff0055"), Color(hex: "#ff7ab8")],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 26, height: 26)
+                        .shadow(color: Color(hex: "#ff0055").opacity(0.4), radius: 4, y: 1)
+                    
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Connect YouTube Music")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    
+                    Text("Direct Control for Morph")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.60))
+                }
+            }
+            
+            Spacer()
+            
+            // Security badge
+            HStack(spacing: 5) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color(hex: "#10b981"))
+                Text("Google Accounts")
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.85))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.08))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.8))
+            )
+            
+            // Close button
+            Button(action: {
+                onClose()
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.75))
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.white.opacity(0.12)))
+            }
+            .buttonStyle(.plain)
+            .help("Close Authentication Window")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .background(
+            Color(hex: "#16121e").opacity(0.95)
+                .overlay(
+                    Rectangle()
+                        .frame(height: 1)
+                        .foregroundColor(Color.white.opacity(0.12)),
+                    alignment: .bottom
+                )
+        )
+    }
+}
+
+// Backward-compatibility wrapper for any legacy callers
 public struct PlayerWindowToolbarView: View {
     @ObservedObject var engine: YouTubeMusicEngine
     
@@ -4351,177 +4440,9 @@ public struct PlayerWindowToolbarView: View {
     }
     
     public var body: some View {
-        HStack(spacing: 10) {
-            // Navigation History
-            HStack(spacing: 4) {
-                Button(action: {
-                    engine.goBack()
-                }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(engine.canGoBack ? .white : Color.white.opacity(0.3))
-                        .frame(width: 26, height: 26)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!engine.canGoBack)
-                
-                Button(action: {
-                    engine.goForward()
-                }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(engine.canGoForward ? .white : Color.white.opacity(0.3))
-                        .frame(width: 26, height: 26)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!engine.canGoForward)
-                
-                Button(action: {
-                    engine.reload()
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 26, height: 26)
-                        .background(Color.white.opacity(0.08))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
-            }
-            
-            // Home Button
-            Button(action: {
-                engine.loadHome()
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "music.note.house.fill")
-                        .font(.system(size: 10))
-                    Text("YouTube Music")
-                        .font(.system(size: 10.5, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4.5)
-                .background(Color.white.opacity(0.12))
-                .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            
-            Spacer()
-            
-            // URL Status Pill
-            Text(engine.currentURLString.replacingOccurrences(of: "https://", with: ""))
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                .foregroundColor(Color.white.opacity(0.45))
-                .lineLimit(1)
-                .frame(maxWidth: 240)
-            
-            Spacer()
-            
-            // Profile Switcher Menu
-            PlayerWindowProfileMenuView(engine: engine)
-            
-            // Direct Google Sign-In Action Button / Signed In Indicator
-            if engine.isSignedIn {
-                HStack(spacing: 6) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10.5, weight: .bold))
-                            .foregroundColor(Color.green)
-                        Text(engine.userEmail ?? "Connected • Signed In")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Capsule())
-                    
-                    Button(action: {
-                        engine.signOut()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                                .font(.system(size: 9.5, weight: .bold))
-                            Text("Sign Out")
-                                .font(.system(size: 10.5, weight: .bold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.red.opacity(0.75))
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Sign out of current YouTube Music account")
-                    
-                    Button(action: {
-                        engine.fetchRealUserPlaylists()
-                        engine.fetchQuickPicks()
-                        engine.hidePlayerWindow()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.right.and.arrow.up.left")
-                                .font(.system(size: 9.5, weight: .bold))
-                            Text("Done • Play in Morph")
-                                .font(.system(size: 10.5, weight: .bold))
-                        }
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Color.white)
-                        .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Sync playlists & return to Morph")
-                }
-            } else {
-                Button(action: {
-                    engine.loadGoogleSignIn()
-                }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 10.5, weight: .bold))
-                        Text("Sign In with Google")
-                            .font(.system(size: 11, weight: .bold))
-                    }
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.white)
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            
-            // Clear & Reset Cache Button
-            Button(action: {
-                engine.clearCookiesAndCache()
-            }) {
-                Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .foregroundColor(Color.white.opacity(0.55))
-                    .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Clear Cookies & Reset YouTube Music Session")
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 42)
-        .background(Color(red: 0.1, green: 0.1, blue: 0.1))
-        .overlay(
-            Rectangle()
-                .fill(Color.white.opacity(0.1))
-                .frame(height: 1),
-            alignment: .bottom
-        )
+        MorphMusicAuthToolbarView(engine: engine, onClose: {
+            engine.hidePlayerWindow()
+        })
     }
 }
 

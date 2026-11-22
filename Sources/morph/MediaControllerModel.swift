@@ -2387,6 +2387,12 @@ public final class MediaControllerModel: ObservableObject {
         isSignedIn = false
         userEmail = nil
         activeProfile = nil
+        trackTitle = ""
+        artistName = ""
+        albumArtURL = nil
+        isPlaying = false
+        currentTime = 0
+        duration = 0
         YTMProfileManager.shared.clearActiveProfile()
         playlists = []
         selectedPlaylist = nil
