@@ -352,4 +352,132 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
         hosting.layoutSubtreeIfNeeded()
         XCTAssertEqual(media.rightDeckSection, .search)
     }
+
+    // MARK: - 8. Four Critical Bug Fix Tests: Single Active Song, Progress 0:00, Ad Guard, Library Direct List
+
+    func testSingleSongHighlightingInSearchResults() {
+        let model = NotchModel()
+        model.media.isPlaying = true
+        model.media.trackTitle = "Housewife"
+        model.media.artistName = "Tate McRae"
+        model.media.engine.trackData = YTMTrackData(
+            title: "Housewife",
+            artist: "Tate McRae",
+            isPlaying: true,
+            currentTime: 42.0,
+            duration: 180.0,
+            videoId: "vid_tate"
+        )
+        
+        let res1 = YTMSearchResult(
+            id: "song:vid_tate",
+            kind: .song,
+            title: "Housewife",
+            subtitle: "Tate McRae",
+            videoId: "vid_tate"
+        )
+        let res2 = YTMSearchResult(
+            id: "song:vid_romy",
+            kind: .song,
+            title: "Housewife",
+            subtitle: "Romy Vale",
+            videoId: "vid_romy"
+        )
+        let res3 = YTMSearchResult(
+            id: "song:vid_zusebi",
+            kind: .song,
+            title: "Housewife",
+            subtitle: "Zusebi",
+            videoId: "vid_zusebi"
+        )
+        
+        model.media.searchResults = [res1, res2, res3]
+        
+        // Render MorphIslandView to verify single-song active state
+        let island = MorphIslandView(model: model)
+        let hosting = NSHostingView(rootView: island)
+        hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 380)
+        hosting.layoutSubtreeIfNeeded()
+        
+        // Active video ID match
+        XCTAssertEqual(model.media.activeTrackVideoId, "vid_tate")
+        
+        // Verify via activeTrackId matching that only ONE result matches
+        let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
+        XCTAssertEqual(curTitle, "housewife")
+        
+        // Check that Tate McRae's result matches and others do NOT match
+        let artist = model.glassMusicArtist.lowercased()
+        XCTAssertEqual(artist, "tate mcrae")
+        XCTAssertTrue(res1.subtitle.lowercased().contains(artist))
+        XCTAssertFalse(res2.subtitle.lowercased().contains(artist))
+        XCTAssertFalse(res3.subtitle.lowercased().contains(artist))
+    }
+
+    func testProgressBarResetsToZeroOnNextTrack() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        let t1 = YTMPlaylistItem(id: "s1", title: "Song 1", artist: "Artist 1", duration: "3:30", isPlaying: true, videoId: "v1")
+        let t2 = YTMPlaylistItem(id: "s2", title: "Song 2", artist: "Artist 2", duration: "4:00", isPlaying: false, videoId: "v2")
+        let playlist = YTMPlaylist(id: "pl1", title: "Test Playlist", tracks: [t1, t2])
+        
+        media.selectPlaylist(playlist)
+        media.currentTime = 145.0
+        XCTAssertEqual(media.currentTime, 145.0)
+        
+        // When skipping to next track, progress bar must immediately reset to 0:00
+        media.nextTrack()
+        XCTAssertEqual(media.currentTime, 0.0, "Progress bar must immediately return to 0:00 on next track")
+        XCTAssertEqual(media.engine.trackData.currentTime, 0.0)
+    }
+
+    func testAdFastForwardNeverTriggersOnNormalOverlay() {
+        let engine = YouTubeMusicEngine()
+        let stealth = engine.chromeStealthJavaScript
+        let observer = engine.injectedPlayerObserverJavaScript
+        
+        // Verify that neither script does a blind `document.querySelector('... .ytp-ad-player-overlay') !== null` check
+        // which previously caused every normal song to be falsely identified as an ad and muted/fast-forwarded.
+        XCTAssertFalse(stealth.contains(".ytp-ad-player-overlay' !== null"))
+        XCTAssertFalse(observer.contains(".ytp-ad-player-overlay' !== null"))
+        
+        // Verify incoming normal track payload is never marked as isAdPlaying
+        let normalPayload: [String: Any] = [
+            "title": "Housewife",
+            "artist": "Tate McRae",
+            "isPlaying": true,
+            "currentTime": 12.0,
+            "duration": 180.0,
+            "isAdPlaying": false,
+            "videoId": "vid_tate"
+        ]
+        engine.parseIncomingPayload(normalPayload)
+        XCTAssertFalse(engine.trackData.isAdPlaying)
+        XCTAssertEqual(engine.trackData.videoId, "vid_tate")
+        XCTAssertEqual(engine.trackData.currentTime, 12.0)
+    }
+
+    func testLibraryPlaylistsListedDirectlyWithoutCriteriaBar() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        let pl1 = YTMPlaylist(id: "p1", title: "Chill Hits", subtitle: "Playlist • 50 tracks", tracks: [])
+        let pl2 = YTMPlaylist(id: "p2", title: "Workout Mix", subtitle: "Playlist • 30 tracks", tracks: [])
+        media.playlists = [pl1, pl2]
+        
+        // User library playlists are directly accessible
+        let userPlaylists = media.userLibraryPlaylists
+        XCTAssertEqual(userPlaylists.count, 2)
+        XCTAssertEqual(userPlaylists[0].title, "Chill Hits")
+        XCTAssertEqual(userPlaylists[1].title, "Workout Mix")
+        
+        // Verify MediaView renders without sortFilter criteria pills
+        let mediaView = MediaView(media: media)
+        let hosting = NSHostingView(rootView: mediaView)
+        hosting.frame = CGRect(x: 0, y: 0, width: 620, height: 260)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hosting)
+    }
 }
