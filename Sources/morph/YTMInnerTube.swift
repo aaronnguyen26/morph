@@ -509,6 +509,21 @@ public enum YTMParser {
         return results
     }
     
+    /// Parses search suggestions from InnerTube music/get_search_suggestions response
+    public static func parseSearchSuggestions(_ doc: [String: Any]) -> [String] {
+        var suggestions: [String] = []
+        var seen = Set<String>()
+        for item in collect(doc, key: "searchSuggestionRenderer") {
+            if let suggestionNode = item["suggestion"] {
+                let t = text(suggestionNode).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty && seen.insert(t.lowercased()).inserted {
+                    suggestions.append(t)
+                }
+            }
+        }
+        return Array(suggestions.prefix(6))
+    }
+    
     // MARK: - Quick Picks (Home Algorithmic Recommendations)
     
     static func cardTrack(from card: [String: Any], index: Int) -> YTMPlaylistItem? {

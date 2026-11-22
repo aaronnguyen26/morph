@@ -2361,6 +2361,30 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         return YTMParser.parseSearch(doc)
     }
     
+    // MARK: Live Search Suggestions / Autocomplete
+    public func fetchSearchSuggestions(_ query: String) async -> [String] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2 else { return [] }
+        if let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           let url = URL(string: "https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=\(encoded)") {
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 2.5
+            req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
+            if let (data, resp) = try? await URLSession.shared.data(for: req),
+               let http = resp as? HTTPURLResponse, http.statusCode == 200,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [Any], json.count > 1,
+               let list = json[1] as? [String], !list.isEmpty {
+                return Array(list.prefix(6))
+            }
+        }
+        
+        // Fallback: InnerTube music/get_search_suggestions
+        if let doc = try? await publicInnerTube("music/get_search_suggestions", body: ["input": q]) {
+            return YTMParser.parseSearchSuggestions(doc)
+        }
+        return []
+    }
+    
     // MARK: Direct playback by video id
     public func play(videoId: String, listId: String? = nil, fallbackToRadio: Bool = false) {
         guard !MorphEnvironment.isTestingEnvironment else { return }
@@ -3365,12 +3389,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var isPlaying = false;
                 if (window._morphUserPaused) {
                     isPlaying = false;
-                } else if (videoEl) {
-                    // Direct truth from video element: playing iff not paused, not ended, has frames (readyState >= 2), and not seeking
-                    isPlaying = (!videoEl.paused && !videoEl.ended && videoEl.readyState >= 2 && !videoEl.seeking);
-                } else if (playerEl && typeof playerEl.getPlayerState === 'function') {
-                    var s = playerEl.getPlayerState();
-                    isPlaying = (s === 1); // State 1 is Playing. State 3 is Buffering, not playing!
+                } else if (playerEl && typeof playerEl.getPlayerState === 'function' && playerEl.getPlayerState() === 1) {
+                    isPlaying = true;
+                } else if (videoEl && !videoEl.paused && !videoEl.ended) {
+                    isPlaying = true;
                 } else if (navigator.mediaSession && navigator.mediaSession.playbackState) {
                     isPlaying = (navigator.mediaSession.playbackState === 'playing');
                 }
@@ -3876,13 +3898,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     if (isEnded) {
                         data.isEnded = true;
                     }
-                    if (!data.isPlaying && !isEnded && !force) {
-                        if (_morphSentPausedState) return;
-                        _morphSentPausedState = true;
-                    } else if (data.isPlaying) {
+                    if (data.isPlaying) {
                         _morphSentPausedState = false;
+                        window.webkit.messageHandlers.\(kHandlerName).postMessage(data);
+                    } else if (force || isEnded || !_morphSentPausedState) {
+                        _morphSentPausedState = true;
+                        window.webkit.messageHandlers.\(kHandlerName).postMessage(data);
                     }
-                    window.webkit.messageHandlers.\(kHandlerName).postMessage(data);
                 } catch(e) {}
             };
             
