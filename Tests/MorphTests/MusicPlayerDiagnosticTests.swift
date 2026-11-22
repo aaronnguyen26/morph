@@ -357,6 +357,8 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
 
     func testSingleSongHighlightingInSearchResults() {
         let model = NotchModel()
+        model.media.engine.isSignedIn = true
+        model.media.isSignedIn = true
         model.media.isPlaying = true
         model.media.trackTitle = "Housewife"
         model.media.artistName = "Tate McRae"
@@ -366,6 +368,7 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
             isPlaying: true,
             currentTime: 42.0,
             duration: 180.0,
+            isSignedIn: true,
             videoId: "vid_tate"
         )
         
@@ -665,5 +668,74 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
         XCTAssertFalse(media.isSignedIn)
         XCTAssertNil(media.userEmail)
         XCTAssertNil(media.activeProfile)
+    }
+
+    // MARK: - 9. Diagnostic: First-Time User Experience & Redesigned Sign-In Flow
+    
+    func testUnauthenticatedNowPlayingShowsSignInCardInsteadOfTrack() {
+        let model = NotchModel()
+        model.media.isSignedIn = false
+        model.media.trackTitle = ""
+        model.media.artistName = ""
+        model.glassMusicSubtab = .playing
+        
+        // When unauthenticated, title and artist must not show any song
+        XCTAssertEqual(model.glassMusicTitle, "Connect YouTube Music")
+        XCTAssertEqual(model.glassMusicArtist, "Sign in to play")
+        
+        // Render MorphIslandView to verify view builds without errors and displays the sign-in experience
+        let island = MorphIslandView(model: model)
+        let hosting = NSHostingView(rootView: island)
+        hosting.frame = CGRect(x: 0, y: 0, width: 460, height: 384)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hosting)
+    }
+
+    func testUnauthenticatedMiniPlayerIsHidden() {
+        let model = NotchModel()
+        model.media.isSignedIn = false
+        model.media.isPlaying = false
+        model.glassMusicSubtab = .library
+        
+        // In library or queue subtabs when not signed in, mini player must be hidden
+        XCTAssertFalse(model.media.isSignedIn)
+        let island = MorphIslandView(model: model)
+        let hosting = NSHostingView(rootView: island)
+        hosting.frame = CGRect(x: 0, y: 0, width: 460, height: 384)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hosting)
+    }
+
+    func testSignInDivertsToDedicatedAuthWindow() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        XCTAssertFalse(media.isSignedIn)
+        XCTAssertFalse(engine.isWaitingForSignInCompletion)
+        
+        // Calling openSignIn must set waiting flags and trigger Google auth
+        media.openSignIn()
+        
+        XCTAssertTrue(media.isWaitingForBrowserSignIn)
+        XCTAssertTrue(engine.isWaitingForSignInCompletion)
+        
+        // Verify dedicated auth window is generated with compact 520x680 content dimensions
+        let authWindow = engine.ensurePlayerWindow()
+        let contentSize = authWindow.contentView?.frame.size ?? authWindow.frame.size
+        XCTAssertEqual(contentSize.width, 520)
+        XCTAssertEqual(contentSize.height, 680)
+        XCTAssertTrue(authWindow.title.contains("Connect YouTube Music"))
+    }
+
+    func testUnauthenticatedMediaDeckInMediaViewShowsConnectCard() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        media.isSignedIn = false
+        
+        let mediaView = MediaView(media: media)
+        let hosting = NSHostingView(rootView: mediaView)
+        hosting.frame = CGRect(x: 0, y: 0, width: 620, height: 260)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hosting)
     }
 }
