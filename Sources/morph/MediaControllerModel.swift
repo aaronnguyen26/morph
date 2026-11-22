@@ -409,21 +409,27 @@ public final class MediaControllerModel: ObservableObject {
                         if data.currentTime > 3.0 && !self.stalePreviousTitle.isEmpty && Self.normalizeTitle(data.title) == self.stalePreviousTitle {
                             // ignore stale pre-seek currentTime from previous track
                         } else {
-                            self.currentTime = data.currentTime
+                            if data.currentTime > 0 {
+                                self.currentTime = data.currentTime
+                            }
                             if data.currentTime > 0.05 {
                                 self.lastSeekToZeroTime = nil
                             }
                         }
                     } else {
-                        self.currentTime = data.currentTime
+                        if data.currentTime > 0 {
+                            self.currentTime = data.currentTime
+                        }
                     }
-                    self.duration = data.duration
+                    if data.duration > 0 {
+                        self.duration = data.duration
+                    }
                     
                     // Stalled playback watchdog: if playing and has duration, but currentTime remains frozen at 0:
                     if !self.userIntentionallyPaused && data.isPlaying && data.duration > 0 {
                         if data.currentTime <= 0.05 && self.lastObservedPlaybackTime != nil && self.lastObservedPlaybackTime! <= 0.05 {
                             self.stalledPlaybackCount += 1
-                            if self.stalledPlaybackCount >= 1 && (!self.isTestingEnvironment || self.isTestingSimulation) {
+                            if self.stalledPlaybackCount >= 6 && (!self.isTestingEnvironment || self.isTestingSimulation) {
                                 self.engine.ensurePlayback()
                             }
                         } else {
@@ -1411,29 +1417,15 @@ public final class MediaControllerModel: ObservableObject {
             trackTransitionLockoutUntil = Date().addingTimeInterval(2.5)
         }
         
-        // Intelligent Playback Routing:
-        // If the user has an active browser tab connected (where their YouTube Premium session lives)
-        // and direct engine is not signed in to YouTube Premium, route track to their browser tab
-        // so their YouTube Premium experience is 100% preserved with zero ads!
-        if isBrowserConnected && !engine.isSignedIn && engine.accountTier != .premium {
-            sourceName = "YouTube Music • Browser"
-            if let vid = track.videoId, !vid.isEmpty {
-                executeBrowserPlayTrack(videoId: vid, listId: listId)
-            } else {
-                let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
-                if !query.isEmpty {
-                    executeBrowserSearch(query: query)
-                }
-            }
+        // Morph is the standalone native media player: always play directly in Morph's embedded engine
+        // so that real-time progress bar telemetry, background playback, and switching songs work seamlessly!
+        sourceName = "YouTube Music Direct"
+        if let vid = track.videoId, !vid.isEmpty {
+            engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
         } else {
-            sourceName = "YouTube Music Direct"
-            if let vid = track.videoId, !vid.isEmpty {
-                engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
-            } else {
-                let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
-                if !query.isEmpty {
-                    playSearch(query)
-                }
+            let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+            if !query.isEmpty {
+                playSearch(query)
             }
         }
     }
@@ -2394,6 +2386,8 @@ public final class MediaControllerModel: ObservableObject {
     public func signOut() {
         isSignedIn = false
         userEmail = nil
+        activeProfile = nil
+        YTMProfileManager.shared.clearActiveProfile()
         playlists = []
         selectedPlaylist = nil
         isWaitingForBrowserSignIn = false

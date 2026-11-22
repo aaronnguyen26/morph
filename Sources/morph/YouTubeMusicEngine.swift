@@ -1327,21 +1327,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var v = document.querySelector('video');
                 if (p && typeof p.getPlayerState === 'function') {
                     var s = p.getPlayerState();
+                    if (s === 1) { return; } // Already playing
                     if ((s === -1 || s === 2 || s === 5) && typeof p.playVideo === 'function') {
                         p.playVideo();
                     }
                 }
                 if (v && v.paused && !v.ended) {
-                    var wasMuted = v.muted;
-                    var promise = v.play();
-                    if (promise !== undefined) {
-                        promise.catch(function() {
-                            v.muted = true;
-                            v.play().then(function() {
-                                setTimeout(function() { v.muted = wasMuted; }, 150);
-                            }).catch(function(){});
-                        });
-                    }
+                    try {
+                        var pr = v.play();
+                        if (pr && typeof pr.catch === 'function') { pr.catch(function(){}); }
+                    } catch(ve) {}
                 }
             } catch(e) {}
         })();
@@ -2443,17 +2438,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         p.playVideo();
                     }
                     var v = document.querySelector('video');
-                    if (v) {
-                        var wasMuted = v.muted;
-                        var promise = v.play();
-                        if (promise !== undefined) {
-                            promise.catch(function() {
-                                v.muted = true;
-                                v.play().then(function() {
-                                    setTimeout(function() { v.muted = wasMuted; }, 150);
-                                }).catch(function(){});
-                            });
-                        }
+                    if (v && v.paused) {
+                        try {
+                            var pr = v.play();
+                            if (pr && typeof pr.catch === 'function') { pr.catch(function(){}); }
+                        } catch(ve) {}
                     }
                     if (typeof window.morphSendUpdate === 'function') {
                         setTimeout(window.morphSendUpdate, 250);
@@ -3196,8 +3185,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                 this.playbackRate = 16.0;
                                 if (isFinite(this.duration) && this.duration > 0) {
                                     this.currentTime = this.duration;
-                                } else {
-                                    this.currentTime = 99999;
                                 }
                                 var skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, button.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-slot button');
                                 if (skip) {
@@ -3337,8 +3324,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         try {
                             if (isFinite(videoEl.duration) && videoEl.duration > 0) {
                                 videoEl.currentTime = videoEl.duration;
-                            } else {
-                                videoEl.currentTime = 99999;
                             }
                             videoEl.playbackRate = 16.0;
                         } catch(fe) {}
@@ -3960,22 +3945,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     var v = document.querySelector('video');
                     if (p && typeof p.getPlayerState === 'function') {
                         var state = p.getPlayerState();
+                        if (state === 1) { return; } // Already playing smoothly
                         // State -1: unstarted, 2: paused, 5: cued
                         if ((state === -1 || state === 2 || state === 5) && typeof p.playVideo === 'function') {
                             try { p.playVideo(); } catch(eP) {}
                         }
                     }
                     if (v && v.paused && !v.ended) {
-                        var wasMuted = v.muted;
-                        var promise = v.play();
-                        if (promise !== undefined) {
-                            promise.catch(function() {
-                                v.muted = true;
-                                v.play().then(function() {
-                                    setTimeout(function() { v.muted = wasMuted; }, 150);
-                                }).catch(function(){});
-                            });
-                        }
+                        try {
+                            var pr = v.play();
+                            if (pr && typeof pr.catch === 'function') { pr.catch(function(){}); }
+                        } catch(ve) {}
                     }
                 } catch(e) {}
             }
@@ -4159,8 +4139,6 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                     v.playbackRate = 16.0;
                                     if (isFinite(v.duration) && v.duration > 0) {
                                         v.currentTime = v.duration;
-                                    } else {
-                                        v.currentTime = 99999;
                                     }
                                     var skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, button.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-slot button');
                                     if (skip) {
