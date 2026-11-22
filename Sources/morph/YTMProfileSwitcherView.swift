@@ -44,7 +44,7 @@ public struct YTMProfileSwitcherView: View {
         .frame(width: 310)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 20/255, green: 20/255, blue: 28/255).opacity(0.96))
+                .fill(Color(hex: "#16121e").opacity(0.85))
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(.ultraThinMaterial)
@@ -53,14 +53,14 @@ public struct YTMProfileSwitcherView: View {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(
                             LinearGradient(
-                                colors: [Color.white.opacity(0.24), Color.white.opacity(0.08)],
+                                colors: [Color.white.opacity(0.35), Color(hex: "#ff7ab8").opacity(0.20), Color.white.opacity(0.10)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1
                         )
                 )
-                .shadow(color: Color.black.opacity(0.65), radius: 24, x: 0, y: 12)
+                .shadow(color: Color.black.opacity(0.50), radius: 24, x: 0, y: 12)
         )
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
@@ -283,7 +283,8 @@ public struct YTMProfileSwitcherView: View {
             .buttonStyle(.plain)
             .onHover { hoveredAction = $0 ? "add" : nil }
             
-            if media.isSignedIn {
+            let canSignOut = media.isSignedIn || media.activeProfile != nil || media.userEmail != nil || media.engine.isSignedIn
+            if canSignOut {
                 Button(action: {
                     MorphHaptics.levelChange()
                     media.signOut()
@@ -292,11 +293,11 @@ public struct YTMProfileSwitcherView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "rectangle.portrait.and.arrow.right")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color.red.opacity(0.85))
+                            .foregroundColor(Color(hex: "#ff4d6d"))
                         
-                        Text("Sign Out of YouTube Music")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundColor(Color.red.opacity(0.90))
+                        Text("Log Out")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(Color(hex: "#ff4d6d"))
                         
                         Spacer()
                     }
@@ -304,7 +305,11 @@ public struct YTMProfileSwitcherView: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(hoveredAction == "signout" ? Color.red.opacity(0.12) : Color.clear)
+                            .fill(hoveredAction == "signout" ? Color(hex: "#ff4d6d").opacity(0.18) : Color.white.opacity(0.06))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color(hex: "#ff4d6d").opacity(0.25), lineWidth: 0.8)
+                            )
                     )
                 }
                 .buttonStyle(.plain)
@@ -318,7 +323,7 @@ public struct YTMProfileSwitcherView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "person.badge.key.fill")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color(hex: "#ff0033"))
+                            .foregroundColor(Color(hex: "#ff7ab8"))
                         
                         Text("Sign In to YouTube Music...")
                             .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -330,7 +335,11 @@ public struct YTMProfileSwitcherView: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(hoveredAction == "signin" ? Color(hex: "#ff0033").opacity(0.18) : Color.clear)
+                            .fill(hoveredAction == "signin" ? Color(hex: "#ff7ab8").opacity(0.20) : Color.white.opacity(0.06))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color(hex: "#ff7ab8").opacity(0.30), lineWidth: 0.8)
+                            )
                     )
                 }
                 .buttonStyle(.plain)

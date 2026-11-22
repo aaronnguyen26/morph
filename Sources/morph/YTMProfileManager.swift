@@ -171,6 +171,12 @@ public final class YTMProfileManager: ObservableObject {
         saveProfiles()
     }
     
+    /// Clears the active profile on user log out.
+    public func clearActiveProfile() {
+        self.activeProfileId = nil
+        UserDefaults.standard.removeObject(forKey: kActiveProfileKey)
+    }
+    
     /// Adds a new profile and sets it as active.
     @discardableResult
     public func addProfile(
