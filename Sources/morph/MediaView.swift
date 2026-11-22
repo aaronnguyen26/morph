@@ -64,15 +64,19 @@ public struct MediaView: View {
                 connectCalendarMiniStrip
             }
             
-            albumArtAndMetadataRow
-            
-            if isSearching {
-                songSearchBar
+            if media.isSignedIn {
+                albumArtAndMetadataRow
+                
+                if isSearching {
+                    songSearchBar
+                }
+                
+                timelineScrubberRow
+                transportControlsRow
+                volumeControlRow
+            } else {
+                mediaSignInDeckView
             }
-            
-            timelineScrubberRow
-            transportControlsRow
-            volumeControlRow
         }
         .padding(7)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -86,6 +90,64 @@ public struct MediaView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(theme.liquidGlassSpecularBorder, lineWidth: 1)
         )
+    }
+    
+    // MARK: - Redesigned YouTube Music First-Time Sign-In Card for MediaView
+    private var mediaSignInDeckView: some View {
+        VStack(spacing: 8) {
+            Spacer(minLength: 6)
+            
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(hex: "#ff0055"), Color(hex: "#ff7ab8")],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 38, height: 38)
+                    .shadow(color: Color(hex: "#ff0055").opacity(0.4), radius: 6, y: 2)
+                
+                Image(systemName: "music.note")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            
+            VStack(spacing: 2) {
+                Text("Connect YouTube Music")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundColor(theme.textPrimary)
+                
+                Text("Sign in with Google so Morph can access your library, stream music, and control playback directly.")
+                    .font(.system(size: 8, weight: .regular))
+                    .foregroundColor(theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+            }
+            
+            Button(action: {
+                media.openSignIn()
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Sign In with Google")
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(theme.activePillText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(theme.activePillBackground)
+                .clipShape(Capsule())
+                .shadow(color: Color(hex: "#ff7ab8").opacity(0.3), radius: 4, y: 1)
+            }
+            .buttonStyle(.plain)
+            
+            Spacer(minLength: 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 4)
     }
     
     // Calendar Integration Pill within Mini Player Deck (Urgent <= 30m)
@@ -529,25 +591,7 @@ public struct MediaView: View {
             .accessibilityLabel(media.isDisliked ? "Remove Dislike" : "Dislike Track")
             .accessibilityHint("Shortcut: Minus (-).")
             
-            if !media.isSignedIn {
-                Button(action: {
-                    media.openSignIn()
-                }) {
-                    HStack(spacing: 2.5) {
-                        Image(systemName: "person.crop.circle.badge.plus")
-                            .font(.system(size: 7, weight: .bold))
-                        Text("Sign In")
-                            .font(.system(size: 7.5, weight: .bold))
-                    }
-                    .foregroundColor(theme.activePillText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(theme.activePillBackground)
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help("Sign in to your YouTube Music account")
-            } else {
+            if media.isSignedIn {
                 HStack(spacing: 3) {
                     Button(action: {
                         media.openPlayerWindow()
@@ -1489,56 +1533,20 @@ public struct MediaView: View {
                             Button(action: {
                                 media.openSignIn()
                             }) {
-                                HStack(spacing: 3) {
+                                HStack(spacing: 4) {
                                     Image(systemName: "person.crop.circle.badge.plus")
-                                        .font(.system(size: 8))
-                                    Text("Sign In")
-                                        .font(.system(size: 8, weight: .bold))
+                                        .font(.system(size: 8.5, weight: .bold))
+                                    Text("Sign In with Google")
+                                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
                                 }
                                 .foregroundColor(theme.activePillText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
                                 .background(theme.activePillBackground)
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
                             .help("Sign in to YouTube Music directly in Morph")
-                            
-                            Button(action: {
-                                media.openSignInInBrowser()
-                            }) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "safari")
-                                        .font(.system(size: 8))
-                                    Text("Browser")
-                                        .font(.system(size: 8, weight: .medium))
-                                }
-                                .foregroundColor(theme.textPrimary)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(theme.cardBackgroundElevated)
-                                .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Opens Google / YouTube Music sign-in tab in your browser")
-                            
-                            Button(action: {
-                                media.syncSessionFromBrowser()
-                            }) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                        .font(.system(size: 7.5))
-                                    Text("Sync")
-                                        .font(.system(size: 8, weight: .medium))
-                                }
-                                .foregroundColor(theme.textPrimary)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(theme.cardBackgroundElevated)
-                                .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .help("Detects signed-in YouTube Music tab in Chrome/Safari and syncs session")
                         } else {
                             HStack(spacing: 5) {
                                 MediaPlaylistsProfileMenu(media: media, theme: theme)
@@ -2257,8 +2265,8 @@ public struct MediaView: View {
                                 media.openSignIn()
                             }) {
                                 HStack(spacing: 3) {
-                                    Image(systemName: "safari").font(.system(size: 8))
-                                    Text("Sign In").font(.system(size: 8.5, weight: .semibold))
+                                    Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 8))
+                                    Text("Sign In with Google").font(.system(size: 8.5, weight: .bold))
                                 }
                                 .foregroundColor(theme.activePillText)
                                 .padding(.horizontal, 8)
@@ -2267,7 +2275,7 @@ public struct MediaView: View {
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
-                            .help("Sign in to YouTube Music via browser tab")
+                            .help("Sign in to YouTube Music directly in Morph")
                         }
                     }
                 }

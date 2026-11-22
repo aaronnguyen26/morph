@@ -1585,10 +1585,10 @@ public final class NotchModel: ObservableObject {
         if media.isBrowserConnected {
             return "YouTube Music Connected"
         }
-        if let track = currentGlassTrack {
+        if media.isSignedIn, let track = currentGlassTrack {
             return track.title
         }
-        return "No Track Playing"
+        return media.isSignedIn ? "No Track Playing" : "Connect YouTube Music"
     }
     
     public var glassMusicArtist: String {
@@ -1598,10 +1598,10 @@ public final class NotchModel: ObservableObject {
         if media.isBrowserConnected {
             return media.sourceName
         }
-        if let track = currentGlassTrack {
+        if media.isSignedIn, let track = currentGlassTrack {
             return track.artist
         }
-        return media.isSignedIn ? "YouTube Music" : "Sign in to YouTube Music"
+        return media.isSignedIn ? "YouTube Music" : "Sign in to play"
     }
     
     public var formattedGlassTrackCurrentTime: String {

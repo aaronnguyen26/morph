@@ -4247,16 +4247,28 @@ public struct MorphIslandView: View {
                 ZStack {
                     switch model.glassMusicSubtab {
                     case .playing:
-                        glassMusicNowPlayingView
+                        if model.media.isSignedIn {
+                            glassMusicNowPlayingView
+                        } else {
+                            glassMusicSignInView
+                        }
                     case .library:
-                        glassMusicLibraryView
+                        if model.media.isSignedIn {
+                            glassMusicLibraryView
+                        } else {
+                            glassMusicLibrarySignInPromptView
+                        }
                     case .queue:
-                        glassMusicQueueView
+                        if model.media.isSignedIn {
+                            glassMusicQueueView
+                        } else {
+                            glassMusicQueueSignInPromptView
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
-                if model.glassMusicSubtab != .playing {
+                if model.glassMusicSubtab != .playing && model.media.isSignedIn {
                     glassMusicMiniPlayerView
                 }
             }
@@ -4315,24 +4327,43 @@ public struct MorphIslandView: View {
     private var glassMusicProfileButton: some View {
         Button(action: {
             MorphHaptics.levelChange()
-            withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
-                model.media.isProfileSwitcherOpen.toggle()
+            if model.media.isSignedIn {
+                withAnimation(.spring(response: 0.26, dampingFraction: 0.8)) {
+                    model.media.isProfileSwitcherOpen.toggle()
+                }
+            } else {
+                model.media.openSignIn()
             }
         }) {
-            // Natural circular avatar without any harsh white border, matching the top bar profile picture
-            MorphAvatarView(
-                image: model.media.activeProfile?.avatarImage,
-                imageURL: model.media.activeProfile?.avatarURL,
-                initials: model.media.activeProfile?.displayName.isEmpty == false ? model.media.activeProfile!.displayName : (model.media.userEmail ?? "U"),
-                size: 22
-            )
-            .clipShape(Circle())
-            .shadow(color: Color.black.opacity(0.35), radius: 2.5, y: 1)
+            if model.media.isSignedIn {
+                MorphAvatarView(
+                    image: model.media.activeProfile?.avatarImage,
+                    imageURL: model.media.activeProfile?.avatarURL,
+                    initials: model.media.activeProfile?.displayName.isEmpty == false ? model.media.activeProfile!.displayName : (model.media.userEmail ?? "U"),
+                    size: 22
+                )
+                .clipShape(Circle())
+                .shadow(color: Color.black.opacity(0.35), radius: 2.5, y: 1)
+            } else {
+                HStack(spacing: 4) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Sign In")
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4.5)
+                .background(
+                    Capsule()
+                        .fill(Color(hex: "#ff7ab8").opacity(0.24))
+                        .overlay(Capsule().stroke(Color(hex: "#ff7ab8").opacity(0.50), lineWidth: 0.8))
+                )
+            }
         }
         .buttonStyle(.plain)
-        .frame(width: 30, height: 30)
-        .contentShape(Circle())
-        .help(model.media.activeProfile?.email.isEmpty == false ? "YouTube Music: \(model.media.activeProfile!.displayName) (\(model.media.activeProfile!.email))" : "YouTube Music Profile")
+        .frame(height: 30)
+        .help(model.media.isSignedIn ? (model.media.activeProfile?.email.isEmpty == false ? "YouTube Music: \(model.media.activeProfile!.displayName) (\(model.media.activeProfile!.email))" : "YouTube Music Profile") : "Sign In to YouTube Music")
     }
     
     private func glassMusicSegmentButton(tab: GlassMusicSubtab) -> some View {
@@ -4578,56 +4609,226 @@ public struct MorphIslandView: View {
             }
             .padding(.horizontal, 4)
             
-            if !model.media.isSignedIn && !model.media.isBrowserConnected && model.media.trackTitle.isEmpty {
-                HStack(spacing: 8) {
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        model.media.openSignIn()
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "person.crop.circle.badge.plus")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("Sign In")
-                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                        }
-                        .foregroundColor(Color.white.opacity(0.95))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(Color.white.opacity(0.16))
-                                .overlay(Capsule().stroke(Color.white.opacity(0.38), lineWidth: 0.9))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button(action: {
-                        MorphHaptics.levelChange()
-                        model.media.syncSessionFromBrowser()
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(Color(hex: "#00f0ff"))
-                            Text("Sync Browser")
-                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule()
-                                .fill(LinearGradient(colors: [Color.white.opacity(0.20), Color.white.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                .overlay(Capsule().stroke(LinearGradient(colors: [Color.white.opacity(0.40), Color(hex: "#00f0ff").opacity(0.30)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.top, 4)
-            }
-            
             Spacer(minLength: 4)
         }
+    }
+    
+    // MARK: - Redesigned YouTube Music First-Time Sign-In & Direct Connection View
+    private var glassMusicSignInView: some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 4)
+            
+            // Hero Emblem with radiant ambient pink-red glow
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color(hex: "#ff7ab8").opacity(0.35), Color.clear],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 52
+                        )
+                    )
+                    .frame(width: 104, height: 104)
+                
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color(hex: "#ff0055"), Color(hex: "#ff5fa8"), Color(hex: "#6a5cff")],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 58, height: 58)
+                    .shadow(color: Color(hex: "#ff0055").opacity(0.55), radius: 12, y: 3)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.45), lineWidth: 1.2)
+                    )
+                
+                Image(systemName: "music.note")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .padding(.top, 2)
+            
+            // Text Header
+            VStack(spacing: 4) {
+                Text("Connect YouTube Music")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text("Sign in to your Google account so Morph can access your library, stream music, and provide direct in-notch playback control.")
+                    .font(.system(size: 12, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .padding(.horizontal, 20)
+            }
+            
+            // Direct Morph Control Highlights (3 feature pills)
+            HStack(spacing: 8) {
+                glassSignInFeaturePill(icon: "slider.horizontal.3", title: "Direct Control")
+                glassSignInFeaturePill(icon: "music.note.list", title: "Your Playlists")
+                glassSignInFeaturePill(icon: "sparkles", title: "Ad-Free Audio")
+            }
+            .padding(.horizontal, 16)
+            
+            Spacer(minLength: 6)
+            
+            // Main Action Button: Diverts user to Google Sign-In
+            Button(action: {
+                MorphHaptics.levelChange()
+                model.media.openSignIn()
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Sign In with Google")
+                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 19, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white, Color(hex: "#f3e8f8")],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .shadow(color: Color(hex: "#ff7ab8").opacity(0.45), radius: 10, y: 3)
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 36)
+            
+            // Direct Connection Security Footnote
+            HStack(spacing: 4) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9))
+                Text("Direct authenticated session · Controlled locally by Morph")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+            }
+            .foregroundColor(Color.white.opacity(0.48))
+            .padding(.bottom, 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private func glassSignInFeaturePill(icon: String, title: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(Color(hex: "#ff7ab8"))
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.85))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                )
+        )
+    }
+    
+    private var glassMusicLibrarySignInPromptView: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            
+            Image(systemName: "music.note.list")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundColor(Color(hex: "#ff7ab8"))
+            
+            VStack(spacing: 4) {
+                Text("Your Library")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text("Sign in with Google to view and play your YouTube Music playlists, liked tracks, and mixes directly from Morph.")
+                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+            }
+            
+            Button(action: {
+                MorphHaptics.levelChange()
+                model.media.openSignIn()
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Sign In to YouTube Music")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.18))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.8))
+                )
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var glassMusicQueueSignInPromptView: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            
+            Image(systemName: "list.bullet.rectangle.portrait")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundColor(Color(hex: "#ff7ab8"))
+            
+            VStack(spacing: 4) {
+                Text("Queue is Empty")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text("Sign in to your YouTube Music account to play and queue your favorite music directly in Morph.")
+                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.65))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+            }
+            
+            Button(action: {
+                MorphHaptics.levelChange()
+                model.media.openSignIn()
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Sign In to YouTube Music")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.18))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.8))
+                )
+            }
+            .buttonStyle(.plain)
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
     private var glassNowPlayingArtView: some View {
