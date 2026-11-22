@@ -462,6 +462,7 @@ public final class MediaControllerModel: ObservableObject {
                     if trackTitleChanged {
                         self.stalledPlaybackCount = 0
                         self.lastObservedPlaybackTime = nil
+                        self.currentTime = data.currentTime
                     }
                     
                     let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
@@ -836,6 +837,10 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func nextTrack() {
+        currentTime = 0.0
+        lastSeekToZeroTime = Date()
+        engine.trackData.currentTime = 0.0
+        
         // 1. If currently inside an active playlist (and not pl_queue), advance sequentially or randomly through the playlist!
         if let sel = selectedPlaylist, !sel.tracks.isEmpty, sel.id != "pl_queue" {
             let activeId = activeTrackId(in: sel.tracks)
@@ -1626,6 +1631,23 @@ public final class MediaControllerModel: ObservableObject {
         return result
     }
     
+    /// The currently active videoId resolved from engine trackData or playing queue item.
+    public var activeTrackVideoId: String? {
+        if let vid = engine.trackData.videoId, !vid.isEmpty {
+            return vid
+        }
+        if let qItem = playlist.first(where: { $0.isPlaying }), let vid = qItem.videoId, !vid.isEmpty {
+            return vid
+        }
+        let currentTitleClean = Self.normalizeTitle(trackTitle)
+        if !currentTitleClean.isEmpty,
+           let match = playlist.first(where: { Self.normalizeTitle($0.title) == currentTitleClean }),
+           let vid = match.videoId, !vid.isEmpty {
+            return vid
+        }
+        return nil
+    }
+    
     /// Resolves the single active track ID inside a given list of tracks.
     /// Strictly guarantees at most ONE track can ever be identified as active.
     public func activeTrackId(in tracks: [YTMPlaylistItem]) -> String? {
@@ -1634,18 +1656,8 @@ public final class MediaControllerModel: ObservableObject {
         let currentTitleClean = Self.normalizeTitle(trackTitle)
         let currentArtistClean = artistName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         
-        // Active queue item videoId (if available and matching current trackTitle)
-        let activeQueueVideoId: String? = {
-            if let qItem = playlist.first(where: { $0.isPlaying }),
-               let vid = qItem.videoId, !vid.isEmpty,
-               (currentTitleClean.isEmpty || Self.normalizeTitle(qItem.title) == currentTitleClean) {
-                return vid
-            }
-            return nil
-        }()
-        
-        // Tier 1: Match by videoId with active queue track
-        if let targetVid = activeQueueVideoId {
+        // Tier 1: Match by videoId with active queue track or engine track
+        if let targetVid = activeTrackVideoId {
             if let match = tracks.first(where: { $0.videoId == targetVid }) {
                 return match.id
             }
@@ -1763,6 +1775,10 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func playSongInSelectedPlaylist(_ item: YTMPlaylistItem) {
+        currentTime = 0.0
+        lastSeekToZeroTime = Date()
+        engine.trackData.currentTime = 0.0
+        
         if let sel = selectedPlaylist {
             recordPlaylistUsage(for: sel.id)
         }
@@ -2189,6 +2205,10 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func playQueueTrack(_ item: YTMPlaylistItem) {
+        currentTime = 0.0
+        lastSeekToZeroTime = Date()
+        engine.trackData.currentTime = 0.0
+        
         if isOffline {
             if let downloaded = downloadedTracks.first(where: {
                 $0.id == item.id ||
