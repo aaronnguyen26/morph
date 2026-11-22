@@ -24,6 +24,28 @@ public enum YTMRightDeckSection: String, CaseIterable, Identifiable {
     }
 }
 
+public enum YTMSearchCategory: String, CaseIterable, Identifiable {
+    case all = "All"
+    case songs = "Songs"
+    case videos = "Videos"
+    case artists = "Artists"
+    case albums = "Albums"
+    case playlists = "Playlists"
+    
+    public var id: String { rawValue }
+    
+    public var matchingKind: YTMSearchKind? {
+        switch self {
+        case .all: return nil
+        case .songs: return .song
+        case .videos: return .video
+        case .artists: return .artist
+        case .albums: return .album
+        case .playlists: return .playlist
+        }
+    }
+}
+
 public enum LibrarySortMode: String, CaseIterable, Identifiable, Codable {
     case recentActivity = "Recent Activity"
     case mostPlayed = "Most Played"
@@ -167,6 +189,8 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var tracksError: String? = nil
     @Published public var libraryError: String? = nil
     @Published public var searchResults: [YTMSearchResult] = []
+    @Published public var searchSuggestions: [String] = []
+    @Published public var activeSearchCategory: YTMSearchCategory = .all
     @Published public var isSearchingCatalog: Bool = false
     @Published public var catalogSearchError: String? = nil
     @Published public var isWaitingForBrowserSignIn: Bool = false
@@ -277,19 +301,10 @@ public final class MediaControllerModel: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self = self, self.isPlaying else { return }
-                    // Only advance artificial ticker if strictly in offline demo mode with known track duration.
-                    // Never fight real WebKit or browser streams, and never skip tracks on a timer!
-                    if self.isOffline && !self.isDirectEngineConnected && !self.isBrowserConnected {
-                        if self.duration > 0 && self.currentTime < self.duration {
-                            self.currentTime += 1
-                        } else if self.duration > 0 && self.currentTime >= self.duration {
-                            if self.repeatMode == .one {
-                                self.currentTime = 0
-                            } else {
-                                self.nextTrack()
-                            }
-                        }
+                    guard let self = self, self.isPlaying, !self.userIntentionallyPaused else { return }
+                    // Smoothly advance progress bar hand-in-hand with playback
+                    if self.duration > 0 && self.currentTime < self.duration {
+                        self.currentTime += 1.0
                     }
                 }
             }
@@ -389,13 +404,13 @@ public final class MediaControllerModel: ObservableObject {
                         self.playResumeLockoutUntil = nil
                         self.isPlaying = false
                     }
-                    if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.8 {
+                    if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.5 {
                         // In-flight seek-to-zero lockout: protect against stale updates
-                        if data.currentTime > 3.0 && data.title == self.trackTitle {
-                            // ignore stale pre-seek currentTime
+                        if data.currentTime > 3.0 && !self.stalePreviousTitle.isEmpty && Self.normalizeTitle(data.title) == self.stalePreviousTitle {
+                            // ignore stale pre-seek currentTime from previous track
                         } else {
                             self.currentTime = data.currentTime
-                            if data.currentTime <= 1.0 {
+                            if data.currentTime > 0.05 {
                                 self.lastSeekToZeroTime = nil
                             }
                         }
@@ -1636,6 +1651,9 @@ public final class MediaControllerModel: ObservableObject {
         if let vid = engine.trackData.videoId, !vid.isEmpty {
             return vid
         }
+        if let pending = pendingTargetTrack?.videoId, !pending.isEmpty {
+            return pending
+        }
         if let qItem = playlist.first(where: { $0.isPlaying }), let vid = qItem.videoId, !vid.isEmpty {
             return vid
         }
@@ -2144,11 +2162,96 @@ public final class MediaControllerModel: ObservableObject {
     
     /// Search results grouped like the YouTube Music results page (top result first, then Songs, Artists, Albums, Playlists, Videos).
     public var groupedSearchResults: [(kind: YTMSearchKind, items: [YTMSearchResult])] {
-        let order: [YTMSearchKind] = [.song, .artist, .album, .playlist, .video]
+        let order: [YTMSearchKind]
+        if let specificKind = activeSearchCategory.matchingKind {
+            order = [specificKind]
+        } else {
+            order = [.song, .artist, .album, .playlist, .video]
+        }
         return order.compactMap { k in
             let items = searchResults.filter { $0.kind == k }
             return items.isEmpty ? nil : (kind: k, items: Array(items.prefix(k == .song ? 8 : 5)))
         }
+    }
+    
+    // MARK: - Smart Search Suggestions & Direct Link Autoplay
+    private var suggestionsTask: Task<Void, Never>?
+    
+    public func fetchSuggestions(for query: String) {
+        suggestionsTask?.cancel()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2 else {
+            self.searchSuggestions = []
+            return
+        }
+        suggestionsTask = Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let suggestions = await self.engine.fetchSearchSuggestions(q)
+            guard !Task.isCancelled else { return }
+            self.searchSuggestions = suggestions
+        }
+    }
+    
+    /// Parses input for direct YouTube / YouTube Music URL or videoId and auto-plays, or runs catalog search.
+    @discardableResult
+    public func handleSmartSearchInput(_ input: String) -> Bool {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        
+        // 1. Direct YouTube / YouTube Music video URL
+        if let videoId = Self.extractYouTubeVideoId(from: trimmed) {
+            let listId = Self.extractYouTubePlaylistId(from: trimmed)
+            let dummyTrack = YTMPlaylistItem(
+                id: videoId,
+                title: "Loading...",
+                artist: "YouTube Music",
+                duration: "0:00",
+                isPlaying: true,
+                videoId: videoId
+            )
+            self.startExactTrack(dummyTrack, listId: listId)
+            self.searchSuggestions = []
+            return true
+        }
+        
+        // 2. Direct YouTube / YouTube Music playlist URL
+        if let listId = Self.extractYouTubePlaylistId(from: trimmed) {
+            let pl = YTMPlaylist(
+                id: listId,
+                title: "YouTube Playlist",
+                subtitle: "Direct link",
+                browseId: listId.hasPrefix("VL") ? listId : "VL\(listId)"
+            )
+            self.selectPlaylist(pl)
+            self.searchSuggestions = []
+            return true
+        }
+        
+        // Normal text search
+        self.runCatalogSearch(trimmed)
+        return false
+    }
+    
+    public static func extractYouTubeVideoId(from string: String) -> String? {
+        let pattern = #"(?:v=|\/embed\/|\/watch\?v=|\/v\/|youtu\.be\/|\/shorts\/)([a-zA-Z0-9_-]{11})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: string, options: [], range: NSRange(location: 0, length: string.utf16.count)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: string) else {
+            return nil
+        }
+        return String(string[range])
+    }
+    
+    public static func extractYouTubePlaylistId(from string: String) -> String? {
+        let pattern = #"(?:[?&]list=)([a-zA-Z0-9_-]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: string, options: [], range: NSRange(location: 0, length: string.utf16.count)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: string) else {
+            return nil
+        }
+        return String(string[range])
     }
     
     /// Opens a search result: songs/videos start playing, artists/albums/playlists open with their real songs.
@@ -2177,8 +2280,10 @@ public final class MediaControllerModel: ObservableObject {
     
     public func clearCatalogSearch() {
         searchTask?.cancel()
+        suggestionsTask?.cancel()
         activeCatalogQuery = ""
         searchResults = []
+        searchSuggestions = []
         isSearchingCatalog = false
         catalogSearchError = nil
     }

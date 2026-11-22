@@ -1605,7 +1605,7 @@ public final class NotchModel: ObservableObject {
     }
     
     public var formattedGlassTrackCurrentTime: String {
-        let sec = Int(media.currentTime > 0 ? media.currentTime : TimeInterval(glassTrackCurrentSeconds))
+        let sec = Int(media.currentTime)
         let mins = sec / 60
         let secs = sec % 60
         return String(format: "%d:%02d", mins, secs)
@@ -2513,6 +2513,8 @@ public final class NotchModel: ObservableObject {
                 }
                 if trimmed.count < 2 {
                     self.media.clearCatalogSearch()
+                } else {
+                    self.media.fetchSuggestions(for: trimmed)
                 }
             }
             .store(in: &cancellables)
@@ -3366,6 +3368,9 @@ public final class NotchModel: ObservableObject {
         glassSelectedPlaylist = nil
         guard !trimmed.isEmpty else {
             media.clearCatalogSearch()
+            return
+        }
+        if media.handleSmartSearchInput(trimmed) {
             return
         }
         media.runCatalogSearch(trimmed, allowSingleCharacter: true)
