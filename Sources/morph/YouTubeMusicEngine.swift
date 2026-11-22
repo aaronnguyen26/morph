@@ -334,6 +334,7 @@ public struct YTMTrackData: Codable, Equatable {
     public var accountTier: YTMAccountTier
     public var isAdPlaying: Bool
     public var adSuppressedCount: Int
+    public var videoId: String?
     
     public init(
         title: String = "",
@@ -354,7 +355,8 @@ public struct YTMTrackData: Codable, Equatable {
         userEmail: String? = nil,
         accountTier: YTMAccountTier = .unknown,
         isAdPlaying: Bool = false,
-        adSuppressedCount: Int = 0
+        adSuppressedCount: Int = 0,
+        videoId: String? = nil
     ) {
         self.title = title
         self.artist = artist
@@ -375,6 +377,7 @@ public struct YTMTrackData: Codable, Equatable {
         self.accountTier = accountTier
         self.isAdPlaying = isAdPlaying
         self.adSuppressedCount = adSuppressedCount
+        self.videoId = videoId
     }
 }
 
@@ -719,6 +722,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         let detectedTier = YTMAccountTier(rawValue: rawTier) ?? .unknown
         let isAd = (body["isAdPlaying"] as? Bool) ?? false
         let adCount = (body["adSuppressedCount"] as? Int) ?? 0
+        let incomingVideoId = (body["videoId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         
         if isEnded {
             self.trackEndedPublisher.send()
@@ -930,7 +934,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             userEmail: self.userEmail,
             accountTier: self.accountTier,
             isAdPlaying: self.isAdPlaying,
-            adSuppressedCount: self.adSuppressedCount
+            adSuppressedCount: self.adSuppressedCount,
+            videoId: (incomingVideoId?.isEmpty ?? true) ? nil : incomingVideoId
         )
         if playing {
             self.isResumeRequested = false
@@ -1345,6 +1350,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     public func nextTrack() {
+        self.trackData.currentTime = 0.0
         let script = """
         (function() {
             try {
@@ -2891,7 +2897,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     // MARK: - Chrome Stealth Fingerprint Script (Injected at .atDocumentStart)
-    private var chromeStealthJavaScript: String {
+    var chromeStealthJavaScript: String {
         return """
         (function() {
             // 1. Emulate standard window.chrome namespace
@@ -3154,8 +3160,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         try {
                             var moviePlayer = document.getElementById('movie_player') || document.querySelector('#movie_player, .html5-video-player');
                             var isAd = (moviePlayer && (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting'))) ||
-                                       document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay') !== null ||
-                                       (this.src && (this.src.indexOf('&adformat=') !== -1 || this.src.indexOf('adformat=') !== -1));
+                                       (this.src && (this.src.indexOf('&adformat=') !== -1 || this.src.indexOf('adformat=') !== -1 || this.src.indexOf('/pagead/') !== -1));
+                            if (!isAd) {
+                                var adShowingEl = document.querySelector('.ad-showing, .ad-interrupting');
+                                if (adShowingEl && (adShowingEl.offsetParent !== null || adShowingEl.offsetWidth > 0)) {
+                                    isAd = true;
+                                }
+                            }
                             if (isAd) {
                                 this.muted = true;
                                 this.playbackRate = 16.0;
@@ -3179,7 +3190,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     
     // MARK: - Injected Player Observer JavaScript Code (.atDocumentEnd)
-    private var injectedPlayerObserverJavaScript: String {
+    var injectedPlayerObserverJavaScript: String {
         return """
         (function() {
             var _morphCachedPlaylists = [];
@@ -3236,6 +3247,24 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                 var videoEl = document.querySelector('video');
                 var playerEl = document.getElementById('movie_player') || document.querySelector('#movie_player');
                 
+                var videoId = '';
+                try {
+                    if (playerEl && typeof playerEl.getVideoData === 'function') {
+                        var vd = playerEl.getVideoData();
+                        if (vd && vd.video_id) videoId = vd.video_id;
+                    }
+                    if (!videoId) {
+                        var mHref = window.location.href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+                        if (mHref) videoId = mHref[1];
+                    }
+                    if (!videoId) {
+                        var qPlaying = document.querySelector('ytmusic-player-queue-item[selected], ytmusic-player-queue-item[play-state="playing"]');
+                        if (qPlaying && qPlaying.data && qPlaying.data.playlistItemData) {
+                            videoId = qPlaying.data.playlistItemData.videoId || '';
+                        }
+                    }
+                } catch(ve) {}
+                
                 // Zero-Ad Guarantee: Detect if an advertisement is playing or interrupting
                 var isAdPlaying = false;
                 try {
@@ -3251,7 +3280,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                         }
                     }
                     if (!isAdPlaying) {
-                        var adOverlay = document.querySelector('.ytp-ad-player-overlay, .ytp-ad-module .video-ads, ytmusic-player[ad-showing], .ad-showing, .ad-interrupting');
+                        var adOverlay = document.querySelector('ytmusic-player[ad-showing], .ad-showing, .ad-interrupting');
                         if (adOverlay && (adOverlay.offsetParent !== null || adOverlay.offsetWidth > 0)) {
                             isAdPlaying = true;
                         }
@@ -3817,7 +3846,8 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     userDisplayName: userDisplayName,
                     accountTier: accountTier,
                     isAdPlaying: isAdPlaying,
-                    adSuppressedCount: _morphAdSuppressedCount
+                    adSuppressedCount: _morphAdSuppressedCount,
+                    videoId: videoId
                 };
             }
             
@@ -4095,8 +4125,13 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                             try {
                                 var pAd = document.getElementById('movie_player') || document.querySelector('#movie_player, .html5-video-player');
                                 var isAdNow = (pAd && (pAd.classList.contains('ad-showing') || pAd.classList.contains('ad-interrupting'))) ||
-                                              (v.src && (v.src.indexOf('adformat=') !== -1 || v.src.indexOf('/pagead/') !== -1)) ||
-                                              document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay') !== null;
+                                              (v.src && (v.src.indexOf('adformat=') !== -1 || v.src.indexOf('/pagead/') !== -1 || v.src.indexOf('&oad=') !== -1));
+                                if (!isAdNow) {
+                                    var adShowingEl = document.querySelector('.ad-showing, .ad-interrupting');
+                                    if (adShowingEl && (adShowingEl.offsetParent !== null || adShowingEl.offsetWidth > 0)) {
+                                        isAdNow = true;
+                                    }
+                                }
                                 if (isAdNow) {
                                     v.muted = true;
                                     v.playbackRate = 16.0;
@@ -4108,6 +4143,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                                     var skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, button.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-slot button');
                                     if (skip) {
                                         try { skip.click(); } catch(se) {}
+                                    }
+                                } else {
+                                    if (v.playbackRate > 1.0) {
+                                        v.playbackRate = 1.0;
                                     }
                                 }
                             } catch(eAd) {}
