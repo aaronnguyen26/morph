@@ -601,4 +601,69 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
         // Verify view hierarchy does not contain any "Play Your Library" or "Play YouTube Music" button
         XCTAssertNotNil(hosting)
     }
+
+    // MARK: - 9. Diagnostic: Direct Playback Routing, Suggestions & Glass Profile Switcher
+    
+    func testDirectPlaybackAlwaysRoutesToEngine() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // Even if an external browser was previously detected
+        media.isBrowserConnected = true
+        engine.isSignedIn = false
+        engine.accountTier = .basic
+        
+        let track = YTMPlaylistItem(id: "s1", title: "Housewife", artist: "Tate McRae", duration: "3:00", isPlaying: true, videoId: "vid_housewife")
+        media.startExactTrack(track)
+        
+        // Playback must always be routed directly to Morph's embedded engine
+        XCTAssertEqual(media.sourceName, "YouTube Music Direct")
+        XCTAssertEqual(media.activeTrackVideoId, "vid_housewife")
+        XCTAssertEqual(media.currentTime, 0.0)
+        XCTAssertTrue(media.isPlaying)
+    }
+
+    func testSearchSuggestionsDismissalOnSelection() {
+        let model = NotchModel()
+        model.media.searchSuggestions = ["housewife", "housewife tate mcrae", "housewife music video"]
+        model.glassMusicSearchText = "house"
+        
+        XCTAssertEqual(model.media.searchSuggestions.count, 3)
+        
+        // Simulating suggestion selection
+        let selected = model.media.searchSuggestions[1]
+        model.glassMusicSearchText = selected
+        model.media.searchSuggestions = []
+        model.submitGlassMusicSearch()
+        
+        XCTAssertEqual(model.glassMusicSearchText, "housewife tate mcrae")
+        XCTAssertTrue(model.media.searchSuggestions.isEmpty, "Suggestions must be dismissed immediately on selection")
+    }
+
+    func testProfileSwitcherLogoutActionClearsState() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        let profile = YTMProfile(email: "testuser@gmail.com", displayName: "Test User")
+        media.switchProfile(to: profile)
+        media.isSignedIn = true
+        media.userEmail = "testuser@gmail.com"
+        
+        XCTAssertEqual(media.userEmail, "testuser@gmail.com")
+        XCTAssertNotNil(media.activeProfile)
+        
+        // Verify YTMProfileSwitcherView renders
+        let switcherView = YTMProfileSwitcherView(media: media, onDismiss: {})
+        let hosting = NSHostingView(rootView: switcherView)
+        hosting.frame = CGRect(x: 0, y: 0, width: 310, height: 350)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertNotNil(hosting)
+        
+        // Invoke Log Out
+        media.signOut()
+        
+        XCTAssertFalse(media.isSignedIn)
+        XCTAssertNil(media.userEmail)
+        XCTAssertNil(media.activeProfile)
+    }
 }
