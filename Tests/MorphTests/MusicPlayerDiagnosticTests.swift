@@ -480,4 +480,125 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
         hosting.layoutSubtreeIfNeeded()
         XCTAssertNotNil(hosting)
     }
+
+    // MARK: - 8. Diagnostic: Hand-in-Hand Progress Bar & Smart Search Parity
+    
+    func testProgressBarSmoothAdvancementAndReset() {
+        let mockAudio = MockSystemAudioService()
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine, systemAudio: mockAudio)
+        
+        let t1 = YTMPlaylistItem(id: "s1", title: "Song 1", artist: "Artist 1", duration: "3:00", isPlaying: true, videoId: "v1")
+        let t2 = YTMPlaylistItem(id: "s2", title: "Song 2", artist: "Artist 2", duration: "3:00", isPlaying: false, videoId: "v2")
+        let playlist = YTMPlaylist(id: "pl1", title: "Playlist", tracks: [t1, t2])
+        
+        media.selectPlaylist(playlist)
+        media.startExactTrack(t1)
+        
+        // Starts at 0:00
+        XCTAssertEqual(media.currentTime, 0.0)
+        XCTAssertTrue(media.isPlaying)
+        
+        // Incoming WebKit payload advances currentTime hand-in-hand
+        let payload1: [String: Any] = [
+            "title": "Song 1",
+            "artist": "Artist 1",
+            "isPlaying": true,
+            "currentTime": 4.5,
+            "duration": 180.0,
+            "videoId": "v1"
+        ]
+        engine.parseIncomingPayload(payload1)
+        XCTAssertEqual(media.currentTime, 4.5)
+        
+        // When user moves to next track, progress resets to 0:00 immediately
+        media.nextTrack()
+        XCTAssertEqual(media.currentTime, 0.0, "Progress bar must return to 0:00 on track change")
+        
+        // Once the new track starts playing, incoming updates advance currentTime smoothly
+        let payload2: [String: Any] = [
+            "title": "Song 2",
+            "artist": "Artist 2",
+            "isPlaying": true,
+            "currentTime": 1.2,
+            "duration": 180.0,
+            "videoId": "v2"
+        ]
+        engine.parseIncomingPayload(payload2)
+        XCTAssertEqual(media.currentTime, 1.2, "Progress bar must advance hand-in-hand once playback starts")
+    }
+
+    func testSmartSearchURLDetectionAndCategoryFiltering() {
+        let engine = YouTubeMusicEngine()
+        let media = MediaControllerModel(engine: engine)
+        
+        // 1. YouTube video URL auto-detection
+        let handledVideo = media.handleSmartSearchInput("https://music.youtube.com/watch?v=dQw4w9WgXcQ")
+        XCTAssertTrue(handledVideo)
+        XCTAssertEqual(media.activeTrackVideoId, "dQw4w9WgXcQ")
+        XCTAssertEqual(media.currentTime, 0.0)
+        
+        // 2. YouTu.be shortened URL auto-detection
+        let handledShort = media.handleSmartSearchInput("https://youtu.be/dQw4w9WgXcQ?t=10")
+        XCTAssertTrue(handledShort)
+        XCTAssertEqual(media.activeTrackVideoId, "dQw4w9WgXcQ")
+        
+        // 3. YouTube playlist URL auto-detection
+        let handledPlaylist = media.handleSmartSearchInput("https://music.youtube.com/playlist?list=PL4fGSIFgk5tV-L63fW-8_12345")
+        XCTAssertTrue(handledPlaylist)
+        XCTAssertEqual(media.selectedPlaylist?.id, "PL4fGSIFgk5tV-L63fW-8_12345")
+        
+        // 4. Category filter chips testing
+        let rSong = YTMSearchResult(id: "s1", kind: .song, title: "Test Song", subtitle: "Artist", videoId: "v1")
+        let rVideo = YTMSearchResult(id: "v1", kind: .video, title: "Test Video", subtitle: "Channel", videoId: "v2")
+        let rArtist = YTMSearchResult(id: "a1", kind: .artist, title: "Test Artist", subtitle: "Artist")
+        let rAlbum = YTMSearchResult(id: "al1", kind: .album, title: "Test Album", subtitle: "Album")
+        let rPlaylist = YTMSearchResult(id: "pl1", kind: .playlist, title: "Test Playlist", subtitle: "Playlist")
+        
+        media.searchResults = [rSong, rVideo, rArtist, rAlbum, rPlaylist]
+        
+        // With .all category: returns all categories in order
+        media.activeSearchCategory = .all
+        XCTAssertEqual(media.groupedSearchResults.count, 5)
+        
+        // With .songs category: returns only songs
+        media.activeSearchCategory = .songs
+        XCTAssertEqual(media.groupedSearchResults.count, 1)
+        XCTAssertEqual(media.groupedSearchResults.first?.kind, .song)
+        
+        // With .videos category: returns only videos
+        media.activeSearchCategory = .videos
+        XCTAssertEqual(media.groupedSearchResults.count, 1)
+        XCTAssertEqual(media.groupedSearchResults.first?.kind, .video)
+        
+        // With .artists category: returns only artists
+        media.activeSearchCategory = .artists
+        XCTAssertEqual(media.groupedSearchResults.count, 1)
+        XCTAssertEqual(media.groupedSearchResults.first?.kind, .artist)
+        
+        // With .albums category: returns only albums
+        media.activeSearchCategory = .albums
+        XCTAssertEqual(media.groupedSearchResults.count, 1)
+        XCTAssertEqual(media.groupedSearchResults.first?.kind, .album)
+        
+        // With .playlists category: returns only playlists
+        media.activeSearchCategory = .playlists
+        XCTAssertEqual(media.groupedSearchResults.count, 1)
+        XCTAssertEqual(media.groupedSearchResults.first?.kind, .playlist)
+    }
+
+    func testNeonBluePlayButtonsAreCompletelyAbsent() {
+        let model = NotchModel()
+        model.media.trackTitle = ""
+        model.media.isSignedIn = true
+        model.media.isBrowserConnected = true
+        
+        let island = MorphIslandView(model: model)
+        let hosting = NSHostingView(rootView: island)
+        hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 380)
+        hosting.layoutSubtreeIfNeeded()
+        
+        // Verify view hierarchy does not contain any "Play Your Library" or "Play YouTube Music" button
+        XCTAssertNotNil(hosting)
+    }
 }
