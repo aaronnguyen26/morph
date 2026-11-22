@@ -4786,36 +4786,10 @@ public struct MorphIslandView: View {
             }
             
             // Autocomplete suggestions (live search smartness)
-            if isGlassMusicSearchFocused && !model.media.searchSuggestions.isEmpty && activePlaylist == nil {
-                VStack(spacing: 2) {
+            if !model.media.searchSuggestions.isEmpty && activePlaylist == nil && !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                VStack(spacing: 3) {
                     ForEach(model.media.searchSuggestions, id: \.self) { suggestion in
-                        Button(action: {
-                            MorphHaptics.levelChange()
-                            model.glassMusicSearchText = suggestion
-                            isGlassMusicSearchFocused = false
-                            model.submitGlassMusicSearch()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "magnifyingglass")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundColor(Color.white.opacity(0.55))
-                                Text(suggestion)
-                                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                Spacer()
-                                Image(systemName: "arrow.up.left")
-                                    .font(.system(size: 9, weight: .regular))
-                                    .foregroundColor(Color.white.opacity(0.35))
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.white.opacity(0.08))
-                            )
-                        }
-                        .buttonStyle(.plain)
+                        glassSearchSuggestionRow(suggestion)
                     }
                 }
                 .padding(.vertical, 2)
@@ -4832,6 +4806,42 @@ public struct MorphIslandView: View {
         .onAppear {
             model.media.refreshPlaylists()
         }
+    }
+    
+    private func glassSearchSuggestionRow(_ suggestion: String) -> some View {
+        Button(action: {
+            MorphHaptics.levelChange()
+            model.glassMusicSearchText = suggestion
+            model.media.searchSuggestions = []
+            isGlassMusicSearchFocused = false
+            model.submitGlassMusicSearch()
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.60))
+                Text(suggestion)
+                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "arrow.up.left")
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundColor(Color.white.opacity(0.40))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 0.6)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
     
     private var glassLibrarySearchResultsView: some View {
@@ -4965,6 +4975,7 @@ public struct MorphIslandView: View {
         guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" else { return nil }
         
         let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isGenericArtist = curArtist.isEmpty || curArtist == "youtube music" || curArtist.hasPrefix("youtube music") || curArtist.contains("connected") || curArtist.contains("ready in")
         let activeVid = model.media.activeTrackVideoId ?? model.media.engine.trackData.videoId
         
         // Tier 1: Exact Video ID match
@@ -4975,7 +4986,7 @@ public struct MorphIslandView: View {
         }
         
         // Tier 2: Exact Normalized Title AND Subtitle/Artist match
-        if !curArtist.isEmpty && curArtist != "youtube music" {
+        if !isGenericArtist {
             if let match = results.first(where: { r in
                 guard r.kind == .song || r.kind == .video else { return false }
                 guard MediaControllerModel.normalizeTitle(r.title) == curTitle else { return false }
@@ -4986,8 +4997,8 @@ public struct MorphIslandView: View {
             }
         }
         
-        // Tier 3: If artist is unknown or generic, strictly select the FIRST matching title
-        if curArtist.isEmpty || curArtist == "youtube music" {
+        // Tier 3: If artist is unknown or generic, strictly select ONLY the FIRST matching title
+        if isGenericArtist {
             if let match = results.first(where: { ($0.kind == .song || $0.kind == .video) && MediaControllerModel.normalizeTitle($0.title) == curTitle }) {
                 return match.id
             }
@@ -5005,7 +5016,7 @@ public struct MorphIslandView: View {
             return result.id == activeId
         }
         
-        // Fallback if not contained in glassSearchResults
+        // Fallback for single result matching if searchResults list is empty
         let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
         let resTitle = MediaControllerModel.normalizeTitle(result.title)
         guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" && curTitle == resTitle else {
@@ -5018,12 +5029,13 @@ public struct MorphIslandView: View {
         }
         
         let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isGenericArtist = curArtist.isEmpty || curArtist == "youtube music" || curArtist.hasPrefix("youtube music") || curArtist.contains("connected") || curArtist.contains("ready in")
         let resSub = result.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !curArtist.isEmpty && curArtist != "youtube music" && !resSub.isEmpty {
+        if !isGenericArtist && !resSub.isEmpty {
             return resSub.contains(curArtist) || curArtist.contains(resSub)
         }
         
-        return true
+        return false
     }
     
     private func glassSearchResultRow(_ result: YTMSearchResult) -> some View {
@@ -6088,7 +6100,6 @@ public struct MorphIslandView: View {
     }
     
     private func isTrackActive(_ track: YTMPlaylistItem) -> Bool {
-        if track.isPlaying { return true }
         guard model.isGlassMusicPlaying || model.media.isPlaying else { return false }
         let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
         guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" else { return false }
@@ -6102,11 +6113,12 @@ public struct MorphIslandView: View {
         }
         
         let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isGenericArtist = curArtist.isEmpty || curArtist == "youtube music" || curArtist.hasPrefix("youtube music") || curArtist.contains("connected") || curArtist.contains("ready in")
         let trArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !curArtist.isEmpty && !trArtist.isEmpty && curArtist != "youtube music" && trArtist != "youtube music" {
+        if !isGenericArtist && !trArtist.isEmpty && trArtist != "youtube music" {
             return curArtist == trArtist || curArtist.contains(trArtist) || trArtist.contains(curArtist)
         }
-        return true
+        return track.isPlaying
     }
     
     private var musicFallbackArtView: some View {
