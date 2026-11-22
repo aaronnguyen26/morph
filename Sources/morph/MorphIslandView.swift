@@ -4918,11 +4918,71 @@ public struct MorphIslandView: View {
             .padding(.horizontal, 4)
     }
     
+    private func activeSearchResultId(in results: [YTMSearchResult]) -> String? {
+        guard model.isGlassMusicPlaying || model.media.isPlaying else { return nil }
+        let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
+        guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" else { return nil }
+        
+        let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let activeVid = model.media.activeTrackVideoId ?? model.media.engine.trackData.videoId
+        
+        // Tier 1: Exact Video ID match
+        if let activeVid = activeVid, !activeVid.isEmpty {
+            if let match = results.first(where: { ($0.kind == .song || $0.kind == .video) && $0.videoId == activeVid }) {
+                return match.id
+            }
+        }
+        
+        // Tier 2: Exact Normalized Title AND Subtitle/Artist match
+        if !curArtist.isEmpty && curArtist != "youtube music" {
+            if let match = results.first(where: { r in
+                guard r.kind == .song || r.kind == .video else { return false }
+                guard MediaControllerModel.normalizeTitle(r.title) == curTitle else { return false }
+                let sub = r.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return !sub.isEmpty && (sub.contains(curArtist) || curArtist.contains(sub))
+            }) {
+                return match.id
+            }
+        }
+        
+        // Tier 3: If artist is unknown or generic, strictly select the FIRST matching title
+        if curArtist.isEmpty || curArtist == "youtube music" {
+            if let match = results.first(where: { ($0.kind == .song || $0.kind == .video) && MediaControllerModel.normalizeTitle($0.title) == curTitle }) {
+                return match.id
+            }
+        }
+        
+        return nil
+    }
+    
     private func isSearchResultActive(_ result: YTMSearchResult) -> Bool {
         guard result.kind == .song || result.kind == .video else { return false }
-        let curTitle = model.glassMusicTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let resTitle = result.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !curTitle.isEmpty && !resTitle.isEmpty && curTitle == resTitle
+        guard model.isGlassMusicPlaying || model.media.isPlaying else { return false }
+        
+        // Single active search result guarantee across the search collection
+        if let activeId = activeSearchResultId(in: model.media.searchResults) {
+            return result.id == activeId
+        }
+        
+        // Fallback if not contained in glassSearchResults
+        let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
+        let resTitle = MediaControllerModel.normalizeTitle(result.title)
+        guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" && curTitle == resTitle else {
+            return false
+        }
+        
+        if let rVid = result.videoId, !rVid.isEmpty,
+           let activeVid = model.media.activeTrackVideoId ?? model.media.engine.trackData.videoId, !activeVid.isEmpty {
+            return rVid == activeVid
+        }
+        
+        let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let resSub = result.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !curArtist.isEmpty && curArtist != "youtube music" && !resSub.isEmpty {
+            return resSub.contains(curArtist) || curArtist.contains(resSub)
+        }
+        
+        return true
     }
     
     private func glassSearchResultRow(_ result: YTMSearchResult) -> some View {
@@ -5281,9 +5341,6 @@ public struct MorphIslandView: View {
                                     Spacer()
                                 }
                                 .padding(.top, 2)
-                                
-                                // Sort Pills: Recent Activity, Most Played, A - Z
-                                glassLibrarySortPills
                                 
                                 // Compact Filter Search Bar (if > 4 playlists)
                                 if allPlaylists.count > 4 {
@@ -6057,9 +6114,24 @@ public struct MorphIslandView: View {
     
     private func isTrackActive(_ track: YTMPlaylistItem) -> Bool {
         if track.isPlaying { return true }
-        let curTitle = model.glassMusicTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let trTitle = track.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !curTitle.isEmpty && !trTitle.isEmpty && curTitle == trTitle
+        guard model.isGlassMusicPlaying || model.media.isPlaying else { return false }
+        let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
+        guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" else { return false }
+        let trTitle = MediaControllerModel.normalizeTitle(track.title)
+        guard curTitle == trTitle else { return false }
+        
+        // Exact videoId verification if available
+        if let trVid = track.videoId, !trVid.isEmpty,
+           let activeVid = model.media.activeTrackVideoId ?? model.media.engine.trackData.videoId, !activeVid.isEmpty {
+            return trVid == activeVid
+        }
+        
+        let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !curArtist.isEmpty && !trArtist.isEmpty && curArtist != "youtube music" && trArtist != "youtube music" {
+            return curArtist == trArtist || curArtist.contains(trArtist) || trArtist.contains(curArtist)
+        }
+        return true
     }
     
     private var musicFallbackArtView: some View {

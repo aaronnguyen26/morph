@@ -1347,8 +1347,14 @@ public struct MediaView: View {
     }
     
     private func downloadedTrackRow(track: YTMPlaylistItem) -> some View {
-        let isCurrent = media.isPlaying && media.trackTitle == track.title
-        let isPaused = !media.isPlaying && media.trackTitle == track.title && media.currentTime > 0
+        let isArtistMatch = media.artistName.isEmpty || track.artist.isEmpty ||
+                            media.artistName.lowercased() == track.artist.lowercased() ||
+                            media.artistName.lowercased().contains(track.artist.lowercased()) ||
+                            track.artist.lowercased().contains(media.artistName.lowercased())
+        let isVidMatch = (track.videoId != nil && !track.videoId!.isEmpty && track.videoId == media.activeTrackVideoId)
+        let isTitleMatch = MediaControllerModel.normalizeTitle(media.trackTitle) == MediaControllerModel.normalizeTitle(track.title)
+        let isCurrent = media.isPlaying && (isVidMatch || (isTitleMatch && isArtistMatch))
+        let isPaused = !media.isPlaying && (isVidMatch || (isTitleMatch && isArtistMatch)) && media.currentTime > 0
         let isActive = isCurrent || isPaused
         let titleWeight: Font.Weight = isActive ? .bold : .medium
         let titleColor = theme.textPrimary
@@ -1430,7 +1436,6 @@ public struct MediaView: View {
     private var playlistsSelectionDeck: some View {
         VStack(alignment: .leading, spacing: 6) {
             playlistsHeaderRow
-            playlistsSortFilterBar
             
             if media.isSearchingPlaylists {
                 playlistsSearchBar
