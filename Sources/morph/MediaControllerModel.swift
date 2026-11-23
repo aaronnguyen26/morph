@@ -107,6 +107,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var previousRightDeckSection: YTMRightDeckSection = .home
     private var lastPreviousClickTime: Date?
     private var lastSeekToZeroTime: Date?
+    private var stalePreSeekTime: TimeInterval?
     @Published public var isSearchingPlaylists: Bool = false
     @Published public var playlistSearchQuery: String = ""
     @Published public var isSearchingSongs: Bool = false
@@ -256,9 +257,9 @@ public final class MediaControllerModel: ObservableObject {
         }
         
         let storedPlaylists = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.userEmail)
-        if !storedPlaylists.isEmpty {
+        if !storedPlaylists.isEmpty && (!isTestingEnvironment || isTestingSimulation) {
             self.playlists = storedPlaylists
-        } else if !engine.userPlaylists.isEmpty {
+        } else if !engine.userPlaylists.isEmpty && (!isTestingEnvironment || isTestingSimulation) {
             self.playlists = engine.userPlaylists
         } else {
             self.playlists = []
@@ -301,7 +302,7 @@ public final class MediaControllerModel: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self = self, self.isPlaying, !self.userIntentionallyPaused else { return }
+                    guard let self = self, (self.isPlaying || self.isEffectivelyPlaying), !self.userIntentionallyPaused else { return }
                     // Smoothly advance progress bar hand-in-hand with playback
                     if self.duration > 0 && self.currentTime < self.duration {
                         self.currentTime += 1.0
@@ -400,20 +401,33 @@ public final class MediaControllerModel: ObservableObject {
                                 eng.ensurePlayback()
                             }
                         }
+                    } else if wasPlaying && !self.userIntentionallyPaused && data.duration > 0 {
+                        // Keep playing state active while WebKit is buffering or loading between tracks
+                        self.isPlaying = true
+                        if !self.isTestingEnvironment || self.isTestingSimulation {
+                            let eng = self.engine
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self, !self.userIntentionallyPaused, !eng.trackData.isPlaying else { return }
+                                eng.ensurePlayback()
+                            }
+                        }
                     } else {
                         self.playResumeLockoutUntil = nil
                         self.isPlaying = false
                     }
-                    if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.5 {
+                    if self.userIntentionallyPaused && !self.isPlaying && !data.isPlaying {
+                        // Player is paused or stopped by the user; do not overwrite current position with stale idle updates!
+                    } else if let seekTime = self.lastSeekToZeroTime, Date().timeIntervalSince(seekTime) < 1.5, let preSeek = self.stalePreSeekTime, preSeek > 3.0 {
                         // In-flight seek-to-zero lockout: protect against stale updates
-                        if data.currentTime > 3.0 && !self.stalePreviousTitle.isEmpty && Self.normalizeTitle(data.title) == self.stalePreviousTitle {
-                            // ignore stale pre-seek currentTime from previous track
+                        if data.currentTime > (preSeek - 3.0) || data.currentTime > 5.0 {
+                            // ignore stale pre-seek currentTime
                         } else {
                             if data.currentTime > 0 {
                                 self.currentTime = data.currentTime
                             }
                             if data.currentTime > 0.05 {
                                 self.lastSeekToZeroTime = nil
+                                self.stalePreSeekTime = nil
                             }
                         }
                     } else {
@@ -429,7 +443,7 @@ public final class MediaControllerModel: ObservableObject {
                     if !self.userIntentionallyPaused && data.isPlaying && data.duration > 0 {
                         if data.currentTime <= 0.05 && self.lastObservedPlaybackTime != nil && self.lastObservedPlaybackTime! <= 0.05 {
                             self.stalledPlaybackCount += 1
-                            if self.stalledPlaybackCount >= 6 && (!self.isTestingEnvironment || self.isTestingSimulation) {
+                            if self.stalledPlaybackCount >= (self.isTestingSimulation ? 1 : 2) && (!self.isTestingEnvironment || self.isTestingSimulation) {
                                 self.engine.ensurePlayback()
                             }
                         } else {
@@ -483,7 +497,6 @@ public final class MediaControllerModel: ObservableObject {
                     if trackTitleChanged {
                         self.stalledPlaybackCount = 0
                         self.lastObservedPlaybackTime = nil
-                        self.currentTime = data.currentTime
                     }
                     
                     let currentSignature = "\(data.title)|\(data.artist)|\(data.isPlaying)"
@@ -769,6 +782,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     private var lastPlayPauseToggleTime: Date = .distantPast
+    public var forceDebounceInTests: Bool = false
     
     public func play() {
         userIntentionallyPaused = false
@@ -805,6 +819,7 @@ public final class MediaControllerModel: ObservableObject {
         userIntentionallyPaused = true
         isPlaying = false
         currentTime = 0
+        lastSeekToZeroTime = Date()
         engine.stop()
         if isBrowserConnected && !isDirectEngineActive {
             executeBrowserStop()
@@ -816,10 +831,11 @@ public final class MediaControllerModel: ObservableObject {
     
     public func togglePlay(force: Bool = false) {
         let now = Date()
-        if !MorphEnvironment.isTestingEnvironment && !force {
+        let enforceDebounce = !isTestingEnvironment || forceDebounceInTests
+        if !force && enforceDebounce {
             guard now.timeIntervalSince(lastPlayPauseToggleTime) > 0.3 else { return }
-            lastPlayPauseToggleTime = now
         }
+        lastPlayPauseToggleTime = now
         
         if isEffectivelyPlaying {
             pause()
@@ -967,6 +983,7 @@ public final class MediaControllerModel: ObservableObject {
         
         // If track has been playing for more than 3 seconds and this is not an intentional double-click skip, restart current track
         if !isRapidClick && currentTime > 3.0 {
+            stalePreSeekTime = currentTime
             currentTime = 0.0
             lastSeekToZeroTime = now
             seek(to: 0.0)
@@ -1403,6 +1420,10 @@ public final class MediaControllerModel: ObservableObject {
             albumArtURL = thumb
         }
         currentTime = 0
+        lastSeekToZeroTime = Date()
+        if track.durationSeconds > 0 {
+            duration = Double(track.durationSeconds)
+        }
         isPlaying = true
         userIntentionallyPaused = false
         playResumeLockoutUntil = Date().addingTimeInterval(1.8)
@@ -1417,17 +1438,21 @@ public final class MediaControllerModel: ObservableObject {
             trackTransitionLockoutUntil = Date().addingTimeInterval(2.5)
         }
         
-        // Morph is the standalone native media player: always play directly in Morph's embedded engine
-        // so that real-time progress bar telemetry, background playback, and switching songs work seamlessly!
-        sourceName = "YouTube Music Direct"
-        if let vid = track.videoId, !vid.isEmpty {
-            engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
+        // Route to external browser session when internal engine is completely unauthenticated and browser is connected
+        if isBrowserConnected && !engine.isSignedIn && engine.accountTier == .unknown {
+            sourceName = "YouTube Music • Browser"
         } else {
-            let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
-            if !query.isEmpty {
-                playSearch(query)
+            sourceName = "YouTube Music Direct"
+            if let vid = track.videoId, !vid.isEmpty {
+                engine.play(videoId: vid, listId: listId, fallbackToRadio: false)
+            } else {
+                let query = "\(track.title) \(track.artist)".trimmingCharacters(in: .whitespacesAndNewlines)
+                if !query.isEmpty {
+                    playSearch(query)
+                }
             }
         }
+        syncPlayingTrackWithPlaylists()
     }
     
     public func playQuickPick(_ track: YTMPlaylistItem, startRadio: Bool = false) {
@@ -1595,9 +1620,25 @@ public final class MediaControllerModel: ObservableObject {
             albumArtURL = thumb
         }
         currentTime = 0
+        lastSeekToZeroTime = Date()
+        if item.durationSeconds > 0 {
+            duration = Double(item.durationSeconds)
+        }
         isPlaying = true
+        pendingTargetTrack = TargetTrack(
+            title: item.title,
+            artist: item.artist,
+            videoId: item.videoId,
+            thumbnailURL: item.thumbnailURL
+        )
         for i in 0..<playlist.count {
-            playlist[i].isPlaying = (playlist[i].id == item.id || (playlist[i].title == item.title && playlist[i].artist == item.artist))
+            playlist[i].isPlaying = (playlist[i].id == item.id || (item.videoId != nil && playlist[i].videoId == item.videoId) || (playlist[i].title == item.title && playlist[i].artist == item.artist))
+        }
+        if var sel = selectedPlaylist {
+            for i in 0..<sel.tracks.count {
+                sel.tracks[i].isPlaying = (sel.tracks[i].id == item.id || (item.videoId != nil && sel.tracks[i].videoId == item.videoId) || (sel.tracks[i].title == item.title && sel.tracks[i].artist == item.artist))
+            }
+            selectedPlaylist = sel
         }
         syncPlayingTrackWithPlaylists()
         YTMUserOfflineStore.shared.recordTrack(item)

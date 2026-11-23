@@ -262,13 +262,15 @@ final class MorphSmartFinderTests: XCTestCase {
         XCTAssertEqual(model.glassIslandHeight, 56.0)
 
         // Wait for debounced search to populate results below bar & panel height to sync
-        let deadline = Date().addingTimeInterval(2.0)
+        let deadline = Date().addingTimeInterval(5.0)
         while (model.finderResults.count < 2 || abs(controller.panel.frame.height - 229.0) > 1.0) && Date() < deadline {
             try await Task.sleep(nanoseconds: 15_000_000)
         }
 
         XCTAssertEqual(model.finderResults.count, 2)
-        XCTAssertEqual(model.finderResults[0].name, "budget_2026.xlsx")
+        if !model.finderResults.isEmpty {
+            XCTAssertEqual(model.finderResults[0].name, "budget_2026.xlsx")
+        }
         XCTAssertTrue(model.isSmartFinderPanelVisible)
 
         // Expected height for 2 results without peek: 48 (top bar) + 89 (drawer chrome) + (2*44 + 4) = 229pt

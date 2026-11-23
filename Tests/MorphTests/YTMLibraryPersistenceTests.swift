@@ -6,12 +6,20 @@ final class YTMLibraryPersistenceTests: XCTestCase {
     
     override func setUp() {
         super.setUp()
+        MainActor.assumeIsolated {
+            YouTubeMusicEngine.shared.userPlaylists = []
+            YouTubeMusicEngine.shared.innerTubeOverride = nil
+        }
         YTMUserOfflineStore.shared.clear()
         YTMUserOfflineStore.shared.clear(for: "user1@gmail.com")
         YTMUserOfflineStore.shared.clear(for: "user2@gmail.com")
     }
     
     override func tearDown() {
+        MainActor.assumeIsolated {
+            YouTubeMusicEngine.shared.userPlaylists = []
+            YouTubeMusicEngine.shared.innerTubeOverride = nil
+        }
         YTMUserOfflineStore.shared.clear()
         YTMUserOfflineStore.shared.clear(for: "user1@gmail.com")
         YTMUserOfflineStore.shared.clear(for: "user2@gmail.com")
@@ -20,12 +28,16 @@ final class YTMLibraryPersistenceTests: XCTestCase {
     
     override func setUp() async throws {
         try await super.setUp()
+        YouTubeMusicEngine.shared.userPlaylists = []
+        YouTubeMusicEngine.shared.innerTubeOverride = nil
         YTMUserOfflineStore.shared.clear()
         YTMUserOfflineStore.shared.clear(for: "user1@gmail.com")
         YTMUserOfflineStore.shared.clear(for: "user2@gmail.com")
     }
     
     override func tearDown() async throws {
+        YouTubeMusicEngine.shared.userPlaylists = []
+        YouTubeMusicEngine.shared.innerTubeOverride = nil
         YTMUserOfflineStore.shared.clear()
         YTMUserOfflineStore.shared.clear(for: "user1@gmail.com")
         YTMUserOfflineStore.shared.clear(for: "user2@gmail.com")

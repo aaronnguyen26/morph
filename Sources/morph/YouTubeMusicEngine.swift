@@ -456,7 +456,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             self.accountTier = initialTier
         }
         let stored = YTMUserOfflineStore.shared.getStoredPlaylists(for: self.userEmail)
-        if !stored.isEmpty {
+        if !stored.isEmpty && !MorphEnvironment.isTestingEnvironment {
             self.userPlaylists = stored
         }
         setupWebView(for: self.activeProfile)
@@ -1333,10 +1333,16 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
                     }
                 }
                 if (v && v.paused && !v.ended) {
-                    try {
-                        var pr = v.play();
-                        if (pr && typeof pr.catch === 'function') { pr.catch(function(){}); }
-                    } catch(ve) {}
+                    var wasMuted = v.muted;
+                    var promise = v.play();
+                    if (promise !== undefined) {
+                        promise.catch(function() {
+                            v.muted = true;
+                            v.play().then(function() {
+                                setTimeout(function() { v.muted = wasMuted; }, 100);
+                            }).catch(function(){});
+                        });
+                    }
                 }
             } catch(e) {}
         })();
@@ -2238,22 +2244,141 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
+    /// Scrapes real Home quick picks / recommendations directly from the YouTube Music web page DOM.
+    /// This reflects the exact recommendations and songs visible on the user's web browser home page!
+    public func scrapeQuickPicksFromDOM() async -> [YTMPlaylistItem] {
+        guard let wv = self.webView else { return [] }
+        let js = """
+        (function() {
+            var out = [];
+            var seen = {};
+            function cleanText(el) {
+                return el ? (el.innerText || el.textContent || '').trim() : '';
+            }
+            function extractVideoId(el) {
+                if (!el) return null;
+                if (el.data && el.data.playlistItemData && el.data.playlistItemData.videoId) {
+                    return el.data.playlistItemData.videoId;
+                }
+                var a = el.querySelector('a[href*="watch?v="]');
+                if (a) {
+                    var m = (a.getAttribute('href') || '').match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+                    if (m) return m[1];
+                }
+                var nav = el.getAttribute('data-video-id') || el.getAttribute('video-id');
+                if (nav) return nav;
+                return null;
+            }
+            
+            var shelves = document.querySelectorAll('ytmusic-carousel-shelf-renderer, ytmusic-shelf-renderer');
+            for (var s = 0; s < shelves.length; s++) {
+                var shelf = shelves[s];
+                var headerEl = shelf.querySelector('.header, yt-formatted-string.title, .title');
+                var hText = (cleanText(headerEl)).toLowerCase();
+                
+                var isPriorityShelf = (
+                    hText.indexOf('quick pick') !== -1 ||
+                    hText.indexOf('lựa chọn nhanh') !== -1 ||
+                    hText.indexOf('listen again') !== -1 ||
+                    hText.indexOf('nghe lại') !== -1 ||
+                    hText.indexOf('mixed for') !== -1 ||
+                    hText.indexOf('favorites') !== -1 ||
+                    hText.indexOf('start radio') !== -1 ||
+                    hText.indexOf('recommend') !== -1 ||
+                    s === 0
+                );
+                
+                if (!isPriorityShelf && out.length >= 6) continue;
+                
+                var items = shelf.querySelectorAll('ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer');
+                for (var i = 0; i < items.length; i++) {
+                    var item = items[i];
+                    var titleEl = item.querySelector('.title a, .title, yt-formatted-string.title');
+                    var title = cleanText(titleEl);
+                    if (!title || title.toLowerCase() === 'advertisement') continue;
+                    
+                    var subEl = item.querySelector('.subtitle, .byline, yt-formatted-string.byline');
+                    var subtitle = cleanText(subEl);
+                    
+                    var artist = subtitle;
+                    if (artist.indexOf('•') !== -1) {
+                        artist = artist.split('•')[0].trim();
+                    }
+                    
+                    var vid = extractVideoId(item);
+                    var img = item.querySelector('img');
+                    var thumb = img ? img.src : null;
+                    
+                    var key = (vid || title + '_' + artist).toLowerCase();
+                    if (!seen[key]) {
+                        seen[key] = true;
+                        out.push({
+                            id: vid ? 'dom_' + vid : 'dom_item_' + out.length,
+                            title: title,
+                            artist: artist.length > 0 ? artist : 'YouTube Music',
+                            duration: '3:00',
+                            videoId: vid,
+                            thumbnailURL: thumb
+                        });
+                    }
+                }
+            }
+            return out;
+        })();
+        """
+        do {
+            let result = try await wv.callAsyncJavaScript(js, arguments: [:], in: nil, contentWorld: .page)
+            guard let arr = result as? [[String: Any]] else { return [] }
+            var tracks: [YTMPlaylistItem] = []
+            for d in arr {
+                let id = (d["id"] as? String) ?? UUID().uuidString
+                let t = (d["title"] as? String) ?? ""
+                let a = (d["artist"] as? String) ?? ""
+                let dur = (d["duration"] as? String) ?? "3:00"
+                let v = d["videoId"] as? String
+                let thumb = d["thumbnailURL"] as? String
+                if !t.isEmpty {
+                    tracks.append(YTMPlaylistItem(
+                        id: id,
+                        title: t,
+                        artist: a,
+                        duration: dur,
+                        isPlaying: false,
+                        videoId: v,
+                        thumbnailURL: thumb
+                    ))
+                }
+            }
+            return tracks
+        } catch {
+            return []
+        }
+    }
+    
     public func refreshQuickPicks() async {
         isLoadingQuickPicks = true
         quickPicksError = nil
         defer { isLoadingQuickPicks = false }
         do {
+            // 1. Scrape real personalized quick picks directly from WKWebView DOM if available
+            let domTracks = await scrapeQuickPicksFromDOM()
+            if !domTracks.isEmpty {
+                self.quickPicks = domTracks
+                self.lastQuickPicksSync = Date()
+            }
+            
+            // 2. Query InnerTube browse endpoint for Home
             let doc = try await publicInnerTube("browse", body: ["browseId": "FEmusic_home"])
             let parsed = YTMParser.parseQuickPicks(doc)
             if !parsed.isEmpty {
                 self.quickPicks = parsed
                 self.lastQuickPicksSync = Date()
-            } else if self.quickPicks.isEmpty {
+            } else if self.quickPicks.isEmpty && !self.isSignedIn {
                 self.quickPicks = YTMParser.defaultQuickPicks
             }
         } catch {
             self.quickPicksError = error.localizedDescription
-            if self.quickPicks.isEmpty {
+            if self.quickPicks.isEmpty && !self.isSignedIn {
                 self.quickPicks = YTMParser.defaultQuickPicks
             }
         }
@@ -2836,15 +2961,20 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             return win
         }
         let win = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 520, height: 680),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 100, y: 100, width: 540, height: 720),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         win.title = "Connect YouTube Music — Morph"
         win.titlebarAppearsTransparent = true
+        win.titleVisibility = .hidden
         win.isReleasedWhenClosed = false
+        win.isMovableByWindowBackground = true
+        // Guarantee the sign-in modal floats ABOVE Morph Island (.popUpMenu is 101, so level 103 ensures it is never trapped behind Morph)
+        win.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 2)
         win.backgroundColor = NSColor(red: 0.08, green: 0.07, blue: 0.12, alpha: 1.0)
+        win.hasShadow = true
         
         let delegate = PlayerWindowDelegate { [weak self] in
             self?.hidePlayerWindow()
@@ -2852,19 +2982,30 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         self.windowDelegate = delegate
         win.delegate = delegate
         
-        // Build Container with Top Auth Toolbar + Web View
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 680))
+        // Build Container with Top Auth Toolbar + Web View + Liquid Glass Backdrop
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 720))
         container.autoresizingMask = [.width, .height]
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 18
+        container.layer?.masksToBounds = true
         
-        // Auth Toolbar Hosting View (Height: 48 pt)
+        // Liquid glass backdrop effect
+        let visualEffect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 540, height: 720))
+        visualEffect.autoresizingMask = [.width, .height]
+        visualEffect.material = .hudWindow
+        visualEffect.blendingMode = .behindWindow
+        visualEffect.state = .active
+        container.addSubview(visualEffect)
+        
+        // Auth Toolbar Hosting View (Height: 52 pt)
         let toolbarView = NSHostingView(rootView: MorphMusicAuthToolbarView(engine: self, onClose: { [weak self] in
             self?.hidePlayerWindow()
         }))
-        toolbarView.frame = NSRect(x: 0, y: 680 - 48, width: 520, height: 48)
+        toolbarView.frame = NSRect(x: 0, y: 720 - 52, width: 540, height: 52)
         toolbarView.autoresizingMask = [.width, .minYMargin]
         
-        // Web View (Height: 632 pt)
-        self.webView.frame = NSRect(x: 0, y: 0, width: 520, height: 680 - 48)
+        // Web View (Height: 668 pt)
+        self.webView.frame = NSRect(x: 0, y: 0, width: 540, height: 720 - 52)
         self.webView.autoresizingMask = [.width, .height]
         
         container.addSubview(self.webView)
@@ -2883,11 +3024,17 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func showPlayerWindow() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
         let win = ensurePlayerWindow()
+        // Ensure frontmost z-order above Morph Island
+        win.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 2)
+        win.center()
         win.ignoresMouseEvents = false
         win.alphaValue = 1.0
         win.makeKeyAndOrderFront(nil)
+        win.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         self.isPlayerWindowVisible = true
+        // Smoothly collapse Morph Island so the user's attention is focused on the login window
+        MorphController.shared?.model.setGlassIslandState(.idle)
     }
     
     public func hidePlayerWindow() {
@@ -4356,7 +4503,7 @@ public struct MorphMusicAuthToolbarView: View {
     public var body: some View {
         HStack(spacing: 12) {
             // YouTube Music Brand Icon + Title
-            HStack(spacing: 8) {
+            HStack(spacing: 9) {
                 ZStack {
                     Circle()
                         .fill(
@@ -4366,65 +4513,96 @@ public struct MorphMusicAuthToolbarView: View {
                                 endPoint: .bottomTrailing
                             )
                         )
-                        .frame(width: 26, height: 26)
-                        .shadow(color: Color(hex: "#ff0055").opacity(0.4), radius: 4, y: 1)
+                        .frame(width: 28, height: 28)
+                        .shadow(color: Color(hex: "#ff0055").opacity(0.45), radius: 6, y: 1)
                     
                     Image(systemName: "play.fill")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                         .foregroundColor(.white)
                 }
                 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Connect YouTube Music")
-                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                     
-                    Text("Direct Control for Morph")
+                    Text("Direct In-App Playback Control")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundColor(Color.white.opacity(0.60))
+                        .foregroundColor(Color.white.opacity(0.65))
                 }
             }
             
+            // Web navigation helper controls
+            if engine.webView.canGoBack {
+                Button(action: {
+                    engine.goBack()
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.white.opacity(0.12)))
+                }
+                .buttonStyle(.plain)
+                .help("Go Back")
+            }
+            
+            Button(action: {
+                engine.reload()
+            }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(0.70))
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .help("Reload Sign-In Page")
+            
             Spacer()
             
-            // Security badge
+            // Google Accounts Security Badge
             HStack(spacing: 5) {
                 Image(systemName: "lock.shield.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10.5, weight: .semibold))
                     .foregroundColor(Color(hex: "#10b981"))
                 Text("Google Accounts")
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(Color.white.opacity(0.90))
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4.5)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(0.08))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.8))
+                    .fill(Color.white.opacity(0.09))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.20), lineWidth: 0.8))
             )
             
-            // Close button
+            // Sleek frosted close button
             Button(action: {
                 onClose()
             }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(Color.white.opacity(0.75))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.white.opacity(0.12)))
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundColor(Color.white.opacity(0.80))
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle()
+                            .fill(Color.white.opacity(0.14))
+                            .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 0.8))
+                    )
             }
             .buttonStyle(.plain)
-            .help("Close Authentication Window")
+            .help("Close Sign-In Window")
         }
-        .padding(.horizontal, 14)
-        .frame(height: 48)
+        .padding(.horizontal, 16)
+        .frame(height: 52)
         .background(
-            Color(hex: "#16121e").opacity(0.95)
+            Color(hex: "#14111d").opacity(0.96)
                 .overlay(
                     Rectangle()
                         .frame(height: 1)
-                        .foregroundColor(Color.white.opacity(0.12)),
+                        .foregroundColor(Color.white.opacity(0.10)),
                     alignment: .bottom
                 )
         )

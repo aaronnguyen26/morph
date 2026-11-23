@@ -5,6 +5,22 @@ import SwiftUI
 @MainActor
 final class MusicPlayerDiagnosticTests: XCTestCase {
 
+    override func setUp() {
+        super.setUp()
+        MainActor.assumeIsolated {
+            YouTubeMusicEngine.shared.innerTubeOverride = nil
+            YTMUserOfflineStore.shared.clear()
+        }
+    }
+
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            YouTubeMusicEngine.shared.innerTubeOverride = nil
+            YTMUserOfflineStore.shared.clear()
+        }
+        super.tearDown()
+    }
+
     // MARK: - 1. Diagnostic: Looping / Repeat Mode
     
     func testLoopModeOneRewindsAndDoesNotAdvance() {
@@ -129,6 +145,10 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
     }
 
     func testLibrarySelectedPlaylistTracksSyncToNotchModel() async {
+        defer {
+            YouTubeMusicEngine.shared.innerTubeOverride = nil
+            YTMUserOfflineStore.shared.clear()
+        }
         let notchModel = NotchModel()
         let media = notchModel.media
         let engine = media.engine
@@ -719,12 +739,76 @@ final class MusicPlayerDiagnosticTests: XCTestCase {
         XCTAssertTrue(media.isWaitingForBrowserSignIn)
         XCTAssertTrue(engine.isWaitingForSignInCompletion)
         
-        // Verify dedicated auth window is generated with compact 520x680 content dimensions
+        // Verify dedicated auth window is generated with sleek 540x720 content dimensions
         let authWindow = engine.ensurePlayerWindow()
         let contentSize = authWindow.contentView?.frame.size ?? authWindow.frame.size
-        XCTAssertEqual(contentSize.width, 520)
-        XCTAssertEqual(contentSize.height, 680)
+        XCTAssertEqual(contentSize.width, 540)
+        XCTAssertEqual(contentSize.height, 720)
         XCTAssertTrue(authWindow.title.contains("Connect YouTube Music"))
+        
+        // Window level MUST be strictly above Morph's NotchPanel (.popUpMenu is 101, so level 103 guarantees it is never behind Morph)
+        XCTAssertGreaterThan(authWindow.level.rawValue, NSWindow.Level.popUpMenu.rawValue)
+        XCTAssertTrue(authWindow.styleMask.contains(.fullSizeContentView))
+        XCTAssertTrue(authWindow.titlebarAppearsTransparent)
+        XCTAssertEqual(authWindow.titleVisibility, .hidden)
+    }
+
+    func testAuthenticatedQuickPicksDoNotFallBackToDefaults() async {
+        let engine = YouTubeMusicEngine()
+        engine.isSignedIn = true
+        engine.quickPicks = []
+        
+        // Mock InnerTube returning empty or failing
+        engine.innerTubeOverride = { _, _ in
+            return [:]
+        }
+        
+        await engine.refreshQuickPicks()
+        
+        // Signed-in account must NEVER be populated with mock "Starboy" defaultQuickPicks
+        XCTAssertNotEqual(engine.quickPicks, YTMParser.defaultQuickPicks)
+    }
+
+    func testProgressBarAdvancementAndFormatting() {
+        let model = NotchModel()
+        model.media.isPlaying = true
+        model.media.duration = 180.0
+        model.media.currentTime = 0.0
+        model.glassTrackCurrentSeconds = 0
+        
+        XCTAssertEqual(model.formattedGlassTrackCurrentTime, "0:00")
+        XCTAssertEqual(model.formattedGlassTrackDuration, "3:00")
+        
+        // Advance current time
+        model.media.currentTime = 45.0
+        XCTAssertEqual(model.formattedGlassTrackCurrentTime, "0:45")
+        
+        model.glassTrackCurrentSeconds = 72
+        XCTAssertEqual(model.formattedGlassTrackCurrentTime, "1:12")
+    }
+
+    func testSingleSongHighlightedAcrossDuplicateTitlesInSearch() {
+        let model = NotchModel()
+        model.media.isPlaying = true
+        model.media.trackTitle = "Housewife"
+        model.media.artistName = "Tate McRae"
+        model.media.engine.trackData.videoId = "vid_tate"
+        
+        let r1 = YTMSearchResult(id: "song:vid_tate", kind: .song, title: "Housewife", subtitle: "Tate McRae", videoId: "vid_tate")
+        let r2 = YTMSearchResult(id: "song:vid_romy", kind: .song, title: "Housewife", subtitle: "Romy Vale", videoId: "vid_romy")
+        let r3 = YTMSearchResult(id: "song:vid_zusebi", kind: .song, title: "Housewife", subtitle: "Zusebi", videoId: "vid_zusebi")
+        
+        model.media.searchResults = [r1, r2, r3]
+        
+        // Use activeSearchResultId logic
+        let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
+        XCTAssertEqual(curTitle, "housewife")
+        
+        // Exact videoId must resolve to r1 and only r1
+        let activeMatch = model.media.searchResults.first(where: { $0.videoId == model.media.activeTrackVideoId })
+        XCTAssertEqual(activeMatch?.id, r1.id)
+        XCTAssertNotEqual(activeMatch?.id, r2.id)
+        XCTAssertNotEqual(activeMatch?.id, r3.id)
     }
 
     func testUnauthenticatedMediaDeckInMediaViewShowsConnectCard() {

@@ -1057,8 +1057,6 @@ public final class NotchModel: ObservableObject {
             syncGlassTracks(from: media.quickPicks)
         } else if !media.playlist.isEmpty {
             syncGlassTracks(from: media.playlist)
-        } else {
-            syncGlassTracks(from: YTMParser.defaultQuickPicks)
         }
         
         let trimmedScratch = scratchpad.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1585,7 +1583,10 @@ public final class NotchModel: ObservableObject {
         if media.isBrowserConnected {
             return "YouTube Music Connected"
         }
-        if media.isSignedIn, let track = currentGlassTrack {
+        if let track = currentGlassTrack, !track.title.isEmpty {
+            if !media.isSignedIn && YTMParser.defaultQuickPicks.contains(where: { $0.title == track.title }) {
+                return "Connect YouTube Music"
+            }
             return track.title
         }
         return media.isSignedIn ? "No Track Playing" : "Connect YouTube Music"
@@ -1598,14 +1599,17 @@ public final class NotchModel: ObservableObject {
         if media.isBrowserConnected {
             return media.sourceName
         }
-        if media.isSignedIn, let track = currentGlassTrack {
+        if let track = currentGlassTrack, !track.artist.isEmpty {
+            if !media.isSignedIn && YTMParser.defaultQuickPicks.contains(where: { $0.artist == track.artist }) {
+                return "Sign in to play"
+            }
             return track.artist
         }
         return media.isSignedIn ? "YouTube Music" : "Sign in to play"
     }
     
     public var formattedGlassTrackCurrentTime: String {
-        let sec = Int(media.currentTime)
+        let sec = max(Int(media.currentTime), glassTrackCurrentSeconds)
         let mins = sec / 60
         let secs = sec % 60
         return String(format: "%d:%02d", mins, secs)
@@ -2496,6 +2500,7 @@ public final class NotchModel: ObservableObject {
                 if !playing {
                     self?._simulatedGlassMusicPlaying = false
                 }
+                self?.syncGlassMusicTimerIfNeeded()
             }
             .store(in: &cancellables)
         
@@ -3135,6 +3140,9 @@ public final class NotchModel: ObservableObject {
                         self.glassTrackCurrentSeconds = Int(self.media.currentTime)
                     } else {
                         self.glassTrackCurrentSeconds += 1
+                        if self.media.duration > 0 && self.media.currentTime < self.media.duration {
+                            self.media.currentTime = Double(self.glassTrackCurrentSeconds)
+                        }
                     }
                 }
             }
@@ -3335,6 +3343,7 @@ public final class NotchModel: ObservableObject {
     
     public func playGlassLibraryTrack(_ track: YTMPlaylistItem) {
         glassTrackCurrentSeconds = 0
+        media.currentTime = 0
         if let pl = glassSelectedPlaylist {
             if media.selectedPlaylist?.id != pl.id {
                 media.selectPlaylist(pl)
@@ -3348,11 +3357,13 @@ public final class NotchModel: ObservableObject {
         if !media.isOffline && media.isPlaying {
             _simulatedGlassMusicPlaying = true
         }
+        syncGlassMusicTimerIfNeeded()
     }
     
     public func playGlassSelectedPlaylistAll(shuffle: Bool = false) {
         guard let pl = glassSelectedPlaylist else { return }
         glassTrackCurrentSeconds = 0
+        media.currentTime = 0
         media.selectPlaylist(pl)
         if shuffle {
             media.toggleShuffle()
@@ -3361,6 +3372,7 @@ public final class NotchModel: ObservableObject {
         if !media.isOffline && media.isPlaying {
             _simulatedGlassMusicPlaying = true
         }
+        syncGlassMusicTimerIfNeeded()
     }
     
     public func submitGlassMusicSearch() {
@@ -3384,10 +3396,12 @@ public final class NotchModel: ObservableObject {
                 return
             }
             glassTrackCurrentSeconds = 0
+            media.currentTime = 0
             media.openSearchResult(result)
             if media.isPlaying {
                 _simulatedGlassMusicPlaying = true
             }
+            syncGlassMusicTimerIfNeeded()
         case .artist, .album, .playlist:
             if let pl = result.asPlaylist {
                 selectGlassPlaylist(pl)

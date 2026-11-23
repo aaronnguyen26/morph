@@ -391,6 +391,8 @@ final class MusicPlayerAccessibilityAndPlaybackTests: XCTestCase {
     func testF8DebouncePreventsRapidDoubleToggle() {
         model.media.isPlaying = true
         mockEngine.trackData.isPlaying = true
+        model.media.forceDebounceInTests = true
+        defer { model.media.forceDebounceInTests = false }
         
         // First toggle: Pause
         model.media.togglePlay(force: true)

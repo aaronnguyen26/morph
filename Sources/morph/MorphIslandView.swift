@@ -4459,7 +4459,7 @@ public struct MorphIslandView: View {
                             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                             .foregroundColor(Color.white.opacity(0.65))
                         
-                        let currentSec = model.media.currentTime
+                        let currentSec = max(model.media.currentTime, Double(model.glassTrackCurrentSeconds))
                         let totalDur = max(1, model.media.duration > 0 ? model.media.duration : Double(model.currentGlassTrack?.duration ?? 180))
                         Slider(
                             value: Binding(
@@ -4986,18 +4986,18 @@ public struct MorphIslandView: View {
                 .frame(height: 26)
             }
             
-            // Autocomplete suggestions (live search smartness)
-            if !model.media.searchSuggestions.isEmpty && activePlaylist == nil && !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                VStack(spacing: 3) {
-                    ForEach(model.media.searchSuggestions, id: \.self) { suggestion in
-                        glassSearchSuggestionRow(suggestion)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-            
             if let selectedPlaylist = activePlaylist {
                 glassPlaylistDetailView(playlist: selectedPlaylist)
+            } else if !model.media.searchSuggestions.isEmpty && !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Live autocomplete suggestions take priority while user is typing
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(model.media.searchSuggestions, id: \.self) { suggestion in
+                            glassSearchSuggestionRow(suggestion)
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
             } else if !model.glassMusicSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 glassLibrarySearchResultsView
             } else {
@@ -5010,39 +5010,21 @@ public struct MorphIslandView: View {
     }
     
     private func glassSearchSuggestionRow(_ suggestion: String) -> some View {
-        Button(action: {
-            MorphHaptics.levelChange()
-            model.glassMusicSearchText = suggestion
-            model.media.searchSuggestions = []
-            isGlassMusicSearchFocused = false
-            model.submitGlassMusicSearch()
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Color.white.opacity(0.60))
-                Text(suggestion)
-                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                Spacer()
-                Image(systemName: "arrow.up.left")
-                    .font(.system(size: 9.5, weight: .regular))
-                    .foregroundColor(Color.white.opacity(0.40))
+        GlassSearchSuggestionItemView(
+            suggestion: suggestion,
+            onSelect: {
+                MorphHaptics.levelChange()
+                model.glassMusicSearchText = suggestion
+                model.media.searchSuggestions = []
+                isGlassMusicSearchFocused = false
+                model.submitGlassMusicSearch()
+            },
+            onFill: {
+                MorphHaptics.levelChange()
+                model.glassMusicSearchText = suggestion
+                isGlassMusicSearchFocused = true
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.white.opacity(0.14), lineWidth: 0.6)
-                    )
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        )
     }
     
     private var glassLibrarySearchResultsView: some View {
@@ -5213,29 +5195,13 @@ public struct MorphIslandView: View {
         guard model.isGlassMusicPlaying || model.media.isPlaying else { return false }
         
         // Single active search result guarantee across the search collection
-        if let activeId = activeSearchResultId(in: model.media.searchResults) {
+        let allResults = model.media.searchResults.isEmpty ? model.media.groupedSearchResults.flatMap { $0.items } : model.media.searchResults
+        if let activeId = activeSearchResultId(in: allResults) {
             return result.id == activeId
         }
         
-        // Fallback for single result matching if searchResults list is empty
-        let curTitle = MediaControllerModel.normalizeTitle(model.glassMusicTitle)
-        let resTitle = MediaControllerModel.normalizeTitle(result.title)
-        guard !curTitle.isEmpty && curTitle != "no track playing" && curTitle != "youtube music" && curTitle == resTitle else {
-            return false
-        }
-        
-        if let rVid = result.videoId, !rVid.isEmpty,
-           let activeVid = model.media.activeTrackVideoId ?? model.media.engine.trackData.videoId, !activeVid.isEmpty {
-            return rVid == activeVid
-        }
-        
-        let curArtist = model.glassMusicArtist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let isGenericArtist = curArtist.isEmpty || curArtist == "youtube music" || curArtist.hasPrefix("youtube music") || curArtist.contains("connected") || curArtist.contains("ready in")
-        let resSub = result.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if !isGenericArtist && !resSub.isEmpty {
-            return resSub.contains(curArtist) || curArtist.contains(resSub)
-        }
-        
+        // If no unique active search result was resolved from the collection, strictly return false
+        // to guarantee that multiple items can never simultaneously show an active highlight!
         return false
     }
     
@@ -8510,5 +8476,77 @@ struct GlassIslandEqualizerView: View {
         return max(3, height * fractions[index % fractions.count])
     }
 }
+
+public struct GlassSearchSuggestionItemView: View {
+    let suggestion: String
+    let onSelect: () -> Void
+    let onFill: () -> Void
+    @State private var isHovered: Bool = false
+    
+    public init(suggestion: String, onSelect: @escaping () -> Void, onFill: @escaping () -> Void) {
+        self.suggestion = suggestion
+        self.onSelect = onSelect
+        self.onFill = onFill
+    }
+    
+    public var body: some View {
+        HStack(spacing: 9) {
+            Button(action: {
+                MorphHaptics.levelChange()
+                onSelect()
+            }) {
+                HStack(spacing: 9) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(isHovered ? 0.90 : 0.60))
+                    
+                    Text(suggestion)
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            Button(action: {
+                MorphHaptics.levelChange()
+                onFill()
+            }) {
+                Image(systemName: "arrow.up.left")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Color.white.opacity(isHovered ? 0.75 : 0.40))
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.white.opacity(isHovered ? 0.12 : 0.04)))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Insert “\(suggestion)” into search field")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(isHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(isHovered ? Color(hex: "#ff7ab8").opacity(0.45) : Color.white.opacity(0.14), lineWidth: 0.8)
+                )
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
 
 
