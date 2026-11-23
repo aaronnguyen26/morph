@@ -26,14 +26,6 @@ public struct YTMProfileSwitcherView: View {
             
             accountsSection
             
-            let detected = YTMProfileManager.shared.detectAvailableBrowserProfiles()
-            let unimported = detected.filter { det in
-                !media.profiles.contains(where: { $0.email.lowercased() == det.email.lowercased() })
-            }
-            if !unimported.isEmpty {
-                unimportedSection(unimported)
-            }
-            
             Divider()
                 .background(Color.white.opacity(0.12))
                 .padding(.horizontal, 14)
@@ -101,24 +93,52 @@ public struct YTMProfileSwitcherView: View {
     private var accountsSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("GOOGLE ACCOUNTS")
+                Text(media.profiles.isEmpty ? "GOOGLE ACCOUNT" : "CONNECTED ACCOUNT")
                     .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundColor(Color.white.opacity(0.48))
                     .tracking(0.6)
                 
                 Spacer()
                 
-                Text("\(media.profiles.count)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.60))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1.5)
-                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                if !media.profiles.isEmpty {
+                    Text("1")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.60))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 2)
             
-            ScrollView(.vertical, showsIndicators: media.profiles.count > 4) {
+            if media.profiles.isEmpty {
+                VStack(spacing: 8) {
+                    Text("No Google Account Connected")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.70))
+                    
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        media.openSignIn()
+                        onDismiss()
+                    }) {
+                        Text("Sign In with Google")
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.14))
+                                    .overlay(Capsule().stroke(Color.white.opacity(0.28), lineWidth: 0.8))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+            } else {
                 VStack(spacing: 3) {
                     ForEach(media.profiles) { p in
                         accountRow(p)
@@ -126,7 +146,6 @@ public struct YTMProfileSwitcherView: View {
                 }
                 .padding(.horizontal, 10)
             }
-            .frame(maxHeight: 180)
         }
     }
     
@@ -209,51 +228,6 @@ public struct YTMProfileSwitcherView: View {
         }
     }
     
-    // MARK: - Unimported Chrome Profiles
-    private func unimportedSection(_ items: [(name: String, email: String, profileFolder: String, avatarLocalPath: String?, avatarURL: String?)]) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("IMPORT FROM CHROME")
-                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                .foregroundColor(Color.white.opacity(0.48))
-                .tracking(0.6)
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 2)
-            
-            ForEach(items, id: \.email) { item in
-                Button(action: {
-                    MorphHaptics.levelChange()
-                    media.importBrowserProfile(email: item.email, displayName: item.name)
-                    onDismiss()
-                }) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(Color(hex: "#4285F4"))
-                        
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.name)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white)
-                            Text(item.email)
-                                .font(.system(size: 10))
-                                .foregroundColor(Color.white.opacity(0.50))
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.05))
-                    )
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10)
-            }
-        }
-    }
-    
     // MARK: - Actions
     private var actionsSection: some View {
         VStack(spacing: 3) {
@@ -263,11 +237,11 @@ public struct YTMProfileSwitcherView: View {
                 onDismiss()
             }) {
                 HStack(spacing: 8) {
-                    Image(systemName: "plus.circle")
+                    Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Color.white.opacity(0.85))
                     
-                    Text("Add YouTube Music Profile...")
+                    Text("Switch Google Account...")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundColor(Color.white.opacity(0.90))
                     
@@ -321,12 +295,12 @@ public struct YTMProfileSwitcherView: View {
                     onDismiss()
                 }) {
                     HStack(spacing: 8) {
-                        Image(systemName: "person.badge.key.fill")
+                        Image(systemName: "person.crop.circle.badge.plus")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(Color(hex: "#ff7ab8"))
+                            .foregroundColor(Color.white)
                         
-                        Text("Sign In to YouTube Music...")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                        Text("Sign In with Google")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
                             .foregroundColor(.white)
                         
                         Spacer()
@@ -335,10 +309,10 @@ public struct YTMProfileSwitcherView: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(hoveredAction == "signin" ? Color(hex: "#ff7ab8").opacity(0.20) : Color.white.opacity(0.06))
+                            .fill(hoveredAction == "signin" ? Color.white.opacity(0.18) : Color.white.opacity(0.08))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(Color(hex: "#ff7ab8").opacity(0.30), lineWidth: 0.8)
+                                    .stroke(Color.white.opacity(0.24), lineWidth: 0.8)
                             )
                     )
                 }

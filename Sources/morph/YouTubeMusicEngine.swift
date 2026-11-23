@@ -408,6 +408,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     }
     @Published public var isEngineLoaded: Bool = false
     @Published public var isPlayerWindowVisible: Bool = false
+    @Published public var isAuthSuccessShowing: Bool = false
     @Published public var isWaitingForSignInCompletion: Bool = false
     @Published public var currentURLString: String = "https://music.youtube.com"
     @Published public var connectionState: String = "Connecting..."
@@ -611,6 +612,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     public func loadGoogleSignIn(for email: String? = nil) {
         self.isWaitingForSignInCompletion = true
+        self.isAuthSuccessShowing = false
         guard !MorphEnvironment.isTestingEnvironment else { return }
         var signInURLString = "https://accounts.google.com/ServiceLogin?service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F"
         if let targetEmail = email ?? self.activeProfile?.email, !targetEmail.isEmpty {
@@ -949,15 +951,9 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             fetchRealUserPlaylists()
             fetchQuickPicks()
             
-            // If the user was signing in via Morph's dedicated window, auto-dismiss and return to Morph
+            // If the user was signing in via Morph's dedicated window, show Morph success UI before dismissing
             if self.isWaitingForSignInCompletion || (self.isPlayerWindowVisible && self.currentURLString.contains("music.youtube.com")) {
-                self.isWaitingForSignInCompletion = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                    guard let self = self else { return }
-                    if self.isPlayerWindowVisible {
-                        self.hidePlayerWindow()
-                    }
-                }
+                self.triggerAuthSuccessAnimation()
             }
         }
         
@@ -1017,13 +1013,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         checkAuthCookies { [weak self] signedIn in
             guard let self = self else { return }
             if signedIn && (self.isWaitingForSignInCompletion || (self.isPlayerWindowVisible && self.currentURLString.contains("music.youtube.com"))) {
-                self.isWaitingForSignInCompletion = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                    guard let self = self else { return }
-                    if self.isPlayerWindowVisible {
-                        self.hidePlayerWindow()
-                    }
-                }
+                self.triggerAuthSuccessAnimation()
             }
         }
         
@@ -3011,6 +3001,14 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         container.addSubview(self.webView)
         container.addSubview(toolbarView)
         
+        // Morph Liquid Glass Success Overlay (540 x 720)
+        let successHosting = NSHostingView(rootView: MorphAuthSuccessContainerView(engine: self, onDismiss: { [weak self] in
+            self?.completeSignInDismissal()
+        }))
+        successHosting.frame = NSRect(x: 0, y: 0, width: 540, height: 720)
+        successHosting.autoresizingMask = [.width, .height]
+        container.addSubview(successHosting)
+        
         win.contentView = container
         win.center()
         
@@ -3023,6 +3021,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     public func showPlayerWindow() {
         guard !MorphEnvironment.isTestingEnvironment else { return }
+        self.isAuthSuccessShowing = false
         let win = ensurePlayerWindow()
         // Ensure frontmost z-order above Morph Island
         win.level = NSWindow.Level(rawValue: NSWindow.Level.popUpMenu.rawValue + 2)
@@ -3046,6 +3045,36 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             }
         }
         self.isPlayerWindowVisible = false
+        self.isAuthSuccessShowing = false
+    }
+    
+    /// Triggers an Apple-grade Liquid Glass success screen inside the sign-in modal before smoothly closing
+    public func triggerAuthSuccessAnimation() {
+        guard isPlayerWindowVisible, !isAuthSuccessShowing else { return }
+        self.isWaitingForSignInCompletion = false
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) {
+            self.isAuthSuccessShowing = true
+        }
+        MorphHaptics.levelChange()
+        
+        // Ensure fresh data is immediately fetched from YouTube Music
+        self.lastLibrarySync = nil
+        self.lastQuickPicksSync = nil
+        self.fetchRealUserPlaylists()
+        self.fetchQuickPicks()
+        
+        // Hold Morph success confirmation screen for 2.0s before smoothly dismissing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self, self.isPlayerWindowVisible && self.isAuthSuccessShowing else { return }
+            self.completeSignInDismissal()
+        }
+    }
+    
+    /// Completes the sign-in flow by closing the modal and opening Morph Island directly to Music
+    public func completeSignInDismissal() {
+        hidePlayerWindow()
+        self.isAuthSuccessShowing = false
+        MorphController.shared?.model.openFeature(.music)
     }
     
     public func togglePlayerWindow() {
@@ -4640,5 +4669,173 @@ private final class PlayerWindowDelegate: NSObject, NSWindowDelegate {
     
     func windowWillClose(_ notification: Notification) {
         onClose()
+    }
+}
+
+// MARK: - Morph Auth Success Container & View (Modal Morph UI)
+public struct MorphAuthSuccessContainerView: View {
+    @ObservedObject var engine: YouTubeMusicEngine
+    public let onDismiss: () -> Void
+    
+    public init(engine: YouTubeMusicEngine, onDismiss: @escaping () -> Void) {
+        self.engine = engine
+        self.onDismiss = onDismiss
+    }
+    
+    public var body: some View {
+        Group {
+            if engine.isAuthSuccessShowing {
+                MorphAuthSuccessView(engine: engine, onDismiss: onDismiss)
+                    .transition(.opacity)
+            } else {
+                Color.clear
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: engine.isAuthSuccessShowing)
+    }
+}
+
+public struct MorphAuthSuccessView: View {
+    @ObservedObject var engine: YouTubeMusicEngine
+    public let onDismiss: () -> Void
+    
+    @State private var checkmarkScale: CGFloat = 0.4
+    @State private var checkmarkOpacity: Double = 0.0
+    @State private var contentOpacity: Double = 0.0
+    
+    public init(engine: YouTubeMusicEngine, onDismiss: @escaping () -> Void) {
+        self.engine = engine
+        self.onDismiss = onDismiss
+    }
+    
+    public var body: some View {
+        ZStack {
+            // Liquid Glass Dark Frosted Canvas
+            Color(hex: "#0e0c15").opacity(0.96)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 22) {
+                Spacer()
+                
+                // Animated Glowing Checkmark Emblem
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color(hex: "#10b981").opacity(0.35), Color.clear],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: 65
+                            )
+                        )
+                        .frame(width: 130, height: 130)
+                    
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color(hex: "#10b981"), Color(hex: "#059669")],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 72, height: 72)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.40), lineWidth: 1.5)
+                        )
+                        .shadow(color: Color(hex: "#10b981").opacity(0.60), radius: 18, y: 4)
+                    
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                .scaleEffect(checkmarkScale)
+                .opacity(checkmarkOpacity)
+                
+                VStack(spacing: 6) {
+                    Text("Connected to YouTube Music")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    
+                    let email = engine.userEmail ?? engine.activeProfile?.email ?? "Google Account"
+                    Text("Signed in as \(email)")
+                        .font(.system(size: 13.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color.white.opacity(0.80))
+                        .lineLimit(1)
+                }
+                .opacity(contentOpacity)
+                
+                // Feature Sync Confirmation Badges
+                HStack(spacing: 10) {
+                    featureBadge(icon: "music.note.list", text: "Library Synced")
+                    featureBadge(icon: "sparkles", text: "Direct Audio")
+                    featureBadge(icon: "slider.horizontal.3", text: "In-Notch Controls")
+                }
+                .opacity(contentOpacity)
+                
+                Spacer()
+                
+                // Bottom Transition Status & Done Button
+                VStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.65)
+                            .frame(width: 14, height: 14)
+                        Text("Opening Morph Music Player...")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundColor(Color.white.opacity(0.60))
+                    }
+                    
+                    Button(action: {
+                        MorphHaptics.levelChange()
+                        onDismiss()
+                    }) {
+                        Text("Done")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.16))
+                                    .overlay(Capsule().stroke(Color.white.opacity(0.30), lineWidth: 1.0))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .opacity(contentOpacity)
+                .padding(.bottom, 32)
+            }
+            .padding(.horizontal, 32)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.65)) {
+                checkmarkScale = 1.0
+                checkmarkOpacity = 1.0
+            }
+            withAnimation(.easeOut(duration: 0.4).delay(0.2)) {
+                contentOpacity = 1.0
+            }
+        }
+    }
+    
+    private func featureBadge(icon: String, text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Color(hex: "#10b981"))
+            Text(text)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundColor(Color.white.opacity(0.85))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.16), lineWidth: 0.8))
+        )
     }
 }

@@ -4352,12 +4352,12 @@ public struct MorphIslandView: View {
                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
-                .padding(.horizontal, 9)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 4.5)
                 .background(
                     Capsule()
-                        .fill(Color(hex: "#ff7ab8").opacity(0.24))
-                        .overlay(Capsule().stroke(Color(hex: "#ff7ab8").opacity(0.50), lineWidth: 0.8))
+                        .fill(Color.white.opacity(0.12))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.8))
                 )
             }
         }
@@ -4615,39 +4615,46 @@ public struct MorphIslandView: View {
     
     // MARK: - Redesigned YouTube Music First-Time Sign-In & Direct Connection View
     private var glassMusicSignInView: some View {
-        VStack(spacing: 14) {
-            Spacer(minLength: 4)
+        VStack(spacing: 12) {
+            Spacer(minLength: 2)
             
-            // Hero Emblem with radiant ambient pink-red glow
+            // Hero Emblem with elegant liquid glass sphere
             ZStack {
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [Color(hex: "#ff7ab8").opacity(0.35), Color.clear],
+                            colors: [Color.white.opacity(0.12), Color.clear],
                             center: .center,
                             startRadius: 0,
-                            endRadius: 52
+                            endRadius: 42
                         )
                     )
-                    .frame(width: 104, height: 104)
+                    .frame(width: 84, height: 84)
                 
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [Color(hex: "#ff0055"), Color(hex: "#ff5fa8"), Color(hex: "#6a5cff")],
+                            colors: [Color.white.opacity(0.20), Color.white.opacity(0.08)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 58, height: 58)
-                    .shadow(color: Color(hex: "#ff0055").opacity(0.55), radius: 12, y: 3)
+                    .frame(width: 52, height: 52)
                     .overlay(
                         Circle()
-                            .stroke(Color.white.opacity(0.45), lineWidth: 1.2)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.40), Color.white.opacity(0.12)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1.0
+                            )
                     )
+                    .shadow(color: Color.black.opacity(0.35), radius: 8, y: 3)
                 
                 Image(systemName: "music.note")
-                    .font(.system(size: 26, weight: .bold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.white)
             }
             .padding(.top, 2)
@@ -4655,15 +4662,16 @@ public struct MorphIslandView: View {
             // Text Header
             VStack(spacing: 4) {
                 Text("Connect YouTube Music")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
-                Text("Sign in to your Google account so Morph can access your library, stream music, and provide direct in-notch playback control.")
+                Text("Sign in with Google to access your library, stream music, and control playback directly from Morph.")
                     .font(.system(size: 12, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.70))
+                    .foregroundColor(Color.white.opacity(0.72))
                     .multilineTextAlignment(.center)
                     .lineSpacing(2)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 22)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             
             // Direct Morph Control Highlights (3 feature pills)
@@ -4674,9 +4682,9 @@ public struct MorphIslandView: View {
             }
             .padding(.horizontal, 16)
             
-            Spacer(minLength: 6)
+            Spacer(minLength: 4)
             
-            // Main Action Button: Diverts user to Google Sign-In
+            // Main Action Button: Diverts user to Google Sign-In with Liquid Glass styling
             Button(action: {
                 MorphHaptics.levelChange()
                 model.media.openSignIn()
@@ -4685,25 +4693,36 @@ public struct MorphIslandView: View {
                     Image(systemName: "person.crop.circle.badge.plus")
                         .font(.system(size: 13, weight: .bold))
                     Text("Sign In with Google")
-                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
                 }
-                .foregroundColor(.black)
+                .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 38)
                 .background(
                     RoundedRectangle(cornerRadius: 19, style: .continuous)
                         .fill(
                             LinearGradient(
-                                colors: [Color.white, Color(hex: "#f3e8f8")],
-                                startPoint: .top,
-                                endPoint: .bottom
+                                colors: [Color.white.opacity(0.18), Color.white.opacity(0.09)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
                             )
                         )
-                        .shadow(color: Color(hex: "#ff7ab8").opacity(0.45), radius: 10, y: 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 19, style: .continuous)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [Color.white.opacity(0.35), Color.white.opacity(0.15)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    lineWidth: 1.0
+                                )
+                        )
+                        .shadow(color: Color.black.opacity(0.25), radius: 8, y: 3)
                 )
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 36)
+            .padding(.horizontal, 32)
             
             // Direct Connection Security Footnote
             HStack(spacing: 4) {
@@ -4713,7 +4732,7 @@ public struct MorphIslandView: View {
                     .font(.system(size: 10, weight: .medium, design: .rounded))
             }
             .foregroundColor(Color.white.opacity(0.48))
-            .padding(.bottom, 6)
+            .padding(.bottom, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -4722,19 +4741,19 @@ public struct MorphIslandView: View {
         HStack(spacing: 5) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(Color(hex: "#ff7ab8"))
+                .foregroundColor(Color.white.opacity(0.90))
             Text(title)
                 .font(.system(size: 10.5, weight: .medium, design: .rounded))
                 .foregroundColor(Color.white.opacity(0.85))
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.08))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
                 )
         )
     }
@@ -4744,8 +4763,8 @@ public struct MorphIslandView: View {
             Spacer()
             
             Image(systemName: "music.note.list")
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundColor(Color(hex: "#ff7ab8"))
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundColor(Color.white.opacity(0.85))
             
             VStack(spacing: 4) {
                 Text("Your Library")
@@ -4790,8 +4809,8 @@ public struct MorphIslandView: View {
             Spacer()
             
             Image(systemName: "list.bullet.rectangle.portrait")
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundColor(Color(hex: "#ff7ab8"))
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundColor(Color.white.opacity(0.85))
             
             VStack(spacing: 4) {
                 Text("Queue is Empty")

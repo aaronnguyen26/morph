@@ -3133,19 +3133,22 @@ public final class NotchModel: ObservableObject {
         glassMusicTimer?.invalidate()
         glassMusicTimer = nil
         if isGlassMusicPlaying {
-            glassMusicTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self = self, self.isGlassMusicPlaying else { return }
                     if self.media.currentTime > 0 {
                         self.glassTrackCurrentSeconds = Int(self.media.currentTime)
                     } else {
                         self.glassTrackCurrentSeconds += 1
-                        if self.media.duration > 0 && self.media.currentTime < self.media.duration {
+                        let curDur = self.media.duration > 0 ? self.media.duration : 180.0
+                        if self.media.currentTime < curDur {
                             self.media.currentTime = Double(self.glassTrackCurrentSeconds)
                         }
                     }
                 }
             }
+            RunLoop.main.add(timer, forMode: .common)
+            self.glassMusicTimer = timer
         }
     }
     
@@ -3177,6 +3180,8 @@ public final class NotchModel: ObservableObject {
             media.previousTrack()
         }
         glassTrackCurrentSeconds = 0
+        media.currentTime = 0
+        syncGlassMusicTimerIfNeeded()
     }
     
     public func prevGlassMusic() {
@@ -3193,6 +3198,7 @@ public final class NotchModel: ObservableObject {
         media.seek(to: fraction)
         media.currentTime = Double(seconds)
         glassTrackCurrentSeconds = max(0, min(seconds, Int(curDur)))
+        syncGlassMusicTimerIfNeeded()
     }
     
     public func setGlassMusicSubtab(_ subtab: GlassMusicSubtab) {

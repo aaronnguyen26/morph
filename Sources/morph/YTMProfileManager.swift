@@ -5,7 +5,7 @@ import AppKit
 
 /// Represents an isolated user profile for YouTube Music inside Morph.
 public struct YTMProfile: Identifiable, Codable, Equatable, Hashable, Sendable {
-    public let id: UUID
+    public var id: UUID
     public var email: String
     public var displayName: String
     public var avatarLocalPath: String?
@@ -94,54 +94,28 @@ public final class YTMProfileManager: ObservableObject {
            !decoded.isEmpty {
             self.profiles = decoded
         } else {
-            // First Gmail account signed in or default initial account
-            let initialEmail = UserDefaults.standard.string(forKey: kInitialEmailKey) ?? "minh7898888@gmail.com"
-            let avatarInfo = resolveAvatarForProfile(email: initialEmail)
-            let initialProfile = YTMProfile(
-                id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
-                email: initialEmail,
-                displayName: "Aaron",
-                avatarLocalPath: avatarInfo.localPath,
-                avatarURL: avatarInfo.url,
-                isDefault: true
-            )
-            self.profiles = [initialProfile]
-            saveProfiles()
+            // No saved profile: initialize empty state with zero dummy profiles or hardcoded accounts
+            self.profiles = []
+            self.activeProfileId = nil
         }
         
-        // Auto-discover and register any other Chrome profiles (e.g. Cabdi flathcabdi393@gmail.com)
-        let detected = detectAvailableBrowserProfiles()
-        var addedAny = false
-        for item in detected {
-            if !profiles.contains(where: { $0.email.lowercased() == item.email.lowercased() }) {
-                let p = YTMProfile(
-                    email: item.email,
-                    displayName: item.name,
-                    avatarLocalPath: item.avatarLocalPath,
-                    avatarURL: item.avatarURL,
-                    isChromeImported: true
-                )
-                profiles.append(p)
-                addedAny = true
-            }
-        }
-        
-        // Enrich any existing profiles with accurate avatars for their specific email
+        // Enrich any existing profile with accurate avatar for its specific email
+        var modified = false
         for i in 0..<profiles.count {
             let email = profiles[i].email
             if !email.isEmpty {
                 let av = resolveAvatarForProfile(email: email)
                 if av.localPath != nil && profiles[i].avatarLocalPath != av.localPath {
                     profiles[i].avatarLocalPath = av.localPath
-                    addedAny = true
+                    modified = true
                 }
                 if av.url != nil && profiles[i].avatarURL == nil {
                     profiles[i].avatarURL = av.url
-                    addedAny = true
+                    modified = true
                 }
             }
         }
-        if addedAny {
+        if modified {
             saveProfiles()
         }
         
@@ -175,6 +149,16 @@ public final class YTMProfileManager: ObservableObject {
     public func clearActiveProfile() {
         self.activeProfileId = nil
         UserDefaults.standard.removeObject(forKey: kActiveProfileKey)
+    }
+    
+    /// Completely clears all stored profiles upon user log out, guaranteeing clean single-account isolation.
+    public func clearAllProfiles() {
+        self.profiles = []
+        self.activeProfileId = nil
+        UserDefaults.standard.removeObject(forKey: kProfilesKey)
+        UserDefaults.standard.removeObject(forKey: kActiveProfileKey)
+        UserDefaults.standard.removeObject(forKey: kInitialEmailKey)
+        DispatchQueue.main.async { self.objectWillChange.send() }
     }
     
     /// Adds a new profile and sets it as active.
@@ -212,7 +196,6 @@ public final class YTMProfileManager: ObservableObject {
     
     /// Removes a profile. If the removed profile was active, switches to another profile.
     public func removeProfile(id: UUID) {
-        guard profiles.count > 1 else { return } // Keep at least one profile
         profiles.removeAll { $0.id == id }
         if activeProfileId == id {
             activeProfileId = profiles.first?.id
@@ -221,63 +204,36 @@ public final class YTMProfileManager: ObservableObject {
     }
     
     /// Updates the currently active profile when a new email is detected from the web player.
+    /// Strictly guarantees single-account isolation: whatever Google account the user signs into
+    /// is the single account displayed on Morph.
     public func handleDetectedEmail(_ email: String, avatarURL: String? = nil, displayName: String? = nil, accountTier: YTMAccountTier = .unknown) {
-        guard !email.isEmpty else { return }
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else { return }
         
-        let avatarInfo = resolveAvatarForProfile(email: email)
+        let avatarInfo = resolveAvatarForProfile(email: trimmedEmail)
         let effectiveAvatarPath = avatarInfo.localPath
         let effectiveAvatarURL = avatarURL ?? avatarInfo.url
-        let effectiveName = displayName ?? (email.components(separatedBy: "@").first ?? "User")
+        let effectiveName = displayName ?? (trimmedEmail.components(separatedBy: "@").first ?? "User")
         
-        // 1. If a profile already exists for this exact email: switch to it and update avatar/name/tier
-        if let idx = profiles.firstIndex(where: { $0.email.lowercased() == email.lowercased() }) {
-            if effectiveAvatarPath != nil {
-                profiles[idx].avatarLocalPath = effectiveAvatarPath
-            }
-            if effectiveAvatarURL != nil {
-                profiles[idx].avatarURL = effectiveAvatarURL
-            }
-            if !effectiveName.isEmpty && (profiles[idx].displayName.isEmpty || profiles[idx].displayName == "Profile" || profiles[idx].displayName == "User") {
-                profiles[idx].displayName = effectiveName
-            }
-            if accountTier != .unknown {
-                profiles[idx].accountTier = accountTier
-            }
-            profiles[idx].lastUsedAt = Date()
-            self.activeProfileId = profiles[idx].id
-            saveProfiles()
-            DispatchQueue.main.async { self.objectWillChange.send() }
-            return
-        }
-        
-        // 2. If the current active profile has an empty email or placeholder: adopt this email
-        if let active = activeProfile, (active.email.isEmpty || active.email == "local_user@morph.app"),
-           let idx = profiles.firstIndex(where: { $0.id == active.id }) {
-            profiles[idx].email = email
-            profiles[idx].displayName = effectiveName
-            profiles[idx].avatarLocalPath = effectiveAvatarPath
-            profiles[idx].avatarURL = effectiveAvatarURL
-            if accountTier != .unknown {
-                profiles[idx].accountTier = accountTier
-            }
-            profiles[idx].lastUsedAt = Date()
-            saveProfiles()
-            DispatchQueue.main.async { self.objectWillChange.send() }
-            return
-        }
-        
-        // 3. Otherwise, create a brand new profile for this new YouTube Music email
-        let newProfile = YTMProfile(
-            email: email,
+        // Single Account Guarantee: Whatever account they sign into is the only one present
+        var profile = YTMProfile(
+            email: trimmedEmail,
             displayName: effectiveName,
             avatarLocalPath: effectiveAvatarPath,
             avatarURL: effectiveAvatarURL,
+            isDefault: true,
             lastUsedAt: Date(),
-            isChromeImported: effectiveAvatarPath != nil,
             accountTier: accountTier
         )
-        profiles.append(newProfile)
-        self.activeProfileId = newProfile.id
+        if let existing = profiles.first(where: { $0.email.lowercased() == trimmedEmail.lowercased() }) {
+            profile.id = existing.id
+            if effectiveAvatarPath == nil { profile.avatarLocalPath = existing.avatarLocalPath }
+            if effectiveAvatarURL == nil { profile.avatarURL = existing.avatarURL }
+            if accountTier == .unknown && existing.accountTier != .unknown { profile.accountTier = existing.accountTier }
+        }
+        
+        self.profiles = [profile]
+        self.activeProfileId = profile.id
         saveProfiles()
         DispatchQueue.main.async { self.objectWillChange.send() }
     }

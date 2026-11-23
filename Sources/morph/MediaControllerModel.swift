@@ -304,7 +304,8 @@ public final class MediaControllerModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self = self, (self.isPlaying || self.isEffectivelyPlaying), !self.userIntentionallyPaused else { return }
                     // Smoothly advance progress bar hand-in-hand with playback
-                    if self.duration > 0 && self.currentTime < self.duration {
+                    let dur = self.duration > 0 ? self.duration : 180.0
+                    if self.currentTime < dur {
                         self.currentTime += 1.0
                     }
                 }
@@ -617,7 +618,6 @@ public final class MediaControllerModel: ObservableObject {
         self.activeProfile = YTMProfileManager.shared.activeProfile
         
         YTMProfileManager.shared.$profiles
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] profs in
                 guard let self = self else { return }
                 self.profiles = profs
@@ -626,7 +626,6 @@ public final class MediaControllerModel: ObservableObject {
             .store(in: &cancellables)
             
         YTMProfileManager.shared.$activeProfileId
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 self.activeProfile = YTMProfileManager.shared.activeProfile
@@ -1421,9 +1420,7 @@ public final class MediaControllerModel: ObservableObject {
         }
         currentTime = 0
         lastSeekToZeroTime = Date()
-        if track.durationSeconds > 0 {
-            duration = Double(track.durationSeconds)
-        }
+        duration = track.durationSeconds > 0 ? Double(track.durationSeconds) : 180.0
         isPlaying = true
         userIntentionallyPaused = false
         playResumeLockoutUntil = Date().addingTimeInterval(1.8)
@@ -2132,26 +2129,36 @@ public final class MediaControllerModel: ObservableObject {
         }
     }
 
-    /// Refreshes playlists: browser scraping is PRIMARY source of truth (user's actual signed-in browser).
-    /// InnerTube is secondary for when no browser is open.
+    /// Refreshes playlists: internal YouTube Music engine is PRIMARY ground truth when authenticated.
+    /// Falls back to browser scraping or InnerTube when unauthenticated.
     public func refreshPlaylists() {
         isLoadingPlaylists = true
         let eng = engine
         Task { @MainActor [weak self] in
             guard let self = self else { return }
 
-            // 1. Browser scraping FIRST — this is ground truth (uses user's actual signed-in account)
+            // 1. Direct Engine is Ground Truth when user is signed in
+            if self.isSignedIn || eng.isSignedIn {
+                print("[Morph Playlists] ✅ Direct engine authenticated — refreshing user library playlists")
+                await eng.refreshLibraryPlaylists()
+                if !eng.userPlaylists.isEmpty {
+                    self.playlists = eng.userPlaylists
+                }
+                self.isLoadingPlaylists = false
+                return
+            }
+
+            // 2. Browser scraping secondary for unauthenticated sessions
             let browserPlaylists = await self.scrapePlaylistsFromBrowsers()
             if !browserPlaylists.isEmpty {
                 print("[Morph Playlists] ✅ Browser source: \(browserPlaylists.count) playlists — merging with cache")
                 self.mergePlaylists(browserPlaylists)
                 self.isLoadingPlaylists = false
-                // Also fire InnerTube in background to populate track metadata
                 Task { await eng.refreshLibraryPlaylists() }
                 return
             }
 
-            // 2. Fall back to InnerTube (Morph's embedded WebView account)
+            // 3. Fall back to InnerTube
             print("[Morph Playlists] No browser data, falling back to InnerTube")
             await eng.refreshLibraryPlaylists()
             if !eng.userPlaylists.isEmpty {
@@ -2434,7 +2441,7 @@ public final class MediaControllerModel: ObservableObject {
         isPlaying = false
         currentTime = 0
         duration = 0
-        YTMProfileManager.shared.clearActiveProfile()
+        YTMProfileManager.shared.clearAllProfiles()
         playlists = []
         selectedPlaylist = nil
         isWaitingForBrowserSignIn = false

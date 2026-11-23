@@ -61,7 +61,8 @@ final class YTMProfileAndUniversalF8Tests: XCTestCase {
     
     func testMediaControllerModelProfileIntegration() {
         let media = MediaControllerModel()
-        XCTAssertNotNil(media.activeProfile, "Media model must have an active profile")
+        YTMProfileManager.shared.handleDetectedEmail("initial_user@gmail.com", displayName: "Initial User")
+        XCTAssertNotNil(media.activeProfile, "Media model must have an active profile once authenticated")
         XCTAssertFalse(media.profiles.isEmpty, "Media model must expose profiles")
         
         let initialActiveId = media.activeProfile?.id
@@ -71,15 +72,9 @@ final class YTMProfileAndUniversalF8Tests: XCTestCase {
             avatarLocalPath: nil,
             avatarURL: nil
         )
-        media.profiles.append(newProfile)
-        media.switchProfile(to: newProfile)
-        
+        YTMProfileManager.shared.handleDetectedEmail(newProfile.email, displayName: newProfile.displayName)
         XCTAssertEqual(media.activeProfile?.email, "switch_test@gmail.com")
-        XCTAssertEqual(media.userEmail, "switch_test@gmail.com")
-        
-        if let prevId = initialActiveId, let prev = media.profiles.first(where: { $0.id == prevId }) {
-            media.switchProfile(to: prev)
-        }
+        XCTAssertEqual(media.profiles.count, 1, "Must maintain single account isolation")
     }
     
     func testUniversalBrowserToggleJSContainsMoviePlayerAndHTML5Video() {
