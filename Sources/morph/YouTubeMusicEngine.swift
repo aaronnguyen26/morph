@@ -610,7 +610,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         }
     }
     
-    public func loadGoogleSignIn(for email: String? = nil) {
+    public func loadGoogleSignInInline(for email: String? = nil) {
         self.isWaitingForSignInCompletion = true
         self.isAuthSuccessShowing = false
         guard !MorphEnvironment.isTestingEnvironment else { return }
@@ -623,7 +623,10 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
             let request = URLRequest(url: url)
             self.webView.load(request)
         }
-        showPlayerWindow()
+    }
+    
+    public func loadGoogleSignIn(for email: String? = nil) {
+        loadGoogleSignInInline(for: email)
     }
     
     public func goBack() {
@@ -3050,7 +3053,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     
     /// Triggers an Apple-grade Liquid Glass success screen inside the sign-in modal before smoothly closing
     public func triggerAuthSuccessAnimation() {
-        guard isPlayerWindowVisible, !isAuthSuccessShowing else { return }
+        guard !isAuthSuccessShowing else { return }
         self.isWaitingForSignInCompletion = false
         withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) {
             self.isAuthSuccessShowing = true
@@ -3065,7 +3068,7 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
         
         // Hold Morph success confirmation screen for 2.0s before smoothly dismissing
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            guard let self = self, self.isPlayerWindowVisible && self.isAuthSuccessShowing else { return }
+            guard let self = self, self.isAuthSuccessShowing else { return }
             self.completeSignInDismissal()
         }
     }
@@ -3074,7 +3077,11 @@ public final class YouTubeMusicEngine: NSObject, ObservableObject, WKScriptMessa
     public func completeSignInDismissal() {
         hidePlayerWindow()
         self.isAuthSuccessShowing = false
-        MorphController.shared?.model.openFeature(.music)
+        if let ctrl = MorphController.shared {
+            attachToHostingView(ctrl.hostingView)
+            ctrl.model.media.isInlineSignInActive = false
+            ctrl.model.openFeature(.music)
+        }
     }
     
     public func togglePlayerWindow() {

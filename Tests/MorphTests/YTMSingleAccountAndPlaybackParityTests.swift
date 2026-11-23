@@ -103,4 +103,60 @@ final class YTMSingleAccountAndPlaybackParityTests: XCTestCase {
         XCTAssertTrue(media.playlists.contains(where: { $0.id == "PL_real1" }))
         XCTAssertTrue(media.playlists.contains(where: { $0.id == "LM" }))
     }
+    
+    // MARK: - 5. Direct In-Morph UI Sign-In & Single Page Verification
+    func testUnauthenticatedMusicPlayerHasSingleUnnamedView() {
+        let model = NotchModel()
+        model.media.signOut()
+        model.setGlassIslandState(.music)
+        
+        XCTAssertFalse(model.media.isSignedIn, "User must start in unauthenticated state")
+        XCTAssertFalse(model.media.isInlineSignInActive, "Inline sign in must not be active before user clicks button")
+        XCTAssertEqual(model.glassIslandHeight, 384, "Music island height in resting unauthenticated mode must be 384 pt")
+    }
+    
+    func testClickingSignInWithGoogleActivatesInlineSignInDirectlyInMorphUI() {
+        let model = NotchModel()
+        model.media.signOut()
+        model.setGlassIslandState(.music)
+        
+        // User clicks "Sign In with Google"
+        model.media.openSignIn()
+        
+        XCTAssertTrue(model.media.isInlineSignInActive, "Clicking Sign In with Google must activate inline sign-in mode")
+        XCTAssertFalse(YouTubeMusicEngine.shared.isPlayerWindowVisible, "Morph must NOT create or show any separate external window")
+        XCTAssertEqual(model.glassIslandHeight, 480, "Glass island height must dynamically expand to 480 pt to host Google Sign-In directly inside Morph UI")
+    }
+    
+    func testCancelingInlineSignInReturnsToStandardHeightAndSinglePage() {
+        let model = NotchModel()
+        model.media.signOut()
+        model.setGlassIslandState(.music)
+        
+        model.media.openSignIn()
+        XCTAssertTrue(model.media.isInlineSignInActive)
+        XCTAssertEqual(model.glassIslandHeight, 480)
+        
+        // User clicks cancel ('X') button on the inline nav bar
+        model.media.isInlineSignInActive = false
+        XCTAssertFalse(model.media.isInlineSignInActive)
+        XCTAssertEqual(model.glassIslandHeight, 384, "Canceling inline sign-in must smoothly restore the panel height to 384 pt")
+    }
+    
+    func testSuccessfulSignInTransitionsFromInlineToAuthenticatedState() async {
+        let model = NotchModel()
+        model.media.signOut()
+        model.setGlassIslandState(.music)
+        
+        model.media.openSignIn()
+        XCTAssertTrue(model.media.isInlineSignInActive)
+        
+        // Simulate auth completion from engine
+        YouTubeMusicEngine.shared.isSignedIn = true
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        XCTAssertTrue(model.media.isSignedIn, "Media model must update to signed in")
+        XCTAssertFalse(model.media.isInlineSignInActive, "Inline sign in flag must reset upon successful auth")
+        XCTAssertEqual(model.glassIslandHeight, 384, "Island height returns to 384 pt for standard music player with tabs")
+    }
 }

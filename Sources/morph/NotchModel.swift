@@ -1320,7 +1320,7 @@ public final class NotchModel: ObservableObject {
         case .calendar:
             return 308
         case .music:
-            return 384
+            return media.isInlineSignInActive ? 480 : 384
         case .notes:
             return 284
         case .forms:
@@ -2462,6 +2462,14 @@ public final class NotchModel: ObservableObject {
         $isNotePinnedToNotch.sink { _ in triggerChange() }.store(in: &cancellables)
         $isCommandBarPresented.sink { _ in triggerChange() }.store(in: &cancellables)
         
+        media.$isInlineSignInActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self, self.glassIslandState == .music else { return }
+                MorphController.shared?.updatePanelGeometry(animate: true)
+            }
+            .store(in: &cancellables)
+        
         // Track the latest feature tab used by the user
         $selectedTab
             .sink { [weak self] tab in
@@ -2960,9 +2968,7 @@ public final class NotchModel: ObservableObject {
     public func promptMusicSignInIfNeeded() {
         guard !hasPromptedMusicSignIn else { return }
         hasPromptedMusicSignIn = true
-        if !media.isSignedIn && !media.isBrowserConnected && !MorphEnvironment.isTestingEnvironment {
-            media.openSignIn()
-        }
+        // Keep the user in the sleek unauthenticated Morph UI until they explicitly click "Sign In with Google"
     }
     
     // MARK: - Glass Island Real Calendar Helpers

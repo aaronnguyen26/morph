@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import WebKit
 import UniformTypeIdentifiers
 
 public struct MorphIslandView: View {
@@ -4238,46 +4239,42 @@ public struct MorphIslandView: View {
         .padding(.vertical, 14)
     }
     
-    // MARK: - Music Panel View (460 x 384 pt)
+    // MARK: - Music Panel View (460 x 384 pt / 480 pt during inline sign-in)
     private var glassMusicView: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: 8) {
-                glassMusicHeaderView
-                
-                ZStack {
-                    switch model.glassMusicSubtab {
-                    case .playing:
-                        if model.media.isSignedIn {
+            if model.media.isSignedIn {
+                VStack(spacing: 8) {
+                    glassMusicHeaderView
+                    
+                    ZStack {
+                        switch model.glassMusicSubtab {
+                        case .playing:
                             glassMusicNowPlayingView
-                        } else {
-                            glassMusicSignInView
-                        }
-                    case .library:
-                        if model.media.isSignedIn {
+                        case .library:
                             glassMusicLibraryView
-                        } else {
-                            glassMusicLibrarySignInPromptView
-                        }
-                    case .queue:
-                        if model.media.isSignedIn {
+                        case .queue:
                             glassMusicQueueView
-                        } else {
-                            glassMusicQueueSignInPromptView
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    
+                    if model.glassMusicSubtab != .playing {
+                        glassMusicMiniPlayerView
+                    }
                 }
+                .padding(.horizontal, 10)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
-                if model.glassMusicSubtab != .playing && model.media.isSignedIn {
-                    glassMusicMiniPlayerView
+            } else {
+                if model.media.isInlineSignInActive {
+                    glassMusicInlineSignInView
+                } else {
+                    glassMusicSignInView
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 4)
-            .padding(.bottom, 6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             
-            if model.media.isProfileSwitcherOpen {
+            if model.media.isProfileSwitcherOpen && model.media.isSignedIn {
                 // Background dismissal surface
                 Color.black.opacity(0.01)
                     .contentShape(Rectangle())
@@ -4615,8 +4612,8 @@ public struct MorphIslandView: View {
     
     // MARK: - Redesigned YouTube Music First-Time Sign-In & Direct Connection View
     private var glassMusicSignInView: some View {
-        VStack(spacing: 12) {
-            Spacer(minLength: 2)
+        VStack(spacing: 8) {
+            Spacer(minLength: 4)
             
             // Hero Emblem with elegant liquid glass sphere
             ZStack {
@@ -4626,10 +4623,10 @@ public struct MorphIslandView: View {
                             colors: [Color.white.opacity(0.12), Color.clear],
                             center: .center,
                             startRadius: 0,
-                            endRadius: 42
+                            endRadius: 36
                         )
                     )
-                    .frame(width: 84, height: 84)
+                    .frame(width: 70, height: 70)
                 
                 Circle()
                     .fill(
@@ -4639,7 +4636,7 @@ public struct MorphIslandView: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                    .frame(width: 52, height: 52)
+                    .frame(width: 46, height: 46)
                     .overlay(
                         Circle()
                             .stroke(
@@ -4651,26 +4648,26 @@ public struct MorphIslandView: View {
                                 lineWidth: 1.0
                             )
                     )
-                    .shadow(color: Color.black.opacity(0.35), radius: 8, y: 3)
+                    .shadow(color: Color.black.opacity(0.35), radius: 6, y: 2)
                 
                 Image(systemName: "music.note")
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(.white)
             }
             .padding(.top, 2)
             
             // Text Header
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 Text("Connect YouTube Music")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.system(size: 15.5, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
                 Text("Sign in with Google to access your library, stream music, and control playback directly from Morph.")
-                    .font(.system(size: 12, weight: .regular, design: .rounded))
+                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
                     .foregroundColor(Color.white.opacity(0.72))
                     .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-                    .padding(.horizontal, 22)
+                    .lineSpacing(1.5)
+                    .padding(.horizontal, 24)
                     .fixedSize(horizontal: false, vertical: true)
             }
             
@@ -4684,22 +4681,22 @@ public struct MorphIslandView: View {
             
             Spacer(minLength: 4)
             
-            // Main Action Button: Diverts user to Google Sign-In with Liquid Glass styling
+            // Main Action Button: Diverts user to Google Sign-In directly in Morph UI
             Button(action: {
                 MorphHaptics.levelChange()
                 model.media.openSignIn()
             }) {
                 HStack(spacing: 8) {
                     Image(systemName: "person.crop.circle.badge.plus")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 12.5, weight: .bold))
                     Text("Sign In with Google")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .frame(height: 38)
+                .frame(height: 36)
                 .background(
-                    RoundedRectangle(cornerRadius: 19, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [Color.white.opacity(0.18), Color.white.opacity(0.09)],
@@ -4708,7 +4705,7 @@ public struct MorphIslandView: View {
                             )
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 19, style: .continuous)
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .stroke(
                                     LinearGradient(
                                         colors: [Color.white.opacity(0.35), Color.white.opacity(0.15)],
@@ -4718,21 +4715,21 @@ public struct MorphIslandView: View {
                                     lineWidth: 1.0
                                 )
                         )
-                        .shadow(color: Color.black.opacity(0.25), radius: 8, y: 3)
+                        .shadow(color: Color.black.opacity(0.25), radius: 6, y: 2)
                 )
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 32)
+            .padding(.horizontal, 36)
             
-            // Direct Connection Security Footnote
+            // Direct Connection Security Footnote (Plenty of padding ensures no clipping on rounded corners)
             HStack(spacing: 4) {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: 8.5))
                 Text("Direct authenticated session · Controlled locally by Morph")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
             }
             .foregroundColor(Color.white.opacity(0.48))
-            .padding(.bottom, 4)
+            .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -4758,98 +4755,156 @@ public struct MorphIslandView: View {
         )
     }
     
-    private var glassMusicLibrarySignInPromptView: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            
-            Image(systemName: "music.note.list")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.85))
-            
-            VStack(spacing: 4) {
-                Text("Your Library")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                
-                Text("Sign in with Google to view and play your YouTube Music playlists, liked tracks, and mixes directly from Morph.")
-                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.65))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 28)
-            }
-            
-            Button(action: {
-                MorphHaptics.levelChange()
-                model.media.openSignIn()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "person.crop.circle.badge.plus")
-                        .font(.system(size: 12, weight: .bold))
-                    Text("Sign In to YouTube Music")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+    // MARK: - Direct In-Morph Google Sign-In View (No separate external window)
+    private var glassMusicInlineSignInView: some View {
+        VStack(spacing: 6) {
+            // Sleek Top Nav Bar
+            HStack(spacing: 8) {
+                // Back button
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    if YouTubeMusicEngine.shared.webView.canGoBack {
+                        YouTubeMusicEngine.shared.webView.goBack()
+                    } else {
+                        withAnimation(MorphUniversalAnimation.stateExpansion) {
+                            model.media.isInlineSignInActive = false
+                        }
+                    }
+                }) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.85))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.white.opacity(0.12)))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 7)
+                .buttonStyle(.plain)
+                .help("Back")
+                
+                // Reload button
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    YouTubeMusicEngine.shared.webView.reload()
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.75))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.white.opacity(0.10)))
+                }
+                .buttonStyle(.plain)
+                .help("Reload")
+                
+                Spacer()
+                
+                // Status / Brand badge
+                HStack(spacing: 5) {
+                    Image(systemName: "lock.shield.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(Color(hex: "#10b981"))
+                    Text("Sign in with Google")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.90))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3.5)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.18))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.8))
+                        .fill(Color.white.opacity(0.10))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
                 )
-            }
-            .buttonStyle(.plain)
-            
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-    
-    private var glassMusicQueueSignInPromptView: some View {
-        VStack(spacing: 12) {
-            Spacer()
-            
-            Image(systemName: "list.bullet.rectangle.portrait")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundColor(Color.white.opacity(0.85))
-            
-            VStack(spacing: 4) {
-                Text("Queue is Empty")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
                 
-                Text("Sign in to your YouTube Music account to play and queue your favorite music directly in Morph.")
-                    .font(.system(size: 11.5, weight: .regular, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.65))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 28)
-            }
-            
-            Button(action: {
-                MorphHaptics.levelChange()
-                model.media.openSignIn()
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "person.crop.circle.badge.plus")
-                        .font(.system(size: 12, weight: .bold))
-                    Text("Sign In to YouTube Music")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                Spacer()
+                
+                // Close button (cancels inline sign in and returns to prompt)
+                Button(action: {
+                    MorphHaptics.levelChange()
+                    withAnimation(MorphUniversalAnimation.stateExpansion) {
+                        model.media.isInlineSignInActive = false
+                    }
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white.opacity(0.85))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.white.opacity(0.14)))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 7)
-                .background(
-                    Capsule()
-                        .fill(Color.white.opacity(0.18))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 0.8))
-                )
+                .buttonStyle(.plain)
+                .help("Cancel")
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+            .frame(height: 28)
             
-            Spacer()
+            // Web View Container
+            ZStack {
+                MorphYTMInlineWebViewRepresentable(webView: YouTubeMusicEngine.shared.webView)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    )
+                
+                if YouTubeMusicEngine.shared.isAuthSuccessShowing {
+                    MorphAuthSuccessView(engine: YouTubeMusicEngine.shared) {
+                        withAnimation(MorphUniversalAnimation.stateExpansion) {
+                            model.media.isInlineSignInActive = false
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
+        .onAppear {
+            if let ctrl = MorphController.shared {
+                ctrl.panel?.ignoresMouseEvents = false
+                ctrl.panel?.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+}
+
+// MARK: - AppKit WKWebView SwiftUI Bridge for Inline YouTube Music Sign-In
+public struct MorphYTMInlineWebViewRepresentable: NSViewRepresentable {
+    public let webView: WKWebView
+    
+    public init(webView: WKWebView) {
+        self.webView = webView
     }
     
+    public func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 14
+        container.layer?.masksToBounds = true
+        
+        webView.removeFromSuperview()
+        webView.frame = container.bounds
+        webView.autoresizingMask = [NSView.AutoresizingMask.width, NSView.AutoresizingMask.height]
+        container.addSubview(webView)
+        return container
+    }
+    
+    public func updateNSView(_ nsView: NSView, context: Context) {
+        if webView.superview !== nsView {
+            webView.removeFromSuperview()
+            webView.frame = nsView.bounds
+            webView.autoresizingMask = [NSView.AutoresizingMask.width, NSView.AutoresizingMask.height]
+            nsView.addSubview(webView)
+        }
+    }
+    
+    public static func dismantleNSView(_ nsView: NSView, coordinator: ()) {
+        if let hostingView = MorphController.shared?.hostingView {
+            YouTubeMusicEngine.shared.attachToHostingView(hostingView)
+        }
+    }
+}
+
+extension MorphIslandView {
     private var glassNowPlayingArtView: some View {
         ZStack {
             if let artUrl = model.media.albumArtURL, let url = URL(string: artUrl) {

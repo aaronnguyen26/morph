@@ -195,6 +195,7 @@ public final class MediaControllerModel: ObservableObject {
     @Published public var isSearchingCatalog: Bool = false
     @Published public var catalogSearchError: String? = nil
     @Published public var isWaitingForBrowserSignIn: Bool = false
+    @Published public var isInlineSignInActive: Bool = false
     @Published public var browserAuthStatusMessage: String? = nil
     private var searchTask: Task<Void, Never>?
     public private(set) var activeCatalogQuery: String = ""
@@ -560,6 +561,7 @@ public final class MediaControllerModel: ObservableObject {
                 self.isSignedIn = signedIn
                 if signedIn && !prev {
                     self.isWaitingForBrowserSignIn = false
+                    self.isInlineSignInActive = false
                     self.browserAuthStatusMessage = nil
                     self.libraryError = nil
                     self.refreshPlaylists()
@@ -2426,12 +2428,20 @@ public final class MediaControllerModel: ObservableObject {
     
     // MARK: - Direct & Browser-Based Authentication & Tab Management
     public func openSignIn() {
+        withAnimation(MorphUniversalAnimation.stateExpansion) {
+            isInlineSignInActive = true
+        }
         isWaitingForBrowserSignIn = true
-        browserAuthStatusMessage = "Sign in via the Morph YouTube Music window. Once signed in, your playlists and music sync directly into Morph."
-        engine.loadGoogleSignIn()
+        browserAuthStatusMessage = "Sign in to Google directly in Morph."
+        engine.loadGoogleSignInInline()
+        if let ctrl = MorphController.shared {
+            ctrl.panel?.ignoresMouseEvents = false
+            ctrl.panel?.makeKeyAndOrderFront(nil)
+        }
     }
     
     public func signOut() {
+        isInlineSignInActive = false
         isSignedIn = false
         userEmail = nil
         activeProfile = nil
@@ -2516,7 +2526,7 @@ public final class MediaControllerModel: ObservableObject {
     }
     
     public func openPlayerWindow() {
-        engine.showPlayerWindow()
+        openSignIn()
     }
     
     // MARK: - Ambient Visualizer
